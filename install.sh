@@ -1,7 +1,7 @@
-#!/bin/bash
+#!/bin/sh
 
 # dotfilesディレクトリのパスを取得
-DOTFILES_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+DOTFILES_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # VS Code設定ディレクトリを作成
 mkdir -p ~/.vscode-server/data/Machine/
@@ -18,10 +18,11 @@ cp "$DOTFILES_DIR/settings/keybindings.json" ~/.vscode-server/data/Machine/keybi
 # 拡張機能リストからインストール
 echo "拡張機能をインストールしています..."
 if [ -f "$DOTFILES_DIR/.vscode/extensions.json" ]; then
-  EXTENSIONS=$(cat "$DOTFILES_DIR/.vscode/extensions.json" | grep -o '"[^"]*"' | grep -v "recommendations" | tr -d '"')
-  for ext in $EXTENSIONS; do
-    echo "Installing $ext"
-    code --install-extension "$ext" || echo "Failed to install $ext"
+  cat "$DOTFILES_DIR/.vscode/extensions.json" | grep -o '"[^"]*"' | grep -v "recommendations" | tr -d '"' | while read ext; do
+    if [ -n "$ext" ]; then
+      echo "Installing $ext"
+      code --install-extension "$ext" || echo "Failed to install $ext"
+    fi
   done
 fi
 
