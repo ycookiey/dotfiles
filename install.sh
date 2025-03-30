@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ログファイルの設定
-LOG_FILE="$HOME/dotfiles-install.log"
+LOG_FILE="./dotfiles-install.log"
 
 # dotfilesディレクトリのパスを取得
 DOTFILES_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
