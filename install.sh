@@ -17,7 +17,7 @@ cp "$SCRIPT_DIR/settings/keybindings.json" ~/.vscode-server/data/Machine/keybind
 
 # 拡張機能のインストール
 echo "拡張機能をインストールしています..."
-cat "$SCRIPT_DIR/extensions" | while read -r line
+cat "$SCRIPT_DIR/.vscode/extensions" | while read -r line
 do
   if [ ! -z "$line" ]; then
     echo "Installing $line"
