@@ -36,7 +36,7 @@ echo "拡張機能のインストール開始: $(date)" >> "$LOG_FILE"
 INSTALLED_COUNT=0
 FAILED_COUNT=0
 
-cat "$SCRIPT_DIR/extensions" | while read -r line
+cat "$SCRIPT_DIR/.vscode/extensions" | while read -r line
 do
   if [ ! -z "$line" ]; then
     echo "Installing $line" | tee -a "$LOG_FILE"
