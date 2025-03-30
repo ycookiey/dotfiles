@@ -1,0 +1,79 @@
+[
+    {
+        "key": "ctrl+enter",
+        "command": "-github.copilot.generate",
+        "when": "editorTextFocus && github.copilot.activated && !inInteractiveInput && !interactiveEditorFocused"
+    },
+    {
+        "key": "ctrl+alt+n",
+        "command": "extension.advancedNewFile"
+    },
+    {
+        "key": "ctrl+alt+n",
+        "command": "-extension.advancedNewFile"
+    },
+    {
+        "key": "ctrl+k ctrl+alt+n",
+        "command": "code-runner.run"
+    },
+    {
+        "key": "ctrl+alt+n",
+        "command": "-code-runner.run"
+    },
+    {
+        "key": "ctrl+l",
+        "command": "markdowntable.insertLeft",
+        "when": "editorFocus && tableMode"
+    },
+    {
+        "key": "ctrl+r",
+        "command": "markdowntable.insertRight",
+        "when": "editorFocus && tableMode"
+    },
+    {
+        "key": "alt+z",
+        "command": "editor.action.toggleWordWrap",
+        "when": "editorFocus"
+    },
+    {
+        "key": "alt+z",
+        "command": "-editor.action.toggleWordWrap"
+    },
+    {
+        "key": "alt+z",
+        "command": "bracket-select.undo-select",
+        "when": "editorHasSelection"
+    },
+    {
+        "key": "alt+z",
+        "command": "-bracket-select.undo-select",
+        "when": "editorTextFocus"
+    },
+    {
+        "key": "ctrl+m",
+        "command": "editor.emmet.action.wrapWithAbbreviation"
+    },
+    {
+        "key": "ctrl+enter",
+        "command": "-github.copilot.generate",
+        "when": "editorTextFocus && github.copilot.activated && !commentEditorFocused && !inInteractiveInput && !interactiveEditorFocused"
+    },
+    {
+        "key": "ctrl+k ctrl+r",
+        "command": "-workbench.action.keybindingsReference"
+    },
+    {
+        "key": "ctrl+shift+g m",
+        "command": "gitlens.generateCommitMessage",
+        "when": "editorTextFocus && !gitlens:disabled && config.gitlens.keymap == 'chorded' && gitlens:enabled && !inDebugMode && !isInDiffEditor && resource in 'gitlens:tabs:tracked'"
+    },
+    {
+        "key": "shift+alt+r",
+        "command": "revealFileInOS"
+    },
+    {
+        "key": "shift+alt+r",
+        "command": "-revealFileInOS",
+        "when": "!editorFocus"
+    }
+]

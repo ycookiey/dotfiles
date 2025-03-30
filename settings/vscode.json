@@ -1,0 +1,586 @@
+{
+    "[python]": {
+        "editor.formatOnType": true,
+        "editor.defaultFormatter": "ms-python.black-formatter"
+    },
+    "python.autoComplete.extraPaths": [],
+    "python.analysis.extraPaths": [],
+    "workbench.iconTheme": "material-icon-theme",
+    "code-runner.runInTerminal": true,
+    "editor.formatOnSave": true,
+    "editor.formatOnType": true,
+    "dart.flutterSdkPath": "C:\\src\\flutter",
+    "search.exclude": {
+        "**/.fvm": true
+    },
+    "files.watcherExclude": {
+        "**/.fvm": true
+    },
+    "dart.previewFlutterUiGuides": true,
+    "dart.previewFlutterUiGuidesCustomTracking": true,
+    "dart.previewHotReloadOnSaveWatcher": true,
+    "editor.acceptSuggestionOnEnter": "off",
+    "cSpell.showAutocompleteSuggestions": true,
+    "editor.guides.bracketPairs": "active",
+    "cSpell.userWords": [
+        "autofocus",
+        "Cupertino",
+        "firestore",
+        "fluttertoast",
+        "oktoast",
+        "puyocolor",
+        "RGBO",
+        "riverpod",
+        "rterm",
+        "Schyler",
+        "screenutil",
+        "tategaki",
+        "Todos"
+    ],
+    "editor.quickSuggestions": {
+        "strings": "on"
+    },
+    "editor.quickSuggestionsDelay": 0,
+    "editor.suggest.preview": true,
+    "editor.autoClosingBrackets": "always",
+    "editor.autoClosingQuotes": "always",
+    "cSpell.languageSettings": [],
+    "terminal.integrated.automationProfile.windows": {},
+    "security.workspace.trust.untrustedFiles": "open",
+    "r.rterm.windows": "C:\\Program Files\\R\\R-4.2.3\\bin\\R.exe",
+    "files.associations": {
+        "*.rmd": "markdown",
+        "*.ahk": "ahk",
+        "*.css": "tailwindcss",
+        "*.kts": "kotlinscript"
+    },
+    "r.alwaysUseActiveTerminal": true,
+    "r.lsp.debug": true,
+    "dart.showTodos": false,
+    "dart.flutterCustomEmulators": [],
+    "editor.codeActionsOnSave": {},
+    "editor.wordWrap": "on",
+    "git.openRepositoryInParentFolders": "never",
+    "editor.inlineSuggest.enabled": true,
+    "explorer.confirmDragAndDrop": false,
+    "github.copilot.enable": {
+        "*": true,
+        "plaintext": true,
+        "markdown": true,
+        "scminput": false,
+        "python": true
+    },
+    "python.formatting.provider": "none",
+    "cSpell.customDictionaries": {
+        "custom-dictionary-user": {
+            "name": "custom-dictionary-user",
+            "path": "~/.cspell/custom-dictionary-user.txt",
+            "addWords": true,
+            "scope": "user"
+        }
+    },
+    "cSpell.language": "en,lorem",
+    "cSpell.enableFiletypes": ["ahk", "dart"],
+    "powermode.enabled": true,
+    "powermode.presets": "exploding-rift",
+    "powermode.combo.location": "editor",
+    "powermode.explosions.offset": 0.4,
+    "powermode.shake.enabled": false,
+    "codic.ACCESS_TOKEN": "s7EJ1raRsK6lH4Xx9mXBbACGSBwd6b637n",
+    "codic.case": "no case",
+    "discord.removeRemoteRepository": true,
+    "vscord.app.name": "Visual Studio Code",
+    "vscord.status.buttons.button1.enabled": false,
+    "vscord.app.privacyMode.enable": true,
+    "explorer.confirmDelete": false,
+    "liveshare.anonymousGuestApproval": "accept",
+    "terminal.integrated.enableMultiLinePasteWarning": false,
+    "code-runner.executorMap": {
+        "javascript": "node",
+        "java": "cd $dir && javac $fileName && java $fileNameWithoutExt",
+        "c": "cd $dir && gcc -fexec-charset=CP932 $fileName -o $fileNameWithoutExt && $dir$fileNameWithoutExt",
+        "zig": "zig run",
+        "cpp": "cd $dir && g++ $fileName -o $fileNameWithoutExt && $dir$fileNameWithoutExt",
+        "objective-c": "cd $dir && gcc -framework Cocoa $fileName -o $fileNameWithoutExt && $dir$fileNameWithoutExt",
+        "php": "php",
+        "python": "python -u",
+        "perl": "perl",
+        "perl6": "perl6",
+        "ruby": "ruby",
+        "go": "go run",
+        "lua": "lua",
+        "groovy": "groovy",
+        "powershell": "powershell -ExecutionPolicy ByPass -File",
+        "bat": "cmd /c",
+        "shellscript": "bash",
+        "fsharp": "fsi",
+        "csharp": "scriptcs",
+        "vbscript": "cscript //Nologo",
+        "typescript": "ts-node",
+        "coffeescript": "coffee",
+        "scala": "scala",
+        "swift": "swift",
+        "julia": "julia",
+        "crystal": "crystal",
+        "ocaml": "ocaml",
+        "r": "Rscript",
+        "applescript": "osascript",
+        "clojure": "lein exec",
+        "haxe": "haxe --cwd $dirWithoutTrailingSlash --run $fileNameWithoutExt",
+        "rust": "cd $dir && rustc $fileName && $dir$fileNameWithoutExt",
+        "racket": "racket",
+        "scheme": "csi -script",
+        "ahk": "autohotkey",
+        "autoit": "autoit3",
+        "dart": "dart",
+        "pascal": "cd $dir && fpc $fileName && $dir$fileNameWithoutExt",
+        "d": "cd $dir && dmd $fileName && $dir$fileNameWithoutExt",
+        "haskell": "runghc",
+        "nim": "nim compile --verbosity:0 --hints:off --run",
+        "lisp": "sbcl --script",
+        "kit": "kitc --run",
+        "v": "v run",
+        "sass": "sass --style expanded",
+        "scss": "scss --style expanded",
+        "less": "cd $dir && lessc $fileName $fileNameWithoutExt.css",
+        "FortranFreeForm": "cd $dir && gfortran $fileName -o $fileNameWithoutExt && $dir$fileNameWithoutExt",
+        "fortran-modern": "cd $dir && gfortran $fileName -o $fileNameWithoutExt && $dir$fileNameWithoutExt",
+        "fortran_fixed-form": "cd $dir && gfortran $fileName -o $fileNameWithoutExt && $dir$fileNameWithoutExt",
+        "fortran": "cd $dir && gfortran $fileName -o $fileNameWithoutExt && $dir$fileNameWithoutExt",
+        "sml": "cd $dir && sml $fileName"
+    },
+    "workbench.editor.empty.hint": "hidden",
+    "dart.debugExternalPackageLibraries": true,
+    "dart.debugSdkLibraries": true,
+    "editor.suggestSelection": "recentlyUsedByPrefix",
+    "editor.suggest.localityBonus": true,
+    "editor.wordBasedSuggestionsMode": "allDocuments",
+    "window.newWindowDimensions": "inherit",
+    "window.density.editorTabHeight": "compact",
+    "window.restoreFullscreen": true,
+    "editor.minimap.autohide": true,
+    "editor.minimap.scale": 3,
+    "editor.fontLigatures": true,
+    "editor.fontFamily": "'Fira Code', Hasklig, Consolas, 'Courier New', monospace",
+    "terminal.integrated.fontFamily": "monospace",
+    "editor.renderLineHighlight": "all",
+    "editor.cursorBlinking": "smooth",
+    "editor.cursorStyle": "block",
+    "editor.cursorSmoothCaretAnimation": "on",
+    "files.autoGuessEncoding": true,
+    "editor.bracketPairColorization.independentColorPoolPerBracketType": true,
+    "workbench.colorCustomizations": {
+        "editorBracketHighlight.foreground2": "#FF7FFF",
+        "editorBracketHighlight.foreground3": "#FFb366",
+        "editorBracketHighlight.foreground4": "#FFFF66",
+        "editorBracketHighlight.foreground5": "#98FF66",
+        "editorBracketHighlight.foreground6": "#6698FF"
+    },
+    "editor.autoClosingComments": "always",
+    "activitusbar.views": [
+        {
+            "name": "explorer",
+            "codicon": "explorer-view-icon"
+        },
+        {
+            "name": "search",
+            "codicon": "search-view-icon"
+        },
+        {
+            "name": "scm",
+            "codicon": "source-control-view-icon"
+        },
+        {
+            "name": "debug",
+            "codicon": "run-view-icon"
+        },
+        {
+            "name": "extensions",
+            "codicon": "extensions-view-icon"
+        }
+    ],
+    "indentRainbow.colorOnWhiteSpaceOnly": true,
+    "indentRainbow.colors": [
+        "rgba(255,255,64,0.15)",
+        "rgba(127,255,127,0.15)",
+        "rgba(255,127,255,0.15)",
+        "rgba(79,236,236,0.15)"
+    ],
+    "python.analysis.completeFunctionParens": true,
+    "peacock.favoriteColors": [
+        {
+            "name": "Angular Red",
+            "value": "#dd0531"
+        },
+        {
+            "name": "Azure Blue",
+            "value": "#007fff"
+        },
+        {
+            "name": "JavaScript Yellow",
+            "value": "#f9e64f"
+        },
+        {
+            "name": "Mandalorian Blue",
+            "value": "#1857a4"
+        },
+        {
+            "name": "Node Green",
+            "value": "#215732"
+        },
+        {
+            "name": "React Blue",
+            "value": "#61dafb"
+        },
+        {
+            "name": "Something Different",
+            "value": "#832561"
+        },
+        {
+            "name": "Svelte Orange",
+            "value": "#ff3d00"
+        },
+        {
+            "name": "Vue Green",
+            "value": "#42b883"
+        }
+    ],
+    "markdown.preview.breaks": true,
+    "diffEditor.useInlineViewWhenSpaceIsLimited": false,
+    "markdown-preview-enhanced.previewTheme": "atom-light.css",
+    "pasteImage.insertPattern": "<img src='${imageFileName}' width='100%'>",
+    "[ahk2]": {},
+    "editor.codeActionWidget.includeNearbyQuickFixes": false,
+    "[cpp]": {
+        "files.encoding": "utf8bom"
+    },
+    "[csharp]": {
+        "files.encoding": "utf8bom"
+    },
+    "[plaintext]": {
+        "files.encoding": "shiftjis"
+    },
+    "diffEditor.ignoreTrimWhitespace": false,
+    "workbench.startupEditor": "none",
+    "liveServer.settings.donotShowInfoMsg": true,
+    "dart.openDevTools": "flutter",
+    "remote.SSH.remotePlatform": {
+        "test": "linux",
+        "vmware": "linux",
+        "ssh.ice.nuie.nagoya-u.ac.jp": "linux",
+        "nuie": "linux"
+    },
+    // 和文を使うため、助詞、句読点、全角括弧などを区切り文字として登録する
+    "editor.wordSeparators": "./\\()\"'-:,.;<>~!@#$%^&*|+=[]{}`~?　、。「」【】『』（）！？てにをはがのともへでや",
+    // 以下、LaTeX Workshopの設定
+    // LaTeXでビルドする際の設定を「Tool」「Recipi」の2種類設定する
+    //   Tool ...1つのコマンド。料理で言うところの、「焼く」「煮る」などの操作かな。
+    //   "latex-workshop.latex.tools" で定義。
+    //   Recipe ...Tool を組み合わせて料理（つまりは文書）を作るレシピ。
+    //   "latex-workshop.latex.recipes"で定義。
+    //   デフォルトの操作は、1番最初に定義されたレシピになる（他のレシピも選択可）
+    // Tool の定義
+    "latex-workshop.latex.tools": [
+        // latexmk によるlualatex
+        {
+            "name": "Latexmk (LuaLaTeX)",
+            "command": "latexmk",
+            "args": [
+                "-f",
+                "-gg",
+                "-pv",
+                "-lualatex",
+                "-synctex=1",
+                "-interaction=nonstopmode",
+                "-file-line-error",
+                "-outdir=%OUTDIR%",
+                "%DOC%"
+            ]
+        },
+        // latexmk による xelatex
+        {
+            "name": "Latexmk (XeLaTeX)",
+            "command": "latexmk",
+            "args": [
+                "-f",
+                "-gg",
+                "-pv",
+                "-xelatex",
+                "-synctex=1",
+                "-interaction=nonstopmode",
+                "-file-line-error",
+                "-outdir=%OUTDIR%",
+                "%DOC%"
+            ]
+        },
+        // latexmk による uplatex
+        {
+            "name": "Latexmk (upLaTeX)",
+            "command": "latexmk",
+            "args": [
+                "-f",
+                "-gg",
+                "-pv",
+                "-synctex=1",
+                "-interaction=nonstopmode",
+                "-file-line-error",
+                "-outdir=%OUTDIR%",
+                "%DOC%"
+            ]
+        },
+        // latexmk による platex
+        {
+            "name": "Latexmk (pLaTeX)",
+            "command": "latexmk",
+            "args": [
+                "-f",
+                "-gg",
+                "-pv",
+                "-latex='platex'",
+                "-latexoption='-kanji=utf8 -no-guess-input-env'",
+                "-synctex=1",
+                "-interaction=nonstopmode",
+                "-file-line-error",
+                "-outdir=%OUTDIR%",
+                "%DOC%"
+            ]
+        }
+    ],
+    // Recipe の定義
+    "latex-workshop.latex.recipes": [
+        // LuaLaTeX のレシピ
+        {
+            "name": "LuaLaTeX",
+            "tools": ["Latexmk (LuaLaTeX)"]
+        },
+        // XeLaTeX のレシピ
+        {
+            "name": "XeLaTeX",
+            "tools": ["Latexmk (XeLaTeX)"]
+        },
+        // upLaTeX のレシピ
+        {
+            "name": "upLaTeX",
+            "tools": ["Latexmk (upLaTeX)"]
+        },
+        // pLaTeX のレシピ
+        {
+            "name": "pLaTeX",
+            "tools": ["Latexmk (pLaTeX)"]
+        }
+    ],
+    // マジックコメント付きの LaTeX ドキュメントのビルド設定
+    // 特に記事では扱わないが、いつか使うことを考えて書いとく。
+    // 参考: https://blog.miz-ar.info/2016/11/magic-comments-in-tex/
+    "latex-workshop.latex.magic.args": [
+        "-f",
+        "-gg",
+        "-pv",
+        "-synctex=1",
+        "-interaction=nonstopmode",
+        "-file-line-error",
+        "%DOC%"
+    ],
+    // 不要なファイルをクリーンアップする時の目印となる拡張子
+    // 不要な一時ファイルや中間ファイルを自動削除する機能がある。
+    "latex-workshop.latex.clean.fileTypes": [
+        "*.aux",
+        "*.bbl",
+        "*.blg",
+        "*.idx",
+        "*.ind",
+        "*.lof",
+        "*.lot",
+        "*.out",
+        "*.toc",
+        "*.acn",
+        "*.acr",
+        "*.alg",
+        "*.glg",
+        "*.glo",
+        "*.gls",
+        "*.ist",
+        "*.fls",
+        "*.log",
+        "*.fdb_latexmk",
+        "*.synctex.gz",
+        // for Beamer files
+        "_minted*",
+        "*.nav",
+        "*.snm",
+        "*.vrb"
+    ],
+    // ビルド失敗した際の残存ファイルが以降のビルドに影響を与えることがあるため、
+    // 残存ファイルを削除する設定
+    "latex-workshop.latex.autoClean.run": "onBuilt",
+    // PDFビューワの開き方。画面分割で開く。
+    "latex-workshop.view.pdf.viewer": "tab",
+    // LaTeXファイル保存時にPDFも更新するかどうか。
+    // LuaLaTeXはビルドが遅いので、かえって煩わしいので無効化
+    "latex-workshop.latex.autoBuild.run": "never",
+    "[tex]": {
+        // スニペット補完中にも補完を使えるようにする
+        "editor.suggest.snippetsPreventQuickSuggestions": false,
+        // インデント幅を2にする
+        "editor.tabSize": 2
+    },
+    "[latex]": {
+        // スニペット補完中にも補完を使えるようにする
+        "editor.suggest.snippetsPreventQuickSuggestions": false,
+        // インデント幅を2にする
+        "editor.tabSize": 2,
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "James-Yu.latex-workshop"
+    },
+    "latex-workshop.latexindent.path": "C:/texlive/2024/bin/windows/latexindent.exe",
+    "latex-workshop.latexindent.args": [
+        "%TMPFILE%",
+        "-c=%DIR%/",
+        "-y=defaultIndent: '%INDENT%'"
+    ],
+    "[bibtex]": {
+        // インデント幅を2にする
+        "editor.tabSize": 2
+    },
+    // 使用パッケージのコマンドや環境の補完を有効化
+    "latex-workshop.intellisense.package.enabled": true,
+    // 作成したファイルを、直下の "out" フォルダへ出力
+    "latex-workshop.latex.outDir": "out",
+    "emeraldwalk.runonsave": {
+        "commands": [
+            {
+                "match": ".tex$", // .texファイルに対してのみ実行
+                "cmd": "lualatex ${fileBasename}", // ここに実行したいコマンドを書く
+                "isAsync": true
+            }
+        ]
+    },
+    "latex-workshop.linting.chktex.enabled": true,
+    "latex-workshop.linting.run": "onType",
+    "haskell.manageHLS": "GHCup",
+    "haskell.ghcupExecutablePath": "C:\\ghcup\\bin\\ghcup.exe",
+    "indentRainbow.excludedLanguages": ["plaintext"],
+    "indentRainbow.ignoreErrorLanguages": ["tex", "markdown"],
+    "highlight-matching-tag.styles": {
+        "opening": {
+            "name": {
+                "surround": "rgba(0, 103, 192,1)"
+            }
+        },
+        "inner": {
+            "underline": "rgba(0, 103, 192,0.6)"
+        }
+    },
+    "diffEditor.renderSideBySide": true,
+    "workbench.editor.enablePreview": false,
+    "github.copilot.editor.enableAutoCompletions": true,
+    "prisma.showPrismaDataPlatformNotification": false,
+    "workbench.editor.showTabs": "none",
+    "editor.glyphMargin": false,
+    "editor.letterSpacing": -0.7,
+    "editor.lineHeight": 15,
+    "hediet.vscode-drawio.resizeImages": null,
+    "sonarlint.rules": {
+        "typescript:S6477": {
+            "level": "on"
+        },
+        "typescript:S6582": {
+            "level": "on"
+        },
+        "typescript:S4325": {
+            "level": "on"
+        },
+        "typescript:S2004": {
+            "level": "on"
+        }
+    },
+    "workbench.layoutControl.enabled": false,
+    "editor.minimap.enabled": false,
+    "vue.updateImportsOnFileMove.enabled": false,
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "[typescript]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+    "[typescriptreact]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+    "editor.renderWhitespace": "all",
+    "prettier.tabWidth": 4,
+    "window.commandCenter": false,
+    "window.menuBarVisibility": "compact",
+    "workbench.activityBar.location": "bottom",
+    "typescript.tsserver.experimental.enableProjectDiagnostics": true,
+    "eslint.lintTask.enable": true,
+    "[javascript]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+    "git.ignoreLegacyWarning": true,
+    "latex-workshop.linting.chktex.exec.path": "C:\\texlive\\2024\\bin\\windows\\chktex.exe",
+    "latex-workshop.chktex.enabled": true,
+    "latex-workshop.chktex.path": "C:\\texlive\\2024\\bin\\windows\\chktex.exe",
+    "latex.linter.enabled": false,
+    "latex-workshop.formatting.latex": "latexindent",
+    "latex-workshop.formatting.latexindent.path": "C:\\texlive\\2024\\bin\\windows\\latexindent.exe",
+    "[html]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+    "typescript.inlayHints.variableTypes.suppressWhenTypeMatchesName": false,
+    "typescript.inlayHints.parameterNames.suppressWhenArgumentMatchesName": false,
+    "typescript.updateImportsOnFileMove.enabled": "always",
+    "liveServer.settings.donotVerifyTags": true,
+    "graphviz-interactive-preview.renderLockAdditionalTimeout": 10000,
+    "files.exclude": {
+        "**/.history": true
+    },
+    "liveServer.settings.port": 3000,
+    "liveServer.settings.root": "/",
+    "liveServer.settings.host": "localhost",
+    "javascript.updateImportsOnFileMove.enabled": "always",
+    "git.path": "",
+    "advancedNewFile.convenienceOptions": ["root", "last", "current"],
+    "git.enableSmartCommit": true,
+    "workbench.editorAssociations": {
+        "*.copilotmd": "vscode.markdown.preview.editor",
+        "*.pdf": "latex-workshop-pdf-hook"
+    },
+    "discord.removeLowerDetails": true,
+    "discord.detailsEditing": "Editing",
+    "discord.detailsDebugging": "Debugging",
+    "diffEditor.maxFileSize": 0,
+    "python.autoComplete.extraPaths": [
+        "c:/programdata/anaconda3/lib/site-packages"
+    ],
+    "python.analysis.extraPaths": [
+        "c:/programdata/anaconda3/lib/site-packages"
+    ],
+    "workbench.editorAssociations": {
+        "*.h5": "default"
+    },
+    "editor.formatOnSave": true,
+    "editor.formatOnType": true,
+    "security.workspace.trust.untrustedFiles": "open",
+    "terminal.integrated.enableMultiLinePasteWarning": false,
+    "jupyter.askForKernelRestart": false,
+    "notebook.output.textLineLimit": 1000,
+    "editor.accessibilitySupport": "off",
+    "workbench.activityBar.location": "hidden",
+    "window.commandCenter": false,
+    "window.menuBarVisibility": "compact",
+    "gitlens.ai.model": "vscode",
+    "gitlens.ai.vscode.model": "copilot:gpt-4-turbo",
+    "window.customTitleBarVisibility": "windowed",
+    "javascript.preferences.useAliasesForRenames": false,
+    "chat.editing.alwaysSaveWithGeneratedChanges": true,
+    "markdown-preview-enhanced.plantumlJarPath": "C:\\Program Files\\PlantUML\\plantuml-mit-1.2024.8.jar",
+    "php.inlayHints.parameters.enabled": false,
+    "php.inlayHints.insertOnDoubleClick": false,
+    "editor.inlineSuggest.suppressSuggestions": true,
+    "[c]": {
+        "editor.defaultFormatter": "ms-vscode.cpptools"
+    },
+    "editor.find.seedSearchStringFromSelection": "selection",
+    "explorer.confirmPasteNative": false,
+    "markdown-preview-enhanced.scrollSync": false,
+    "C_Cpp.default.configurationProvider": "none",
+    "hediet.vscode-drawio.codeLinkActivated": true
+}
