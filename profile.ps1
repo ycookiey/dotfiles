@@ -23,5 +23,10 @@ $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 $OutputEncoding = $utf8NoBom
 $PSDefaultParameterValues['Out-File:Encoding'] = 'utf8NoBOM'
 
+# Antigravity alias
+function agy {
+    antigravity .
+}
+
 # zoxide
 Invoke-Expression (& { (zoxide init powershell | Out-String) })
