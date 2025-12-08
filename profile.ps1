@@ -33,5 +33,10 @@ function ghf {
     gh repo list $args --limit 1000 --json url --jq '.[].url' | fzf | %{ start $_ }
 }
 
+# Launch Vivaldi browser (viv [url])
+function viv {
+    & "$env:LOCALAPPDATA\Vivaldi\Application\vivaldi.exe" @args
+}
+
 # zoxide
 Invoke-Expression (& { (zoxide init powershell | Out-String) })
