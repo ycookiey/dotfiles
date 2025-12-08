@@ -38,5 +38,10 @@ function viv {
     & "$env:LOCALAPPDATA\Vivaldi\Application\vivaldi.exe" @args
 }
 
+# Launch Obsidian
+function obsd {
+    & "$env:LOCALAPPDATA\Programs\Obsidian\Obsidian.exe" @args
+}
+
 # zoxide
 Invoke-Expression (& { (zoxide init powershell | Out-String) })
