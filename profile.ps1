@@ -28,5 +28,10 @@ function agy {
     antigravity .
 }
 
+# Fuzzy-search and open GitHub repositories (ghf [user])
+function ghf {
+    gh repo list $args --limit 1000 --json url --jq '.[].url' | fzf | %{ start $_ }
+}
+
 # zoxide
 Invoke-Expression (& { (zoxide init powershell | Out-String) })
