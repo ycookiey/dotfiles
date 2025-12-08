@@ -43,5 +43,10 @@ function obsd {
     & "$env:LOCALAPPDATA\Programs\Obsidian\Obsidian.exe" @args
 }
 
+# Launch Slack
+function slk {
+    & "$env:LOCALAPPDATA\Microsoft\WindowsApps\Slack.exe" @args
+}
+
 # zoxide
 Invoke-Expression (& { (zoxide init powershell | Out-String) })
