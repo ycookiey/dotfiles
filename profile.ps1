@@ -48,5 +48,10 @@ function slk {
     & "$env:LOCALAPPDATA\Microsoft\WindowsApps\Slack.exe" @args
 }
 
+# Launch Notion Calendar
+function cal {
+    & "$env:LOCALAPPDATA\Programs\notion-calendar-web\Notion Calendar.exe" @args
+}
+
 # zoxide
 Invoke-Expression (& { (zoxide init powershell | Out-String) })
