@@ -28,6 +28,25 @@ function agy {
     antigravity .
 }
 
+# Launch Electron app with suppressed output
+function Start-ElectronApp {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$ExePath,
+
+        [Parameter(Mandatory=$false)]
+        [string[]]$Arguments = @()
+    )
+
+    $dummyLog = Join-Path $env:TEMP "$([System.IO.Path]::GetFileNameWithoutExtension($ExePath))_output.tmp"
+
+    Start-Process -FilePath $ExePath `
+        -ArgumentList $Arguments `
+        -RedirectStandardError "NUL" `
+        -RedirectStandardOutput $dummyLog `
+        -WindowStyle Normal
+}
+
 # Fuzzy-search and open GitHub repositories (ghf [user])
 function ghf {
     gh repo list $args --limit 1000 --json url --jq '.[].url' | fzf | %{ start $_ }
@@ -50,7 +69,7 @@ function slk {
 
 # Launch Notion Calendar
 function cal {
-    Start-Process "$env:LOCALAPPDATA\Programs\notion-calendar-web\Notion Calendar.exe"
+    Start-ElectronApp -ExePath "$env:LOCALAPPDATA\Programs\notion-calendar-web\Notion Calendar.exe" -Arguments $args
 }
 
 # Launch Discord
