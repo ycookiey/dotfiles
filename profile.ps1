@@ -50,7 +50,12 @@ function slk {
 
 # Launch Notion Calendar
 function cal {
-    & "$env:LOCALAPPDATA\Programs\notion-calendar-web\Notion Calendar.exe" @args
+    Start-Process "$env:LOCALAPPDATA\Programs\notion-calendar-web\Notion Calendar.exe"
+}
+
+# Launch Discord
+function dis {
+    & "$env:LOCALAPPDATA\Discord\Update.exe" --processStart Discord.exe
 }
 
 # zoxide
