@@ -1,4 +1,9 @@
+# ==========================================
+# 1. Config & Auto Update (Async)
+# ==========================================
 $DotfilesDir = 'C:\Main\Project\dotfiles'
+
+if ($global:j) { Remove-Job $global:j -Force -ErrorAction SilentlyContinue }
 
 $global:j = Start-ThreadJob {
     Set-Location $using:DotfilesDir
@@ -7,89 +12,58 @@ $global:j = Start-ThreadJob {
     if (-not $?) { git pull -q -r --autostash; $true }
 }
 
-# Git Worktree Runner
-$gtrBin = 'C:\Main\Script\git-worktree-runner\bin'
-$pathEntries = $env:Path -split ';'
-if (-not ($pathEntries -contains $gtrBin)) {
-    $env:Path = ($pathEntries + $gtrBin) -join ';'
-}
 
-$gitGtrScript = Join-Path $gtrBin 'git-gtr.ps1'
-if (Test-Path $gitGtrScript) {
-    function git-gtr {
-        & $gitGtrScript @args
-    }
-
-    Set-Alias -Name gtr -Value git-gtr -Scope Global
-}
-
-# BOMなしUTF-8のインスタンスを作成
+# ==========================================
+# 2. Environment & Encodings
+# ==========================================
+# BOMなしUTF-8設定 
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
-
-# 入出力のエンコーディングをUTF-8（BOMなし）に
 [Console]::OutputEncoding = $utf8NoBom
 [Console]::InputEncoding = $utf8NoBom
 $OutputEncoding = $utf8NoBom
 $PSDefaultParameterValues['Out-File:Encoding'] = 'utf8NoBOM'
 
-# Antigravity alias
-function agy {
-    antigravity .
+
+# ==========================================
+# 3. Tools & Aliases
+# ==========================================
+# Git Worktree Runner
+$gtrBin = 'C:\Main\Script\git-worktree-runner\bin'
+if (-not ($env:Path -split ';' -contains $gtrBin)) {
+    $env:Path = ($env:Path -split ';' | Where-Object { $_ } ) + $gtrBin -join ';'
+}
+$gitGtrScript = Join-Path $gtrBin 'git-gtr.ps1'
+if (Test-Path $gitGtrScript) {
+    function git-gtr { & $gitGtrScript @args }
+    Set-Alias -Name gtr -Value git-gtr -Scope Global
 }
 
-# Launch Electron app with suppressed output
+
 function Start-ElectronApp {
-    param(
-        [Parameter(Mandatory=$true)]
-        [string]$ExePath,
-
-        [Parameter(Mandatory=$false)]
-        [string[]]$Arguments = @()
-    )
-
-    $dummyLog = Join-Path $env:TEMP "$([System.IO.Path]::GetFileNameWithoutExtension($ExePath))_output.tmp"
-
-    Start-Process -FilePath $ExePath `
-        -ArgumentList $Arguments `
-        -RedirectStandardError "NUL" `
-        -RedirectStandardOutput $dummyLog `
-        -WindowStyle Normal
+    param([string]$ExePath, [string[]]$Arguments = @())
+    $dummyLog = Join-Path $env:TEMP "$([IO.Path]::GetFileNameWithoutExtension($ExePath))_output.tmp"
+    Start-Process -FilePath $ExePath -ArgumentList $Arguments -RedirectStandardError "NUL" -RedirectStandardOutput $dummyLog -WindowStyle Normal
+}
+function ghf { 
+    gh repo list $args --limit 1000 --json url --jq '.[].url' | fzf | %{ start $_ } 
 }
 
-# Fuzzy-search and open GitHub repositories (ghf [user])
-function ghf {
-    gh repo list $args --limit 1000 --json url --jq '.[].url' | fzf | %{ start $_ }
-}
+function agy { antigravity . }
+function viv { & "$env:LOCALAPPDATA\Vivaldi\Application\vivaldi.exe" @args }
+function obsd { & "$env:LOCALAPPDATA\Programs\Obsidian\Obsidian.exe" @args }
+function slk { & "$env:LOCALAPPDATA\Microsoft\WindowsApps\Slack.exe" @args }
+function dis { & "$env:LOCALAPPDATA\Discord\Update.exe" --processStart Discord.exe }
+function cal { Start-ElectronApp -ExePath "$env:LOCALAPPDATA\Programs\notion-calendar-web\Notion Calendar.exe" -Arguments $args }
 
-# Launch Vivaldi browser (viv [url])
-function viv {
-    & "$env:LOCALAPPDATA\Vivaldi\Application\vivaldi.exe" @args
-}
-
-# Launch Obsidian
-function obsd {
-    & "$env:LOCALAPPDATA\Programs\Obsidian\Obsidian.exe" @args
-}
-
-# Launch Slack
-function slk {
-    & "$env:LOCALAPPDATA\Microsoft\WindowsApps\Slack.exe" @args
-}
-
-# Launch Notion Calendar
-function cal {
-    Start-ElectronApp -ExePath "$env:LOCALAPPDATA\Programs\notion-calendar-web\Notion Calendar.exe" -Arguments $args
-}
-
-# Launch Discord
-function dis {
-    & "$env:LOCALAPPDATA\Discord\Update.exe" --processStart Discord.exe
-}
-
-# zoxide
+# ==========================================
+# 4. Initialize Tools
+# ==========================================
 Invoke-Expression (& { (zoxide init powershell | Out-String) })
 
 
+# ==========================================
+# 5. Prompt Hook 
+# ==========================================
 $oldPrompt = $function:prompt
 function prompt {
     if ($global:j.State -eq 'Completed') {
