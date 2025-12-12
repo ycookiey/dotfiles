@@ -1,3 +1,12 @@
+$DotfilesDir = 'C:\Main\Project\dotfiles'
+
+$global:j = Start-ThreadJob {
+    Set-Location $using:DotfilesDir
+    git fetch -q
+    git diff --quiet HEAD '@{u}'
+    if (-not $?) { git pull -q -r --autostash; $true }
+}
+
 # Git Worktree Runner
 $gtrBin = 'C:\Main\Script\git-worktree-runner\bin'
 $pathEntries = $env:Path -split ';'
@@ -79,3 +88,13 @@ function dis {
 
 # zoxide
 Invoke-Expression (& { (zoxide init powershell | Out-String) })
+
+
+$oldPrompt = $function:prompt
+function prompt {
+    if ($global:j.State -eq 'Completed') {
+        if (Receive-Job $global:j) { Write-Host "`n✨ Dotfiles Updated!" -Fg Green }
+        Remove-Job $global:j; $global:j = $null
+    }
+    & $oldPrompt
+}
