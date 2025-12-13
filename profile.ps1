@@ -3,6 +3,10 @@
 # ==========================================
 $DotfilesDir = 'C:\Main\Project\dotfiles'
 
+# PowerShell の `git` を関数で上書きして、常に Scoop の git.exe を使う（PATH 上の別 git.exe を無視）
+# ただし `git summary` 等の外部サブコマンドは、起動した git.exe が自身の探索パス（exec-path / PATH）から見つけて実行する
+function git { & "$env:USERPROFILE\scoop\shims\git.exe" @args }
+
 function Start-DotfilesAutoUpdateJob {
     param([Parameter(Mandatory)][string]$RepoDir)
     Start-ThreadJob {
