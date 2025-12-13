@@ -1,0 +1,85 @@
+# Git グローバル設定
+# シンボリックリンクで $HOME\.gitconfig にリンクされます
+
+[user]
+	name = ycookiey
+	email = 70356861+ycookiey@users.noreply.github.com
+
+[core]
+	# 改行コードの自動変換（Windows環境）
+	autocrlf = true
+	# エディタ設定
+	editor = code --wait
+	# ファイル名の大文字小文字を区別
+	ignorecase = false
+
+[init]
+	# デフォルトブランチ名
+	defaultBranch = main
+
+[pull]
+	# pullの挙動をrebaseに設定
+	rebase = true
+
+[push]
+	# pushのデフォルト動作
+	default = current
+	# リモートブランチの自動作成
+	autoSetupRemote = true
+
+[fetch]
+	# 削除されたリモートブランチをローカルでも削除
+	prune = true
+
+[merge]
+	# コンフリクト時のマーカー表示形式
+	conflictstyle = diff3
+	# Fast-forwardマージを優先
+	ff = only
+
+[diff]
+	# より見やすいdiff表示
+	algorithm = histogram
+	# 移動検出
+	colorMoved = default
+
+[alias]
+	# よく使うコマンドのエイリアス
+	st = status
+	co = checkout
+	br = branch
+	ci = commit
+	cm = commit -m
+	ac = "!f() { test -n \"$2\" || { echo 'usage: git ac <message> <paths...>' >&2; return 1; }; msg=\"$1\"; shift; git add -- \"$@\" && git commit -m \"$msg\"; }; f"
+	ca = commit --amend
+	cp = cherry-pick
+	df = diff
+	dc = diff --cached
+	lg = log --graph --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset' --abbrev-commit
+	last = log -1 HEAD
+	unstage = reset HEAD --
+	undo = reset --soft HEAD^
+
+[color]
+	# カラー出力を有効化
+	ui = auto
+
+[color "branch"]
+	current = yellow reverse
+	local = yellow
+	remote = green
+
+[color "diff"]
+	meta = yellow bold
+	frag = magenta bold
+	old = red bold
+	new = green bold
+
+[color "status"]
+	added = yellow
+	changed = green
+	untracked = cyan
+
+[help]
+	# typoを自動修正
+	autocorrect = 1
