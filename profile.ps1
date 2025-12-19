@@ -62,6 +62,7 @@ function agy { antigravity . }
 function Start-App($Name) {
     explorer "shell:AppsFolder\$((Get-StartApps $Name | select -f 1).AppID)"
 }
+function kindle { explorer kindle: }
 function dis { explorer discord: }
 function slk { explorer slack: }
 function obsd { explorer obsidian: }
