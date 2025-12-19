@@ -54,77 +54,19 @@ if (Test-Path $gitGtrScript) {
 }
 
 
-function Start-ElectronApp {
-    param([string]$ExePath, [string[]]$Arguments = @())
-    $dummyLog = Join-Path $env:TEMP "$([IO.Path]::GetFileNameWithoutExtension($ExePath))_output.tmp"
-    Start-Process -FilePath $ExePath -ArgumentList $Arguments -RedirectStandardError "NUL" -RedirectStandardOutput $dummyLog -WindowStyle Normal
-}
-
-function Set-AppFunction {
-    param(
-        [Parameter(Mandatory)][string]$Name,
-        [Parameter(Mandatory)][string]$ExePath,
-        [ValidateSet('Direct', 'Electron')][string]$Mode = 'Direct',
-        [string[]]$FixedArguments = @()
-    )
-
-    $exe = $ExePath
-    $fixed = $FixedArguments
-
-    $impl = if ($Mode -eq 'Electron') {
-        {
-            param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args)
-            Start-ElectronApp -ExePath $exe -Arguments ($fixed + $Args)
-        }.GetNewClosure()
-    }
-    else {
-        {
-            param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args)
-            & $exe @($fixed + $Args)
-        }.GetNewClosure()
-    }
-
-    Set-Item -Path "function:global:$Name" -Value $impl
-}
-
 function grf { gh repo list $args -L 1000 --json nameWithOwner,description,url -q '.[]|[.nameWithOwner,.description,.url]|@tsv' | fzf -d "`t" --with-nth 1,2 | %{$_.Split("`t")[-1]} }
 function grfo { ii (grf) }
 function grfc { gh repo clone (grf) }
 function agy { antigravity . }
 
-function Join-LocalAppData {
-    param([Parameter(Mandatory)][string]$ChildPath)
-    Join-Path $env:LOCALAPPDATA $ChildPath
+function Start-App($Name) {
+    explorer "shell:AppsFolder\$((Get-StartApps $Name | select -f 1).AppID)"
 }
-
-$appFunctions = @(
-    @{
-        Name = 'viv'
-        ExePath = (Join-LocalAppData 'Vivaldi\Application\vivaldi.exe')
-    },
-    @{
-        Name = 'obsd'
-        ExePath = (Join-LocalAppData 'Programs\Obsidian\Obsidian.exe')
-    },
-    @{
-        Name = 'slk'
-        ExePath = (Join-LocalAppData 'Microsoft\WindowsApps\Slack.exe')
-    },
-    @{
-        Name = 'dis'
-        ExePath = (Join-LocalAppData 'Discord\Update.exe')
-        FixedArguments = @('--processStart', 'Discord.exe')
-    },
-    @{
-        Name = 'cal'
-        ExePath = (Join-LocalAppData 'Programs\notion-calendar-web\Notion Calendar.exe')
-        Mode = 'Electron'
-    }
-)
-
-foreach ($app in $appFunctions) {
-    Set-AppFunction @app
-}
+function dis { explorer discord: }
+function slk { explorer slack: }
+function obsd { explorer obsidian: }
+function cal { Start-App "Notion Calendar" }
+function viv { start vivaldi }
 
 # ==========================================
 # 4. Initialize Tools
