@@ -87,10 +87,9 @@ function Set-AppFunction {
     Set-Item -Path "function:global:$Name" -Value $impl
 }
 
-function ghf { 
-    gh repo list $args --limit 1000 --json url --jq '.[].url' | fzf | %{ start $_ } 
-}
-
+function grf { gh repo list $args -L 1000 --json nameWithOwner,description,url -q '.[]|[.nameWithOwner,.description,.url]|@tsv' | fzf -d "`t" --with-nth 1,2 | %{$_.Split("`t")[-1]} }
+function grfo { ii (grf) }
+function grfc { gh repo clone (grf) }
 function agy { antigravity . }
 
 function Join-LocalAppData {
