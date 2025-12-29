@@ -65,8 +65,19 @@ return {
     -- コピーモード
     -- { key = 'X', mods = 'LEADER', action = act.ActivateKeyTable{ name = 'copy_mode', one_shot =false }, },
     { key = "[", mods = "LEADER", action = act.ActivateCopyMode },
-    -- コピー
-    { key = "c", mods = "CTRL", action = act.CopyTo("Clipboard") },
+    -- コピー（選択範囲がある場合）またはターミナル停止（選択範囲がない場合）
+    {
+      key = "c",
+      mods = "CTRL",
+      action = wezterm.action_callback(function(window, pane)
+        local has_selection = window:get_selection_text_for_pane(pane) ~= ""
+        if has_selection then
+          window:perform_action(act.CopyTo("Clipboard"), pane)
+        else
+          window:perform_action(act.SendKey({ key = "c", mods = "CTRL" }), pane)
+        end
+      end),
+    },
     -- 貼り付け
     { key = "v", mods = "CTRL", action = act.PasteFrom("Clipboard") },
 
