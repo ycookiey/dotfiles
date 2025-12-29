@@ -1,12 +1,12 @@
 ; AutoHotkey Shortcuts
-; Windows Terminal - 既に開いている場合はフォーカス、なければ新規起動
+; WezTerm - 既に開いている場合はフォーカス、なければ新規起動
 #t::{
-    if WinExist("ahk_exe WindowsTerminal.exe")
+    if WinExist("ahk_exe wezterm-gui.exe")
     {
         WinActivate
     }
     else
     {
-        Run "wt"
+        Run "wezterm-gui"
     }
 }
