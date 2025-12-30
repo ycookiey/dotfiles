@@ -1,0 +1,38 @@
+# Starship 設定ファイル
+# ドキュメント: https://starship.rs/config/
+
+# プロンプトの基本設定
+format = """
+[┌───────────────────────────────────────────────────────────────────>](bold green)
+[│](bold green)$directory$git_branch$git_status
+[└─>](bold green) """
+
+# 右側のプロンプト（実行時間など）
+right_format = """$cmd_duration"""
+
+# ディレクトリ表示
+[directory]
+truncation_length = 3
+truncate_to_repo = true
+style = "bold cyan"
+
+# Git ブランチ
+[git_branch]
+symbol = " "
+style = "bold purple"
+format = "[$symbol$branch]($style) "
+
+# Git ステータス
+[git_status]
+style = "bold red"
+format = '([\[$all_status$ahead_behind\]]($style) )'
+
+# コマンド実行時間
+[cmd_duration]
+min_time = 500
+format = "took [$duration](bold yellow)"
+
+# 文字設定
+[character]
+success_symbol = "[❯](bold green)"
+error_symbol = "[❯](bold red)"
