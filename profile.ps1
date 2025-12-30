@@ -25,12 +25,15 @@ $global:j = Start-DotfilesAutoUpdateJob -RepoDir $DotfilesDir
 # ==========================================
 # 2. Environment & Encodings
 # ==========================================
-# BOMなしUTF-8設定 
+# BOMなしUTF-8設定
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 [Console]::OutputEncoding = $utf8NoBom
 [Console]::InputEncoding = $utf8NoBom
 $OutputEncoding = $utf8NoBom
 $PSDefaultParameterValues['Out-File:Encoding'] = 'utf8NoBOM'
+
+# Starship 設定ファイルのパス
+$env:STARSHIP_CONFIG = Join-Path $DotfilesDir 'starship.toml'
 
 
 # ==========================================
@@ -73,6 +76,7 @@ function viv { start vivaldi }
 # 4. Initialize Tools
 # ==========================================
 Invoke-Expression (& { (zoxide init powershell | Out-String) })
+Invoke-Expression (&starship init powershell)
 
 
 # ==========================================
