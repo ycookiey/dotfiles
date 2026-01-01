@@ -1,4 +1,4 @@
-/* 
+/*
 originally from https://note.com/webru/n/ne919635377a2
 アドレスバーに (vivaldi://experiments/) を入力し、Enter。
 
@@ -9,36 +9,133 @@ originally from https://note.com/webru/n/ne919635377a2
 「Custom UI Modifications」でそのファイルを選択。
  */
 
-/* タブバー（左）：透過＆ホバー展開済みのまま */
+/* ===========================================
+   タブバー（左）：透過＆ホバー展開
+   =========================================== */
 #tabs-tabbar-container.left {
     position: absolute !important;
     top: 0;
     left: 0;
     height: 100% !important;
-    width: 40px !important;
-    z-index: 9999;
+    width: 32px !important;
+    z-index: 9;
     overflow: hidden;
-    transition: width 0.3s ease, background-color 0.3s ease,
-        backdrop-filter 0.3s ease;
-    backdrop-filter: blur(12px);
-    background-color: rgba(255, 255, 255, 0.2) !important;
-    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+    transition: width 0.3s ease, background-color 0.3s ease, backdrop-filter 0.3s ease;
+    background-color: transparent !important;
+    backdrop-filter: none;
+    box-shadow: none !important;
+    border: none !important;
 }
 
-/* ホバーで拡張 */
 #tabs-tabbar-container.left:hover {
     width: 200px !important;
-    background-color: rgba(255, 255, 255, 0.1);
-    backdrop-filter: blur(12px);
+    background-color: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(8px);
 }
 
-/* Webページ表示領域に左マージンを追加 */
-#webview-container {
-    margin-left: 40px !important;
-}
-
-/* ツールバーを最前面に表示 */
+/* パネルを最前面に表示 */
 #panels-container {
-    z-index: 10000 !important; /* タブバーより前に出す */
-    position: relative; /* 明示的に重ねるため */
+    z-index: 10000 !important;
+    position: relative;
+}
+
+/* ===========================================
+   不要な要素を非表示
+   =========================================== */
+#tabs-tabbar-container.left .button-toolbar.newtab,
+#tabs-tabbar-container.left .button-tabbar.toggle-trash,
+#tabs-tabbar-container.left .button-toolbar.tabs-button,
+#tabs-tabbar-container.left .SlideBar {
+    display: none !important;
+}
+
+/* ===========================================
+   タブスタイル
+   =========================================== */
+/* タブストリップのmarginを無効化 */
+#tabs-container.left .tab-strip,
+#tabs-container.right .tab-strip {
+    margin: 0 !important;
+}
+
+/* ミニタブのセンタリングを無効化 */
+#tabs-container .tab.tab-small.tab-mini .tab-header,
+#tabs-container .tab.pinned.tab-mini .tab-header {
+    justify-content: flex-start !important;
+}
+
+/* tab-headerのpadding-leftを無効化 */
+#tabs-tabbar-container.left .tab .tab-header {
+    padding-left: 0 !important;
+}
+
+/* 非アクティブタブ：余白を0に */
+#tabs-tabbar-container.left .tab:not(.active) {
+    padding-left: 0 !important;
+    margin-left: 0 !important;
+}
+
+/* アクティブタブ：左側に縦バーインジケーター */
+#tabs-tabbar-container.left .tab.active {
+    position: relative !important;
+    margin-left: 8px !important;
+    overflow: visible !important;
+}
+
+#tabs-tabbar-container.left .tab.active::before {
+    content: "";
+    position: absolute;
+    left: -8px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 7px;
+    height: 24px;
+    background-color: rgba(74, 158, 255, 1);
+    border-radius: 4px;
+}
+
+/* タブ背景を透明に */
+:not(.ui-transparent-tabs).color-behind-tabs-on .tab,
+#browser.color-behind-tabs-on .tab.active.active,
+#tabs-tabbar-container.left .tab.active {
+    background-color: transparent !important;
+}
+
+/* 折りたたみ時にtitleを非表示 */
+#tabs-tabbar-container.left .tab .title {
+    display: none;
+}
+
+#tabs-tabbar-container.left:hover .tab .title {
+    display: flex;
+}
+
+/* アクティブタブのbox-shadowを削除 */
+.density-on:not(.tabs-at-edge) .tab.active:not(.tab-in-accordion, .tab-accordion) {
+    box-shadow: none !important;
+}
+
+/* ===========================================
+   ワークスペースボタン：アイコンのみ、左端配置
+   =========================================== */
+#tabs-container .toolbar.toolbar-tabbar-before,
+#tabs-container .toolbar.toolbar-tabbar-before .workspace-popup,
+#tabs-container .toolbar.toolbar-tabbar-before .workspace-popup button {
+    background-color: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+}
+
+#tabs-container .toolbar.toolbar-tabbar-before .workspace-popup .button-title,
+#tabs-container .toolbar.toolbar-tabbar-before .workspace-popup .button-toolbar-menu-indicator {
+    display: none !important;
+}
+
+#tabs-container .toolbar.toolbar-tabbar-before .workspace-popup svg {
+    width: 18px !important;
+    height: 18px !important;
+}
+
+#tabs-container .toolbar.toolbar-tabbar-before .workspace-popup .button-icon {
+    justify-content: flex-start !important;
 }
