@@ -56,7 +56,7 @@ return {
     -- Tab新規作成
     { key = "t", mods = "CTRL", action = act({ SpawnTab = "CurrentPaneDomain" }) },
     -- Tabを閉じる
-    { key = "w", mods = "CTRL", action = act({ CloseCurrentTab = { confirm = true } }) },
+    { key = "w", mods = "CTRL", action = act({ CloseCurrentTab = { confirm = false } }) },
     { key = "}", mods = "LEADER", action = act({ MoveTabRelative = 1 }) },
 
     -- 画面フルスクリーン切り替え
