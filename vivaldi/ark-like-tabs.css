@@ -1,0 +1,44 @@
+/* 
+originally from https://note.com/webru/n/ne919635377a2
+アドレスバーに (vivaldi://experiments/) を入力し、Enter。
+
+「Allow for using CSS modifications」をONに。
+
+(vivaldi://settings/appearance/)に移動し、カスタムCSSファイルを読み込む設定が出ていることを確認。
+
+「Custom UI Modifications」でそのファイルを選択。
+ */
+
+/* タブバー（左）：透過＆ホバー展開済みのまま */
+#tabs-tabbar-container.left {
+    position: absolute !important;
+    top: 0;
+    left: 0;
+    height: 100% !important;
+    width: 40px !important;
+    z-index: 9999;
+    overflow: hidden;
+    transition: width 0.3s ease, background-color 0.3s ease,
+        backdrop-filter 0.3s ease;
+    backdrop-filter: blur(12px);
+    background-color: rgba(255, 255, 255, 0.2) !important;
+    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+}
+
+/* ホバーで拡張 */
+#tabs-tabbar-container.left:hover {
+    width: 200px !important;
+    background-color: rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(12px);
+}
+
+/* Webページ表示領域に左マージンを追加 */
+#webview-container {
+    margin-left: 40px !important;
+}
+
+/* ツールバーを最前面に表示 */
+#panels-container {
+    z-index: 10000 !important; /* タブバーより前に出す */
+    position: relative; /* 明示的に重ねるため */
+}
