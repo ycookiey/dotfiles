@@ -61,6 +61,7 @@ function grf { gh repo list $args -L 1000 --json nameWithOwner,description,url -
 function grfo { ii (grf) }
 function grfc { gh repo clone (grf) }
 function agy { antigravity . }
+function c { if ($args[0] -eq 'r') { claude /resume @($args[1..999]) } else { claude @args } }
 
 function Start-App($Name) {
     explorer "shell:AppsFolder\$((Get-StartApps $Name | select -f 1).AppID)"
