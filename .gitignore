@@ -1,1 +1,20 @@
 .history/
+
+# セットアップログ
+setup.log
+install.log
+
+# バックアップファイル
+*.bak
+*.backup
+*.tmp
+
+# OS固有
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 一時ファイル
+*.swp
+*.swo
+*~
