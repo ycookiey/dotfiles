@@ -1,0 +1,54 @@
+# Mise - CLI/ランタイムバージョン管理設定
+# https://mise.jdx.dev/
+
+[tools]
+# Node.js - LTS版を使用
+node = "lts"
+
+# Java - Temurin (旧AdoptOpenJDK) のJava 17
+java = "temurin-17"
+
+# Python - 複数バージョンを並行管理
+python = ["3.12", "3.14"]
+
+# AWS CLI - 最新版
+awscli = "latest"
+
+# GitHub CLI - 最新版
+github-cli = "latest"
+
+# usage - CLI使用統計ツール
+usage = "latest"
+
+# --- 以下は必要に応じて追加 ---
+
+# Rust
+# rust = "latest"
+
+# Go
+# go = "latest"
+
+# Deno
+# deno = "latest"
+
+# Bun
+# bun = "latest"
+
+# Terraform
+# terraform = "latest"
+
+# kubectl
+# kubectl = "latest"
+
+[settings]
+# 実験的機能を有効化
+experimental = true
+
+# プラグインの自動更新
+plugin_autoupdate_last_check_duration = "7d"
+
+# ツールのインストール時に確認をスキップ
+yes = true
+
+# ショートハンドを有効化
+legacy_version_file = true
