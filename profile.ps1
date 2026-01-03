@@ -68,9 +68,9 @@ function Start-App($Name) {
 function kindle { explorer kindle: }
 function dis { explorer discord: }
 function slk { explorer slack: }
-function obsd { explorer obsidian: }
+function obsd { obsidian }
 function cal { Start-App "Notion Calendar" }
-function viv { start vivaldi }
+function viv { vivaldi }
 
 # ==========================================
 # 4. Initialize Tools
