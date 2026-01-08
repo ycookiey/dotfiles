@@ -70,6 +70,7 @@ function c { if ($args[0] -eq 'r') { claude /resume @($args[1..999]) } else { cl
 function z- { z - }
 function f { fzf @args }
 function fm { fzf -m @args }
+function zp { zoxide query -i @args }
 
 function Start-App($Name) {
     explorer "shell:AppsFolder\$((Get-StartApps $Name | select -f 1).AppID)"
