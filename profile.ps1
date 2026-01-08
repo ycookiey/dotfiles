@@ -56,6 +56,10 @@ if (Test-Path $gitGtrScript) {
     Set-Alias -Name gtr -Value git-gtr -Scope Global
 }
 
+# MiKTeX (LaTeX)
+$miktexBin = Join-Path $env:USERPROFILE 'scoop\apps\miktex\current\texmfs\install\miktex\bin\x64'
+Add-PathEntryIfMissing -PathEntry $miktexBin
+
 
 function grf { gh repo list $args -L 1000 --json nameWithOwner,description,url -q '.[]|[.nameWithOwner,.description,.url]|@tsv' | fzf -d "`t" --with-nth 1,2 | %{$_.Split("`t")[-1]} }
 function grfo { ii (grf) }
