@@ -35,6 +35,9 @@ $PSDefaultParameterValues['Out-File:Encoding'] = 'utf8NoBOM'
 # Starship 設定ファイルのパス
 $env:STARSHIP_CONFIG = Join-Path $DotfilesDir 'starship.toml'
 
+# Yazi用のfile.exeパス
+$env:YAZI_FILE_ONE = "$env:USERPROFILE\scoop\apps\git\current\usr\bin\file.exe"
+
 
 # ==========================================
 # 3. Tools & Aliases
@@ -71,6 +74,15 @@ function z- { z - }
 function f { fzf @args }
 function fm { fzf -m @args }
 function zp { zoxide query -i @args }
+function y {
+    $tmp = [System.IO.Path]::GetTempFileName()
+    yazi $args --cwd-file=$tmp
+    $cwd = Get-Content $tmp
+    if ($cwd -and $cwd -ne $PWD.Path) {
+        Set-Location $cwd
+    }
+    Remove-Item $tmp
+}
 
 function Start-App($Name) {
     explorer "shell:AppsFolder\$((Get-StartApps $Name | select -f 1).AppID)"
