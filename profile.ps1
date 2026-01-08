@@ -67,6 +67,7 @@ function grfc { gh repo clone (grf) }
 function agy { antigravity . }
 function lg { lazygit }
 function c { if ($args[0] -eq 'r') { claude /resume @($args[1..999]) } else { claude @args } }
+function z- { z - }
 
 function Start-App($Name) {
     explorer "shell:AppsFolder\$((Get-StartApps $Name | select -f 1).AppID)"
@@ -83,6 +84,9 @@ function viv { vivaldi }
 # ==========================================
 Invoke-Expression (& { (zoxide init powershell | Out-String) })
 Invoke-Expression (&starship init powershell)
+
+# zoxide自動学習用フック
+function Invoke-Starship-PreCommand { $null = __zoxide_hook }
 
 
 # ==========================================
