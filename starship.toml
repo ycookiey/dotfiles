@@ -1,38 +1,43 @@
-# Starship 設定ファイル
-# ドキュメント: https://starship.rs/config/
+"$schema" = 'https://starship.rs/config-schema.json'
 
-# プロンプトの基本設定
 format = """
-[┌───────────────────────────────────────────────────────────────────>](bold green)
-[│](bold green)$directory$git_branch$git_status
-[└─>](bold green) """
+[▓](fg:#ffffff bg:#ffffff)\
+[](bg:#c73d3d fg:#ffffff)\
+$directory\
+[](fg:#c73d3d bg:#4a1f1f)\
+$git_branch\
+$git_status\
+[](fg:#4a1f1f)\
+\n$character"""
 
-# 右側のプロンプト（実行時間など）
 right_format = """$cmd_duration"""
 
-# ディレクトリ表示
+
 [directory]
+style = "fg:#e3e5e5 bg:#c73d3d"
+format = "[ $path ]($style)"
 truncation_length = 3
-truncate_to_repo = true
-style = "bold cyan"
 
-# Git ブランチ
+[directory.substitutions]
+"Documents" = "󰈙 "
+"Downloads" = " "
+"Music" = " "
+"Pictures" = " "
+
 [git_branch]
-symbol = " "
-style = "bold purple"
-format = "[$symbol$branch]($style) "
+symbol = ""
+style = "bg:#4a1f1f"
+format = '[[ $symbol $branch ](fg:#f0d0d0 bg:#4a1f1f)]($style)'
 
-# Git ステータス
 [git_status]
-style = "bold red"
-format = '([\[$all_status$ahead_behind\]]($style) )'
+style = "bg:#4a1f1f"
+format = '[[($all_status$ahead_behind )](fg:#f0d0d0 bg:#4a1f1f)]($style)'
 
 # コマンド実行時間
 [cmd_duration]
 min_time = 500
 format = "took [$duration](bold yellow)"
 
-# 文字設定
 [character]
 success_symbol = "[❯](bold green)"
 error_symbol = "[❯](bold red)"

@@ -12,8 +12,7 @@ config.default_prog = { 'pwsh' }
 
 ----------------------------------------------------
 -- フォント設定
-----------------------------------------------------
-config.font = wezterm.font('JetBrains Mono', { weight = 'Medium' })
+config.font = wezterm.font('HackGen Console NF')
 config.font_size = 12.0
 
 ----------------------------------------------------
