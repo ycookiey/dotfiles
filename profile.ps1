@@ -94,6 +94,7 @@ function slk { explorer slack: }
 function obsd { obsidian }
 function cal { Start-App "Notion Calendar" }
 function viv { vivaldi }
+function rmt { explorer parsec: }
 
 # ==========================================
 # 4. Initialize Tools
