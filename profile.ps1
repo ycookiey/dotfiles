@@ -95,6 +95,7 @@ function obsd { obsidian }
 function cal { Start-App "Notion Calendar" }
 function viv { vivaldi }
 function rmt { explorer parsec: }
+function spotify { explorer spotify: }
 
 # ==========================================
 # 4. Initialize Tools
