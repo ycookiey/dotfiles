@@ -1,0 +1,89 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "Windows Startup Manager - アプリケーション起動設定",
+    "apps": [
+        {
+            "name": "AutoHotkey",
+            "path": "%USERPROFILE%\\scoop\\shims\\autohotkey.exe",
+            "arguments": "C:\\Main\\Project\\dotfiles\\config\\autohotkey\\shortcuts.ahk",
+            "priority": "High",
+            "delay": 0,
+            "enabled": true
+        },
+        {
+            "name": "yClocky",
+            "path": "%USERPROFILE%\\scoop\\apps\\yclocky\\current\\yClocky.exe",
+            "arguments": "",
+            "priority": "High",
+            "delay": 1,
+            "enabled": true
+        },
+        {
+            "name": "HideTaskBar",
+            "path": "C:\\Main\\Project\\HideTaskBar-temp\\src\\HideTaskBar\\bin\\Debug\\net8.0-windows\\HideTaskBar.exe",
+            "arguments": "",
+            "priority": "Medium",
+            "delay": 2,
+            "enabled": true
+        },
+        {
+            "name": "yCursory",
+            "path": "%USERPROFILE%\\scoop\\apps\\yCursory\\current\\yCursory.exe",
+            "arguments": "",
+            "priority": "Medium",
+            "delay": 2,
+            "enabled": true
+        },
+        {
+            "name": "yMonitory",
+            "path": "C:\\Main\\Project\\yMonitory\\build\\yMonitory.exe",
+            "arguments": "",
+            "priority": "Medium",
+            "delay": 2,
+            "enabled": true
+        },
+        {
+            "name": "yhwndy",
+            "path": "C:\\Main\\Project\\yhwndy\\src\\yhwndy\\bin\\Debug\\net8.0-windows\\win-x64\\yhwndy.exe",
+            "arguments": "",
+            "priority": "Medium",
+            "delay": 2,
+            "enabled": true
+        },
+        {
+            "name": "Notion Calendar",
+            "path": "%LOCALAPPDATA%\\Programs\\notion-calendar-web\\Notion Calendar.exe",
+            "arguments": "--process-start-args --from-login",
+            "priority": "Medium",
+            "delay": 4,
+            "enabled": true
+        },
+        {
+            "name": "LGHUB",
+            "path": "%ProgramFiles%\\LGHUB\\system_tray\\lghub_system_tray.exe",
+            "arguments": "--minimized",
+            "priority": "Low",
+            "delay": 5,
+            "enabled": true
+        },
+        {
+            "name": "NVIDIA Broadcast",
+            "path": "%ProgramFiles%\\NVIDIA Corporation\\NVIDIA Broadcast\\NVIDIA Broadcast.exe",
+            "arguments": "--process-start-args \"--launch-hidden\"",
+            "priority": "Low",
+            "delay": 5,
+            "enabled": true
+        },
+        {
+            "name": "Discord",
+            "path": "%LOCALAPPDATA%\\Discord\\Update.exe",
+            "arguments": "--processStart Discord.exe",
+            "priority": "Low",
+            "delay": 5,
+            "enabled": true
+        }
+    ],
+    "settings": {
+        "logDirectory": "C:\\Main\\Project\\dotfiles\\logs"
+    }
+}
