@@ -1,34 +1,72 @@
-# register-startup.ps1
-# Register startup.vbs to Windows Registry Run key
-# TODO: Integrate into setup.ps1
+<#
+.SYNOPSIS
+    Register or unregister Startup Manager to Windows startup (Task Scheduler).
 
-$vbsPath = "$PSScriptRoot\startup.vbs"
-$regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-$regName = "DotfilesStartup"
+.PARAMETER Action
+    Action: Register or Unregister
 
-Write-Host "Startup Registration" -ForegroundColor Cyan
-Write-Host ""
+.EXAMPLE
+    .\register-startup.ps1 -Action Register
+#>
 
-# Check if VBScript exists
-if (!(Test-Path $vbsPath)) {
-    Write-Host "ERROR: startup.vbs not found" -ForegroundColor Red
-    exit 1
+param(
+    [Parameter(Mandatory)]
+    [ValidateSet("Register", "Unregister")]
+    [string]$Action
+)
+
+# Require admin
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Write-Host "Restarting as administrator..." -ForegroundColor Yellow
+    Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -File `"$PSCommandPath`" -Action $Action" -Verb RunAs
+    exit
 }
 
-# Check if already registered
-$current = Get-ItemProperty -Path $regPath -Name $regName -ErrorAction SilentlyContinue
-if ($current) {
-    Write-Host "Already registered: $($current.$regName)" -ForegroundColor Yellow
-    $overwrite = Read-Host "Overwrite? (Y/N)"
-    if ($overwrite -ne 'Y') { exit 0 }
+$TaskName = "CustomStartupManager"
+$ScriptPath = Join-Path $PSScriptRoot "startup-manager.ps1"
+
+function Register-Startup {
+    if (-not (Test-Path $ScriptPath)) {
+        Write-Host "Error: startup-manager.ps1 not found" -ForegroundColor Red
+        exit 1
+    }
+
+    # Remove existing task
+    $existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($existing) {
+        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+    }
+
+    # Create task
+    $trigger = New-ScheduledTaskTrigger -AtLogOn
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -NoProfile -File `"$ScriptPath`""
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 1) -Priority 0
+    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+
+    Register-ScheduledTask -TaskName $TaskName -Trigger $trigger -Action $action -Settings $settings -Principal $principal -Description "Custom Startup Manager" | Out-Null
+
+    Write-Host "✓ Registered: $TaskName" -ForegroundColor Green
 }
 
-# Register to registry
-$command = "wscript.exe `"$vbsPath`""
-Set-ItemProperty -Path $regPath -Name $regName -Value $command -Type String
+function Unregister-Startup {
+    $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($task) {
+        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+        Write-Host "✓ Unregistered: $TaskName" -ForegroundColor Green
+    } else {
+        Write-Host "Not registered" -ForegroundColor Yellow
+    }
+}
 
-Write-Host ""
-Write-Host "SUCCESS: Registered!" -ForegroundColor Green
-Write-Host "Command: $command" -ForegroundColor Gray
-Write-Host ""
-Read-Host "Press Enter to exit"
+# Main
+switch ($Action) {
+    "Register"   { Register-Startup }
+    "Unregister" { Unregister-Startup }
+}
+
+# Show status
+$task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+if ($task) {
+    Write-Host "Status: $($task.State)" -ForegroundColor Gray
+}
