@@ -71,6 +71,12 @@ function locked($Path='.') {sudo handle (Resolve-Path $Path).Path.TrimEnd('\')}
 function agy { antigravity . }
 function lg { lazygit }
 function c { if ($args[0] -eq 'r') { claude /resume @($args[1..999]) } else { claude @args } }
+function cb {
+    $env:CLAUDE_CODE_USE_BEDROCK = "1"
+    $env:AWS_REGION = "ap-northeast-1"
+    $env:CLAUDE_CODE_MAX_OUTPUT_TOKENS = "4096"
+    if ($args[0] -eq 'r') { claude /resume @($args[1..999]) } else { claude @args }
+}
 function z- { z - }
 function f { fzf @args }
 function fm { fzf -m @args }
