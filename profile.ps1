@@ -65,7 +65,7 @@ Add-PathEntryIfMissing -PathEntry $miktexBin
 
 
 function grf { gh repo list $args -L 1000 --json nameWithOwner,description,url -q '.[]|[.nameWithOwner,.description,.url]|@tsv' | fzf -d "`t" --with-nth 1,2 | %{$_.Split("`t")[-1]} }
-function grfo { ii (grf) }
+function grfo { Start-Process (grf) }
 function grfc { gh repo clone (grf) }
 function locked($Path='.') {sudo handle (Resolve-Path $Path).Path.TrimEnd('\')}
 function agy { antigravity . }
