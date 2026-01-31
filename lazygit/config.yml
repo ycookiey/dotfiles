@@ -1,3 +1,4 @@
 os:
   edit: "nvim {{filename}}"
   editAtLine: "nvim +{{line}} {{filename}}"
+  editInTerminal: true
