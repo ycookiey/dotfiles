@@ -63,6 +63,8 @@ if (Test-Path $gitGtrScript) {
 $miktexBin = Join-Path $env:USERPROFILE 'scoop\apps\miktex\current\texmfs\install\miktex\bin\x64'
 Add-PathEntryIfMissing -PathEntry $miktexBin
 
+# Dotfiles bin
+function gnew { & "$DotfilesDir\bin\git-new.ps1" @args }
 
 function grf { gh repo list $args -L 1000 --json nameWithOwner,description,url -q '.[]|[.nameWithOwner,.description,.url]|@tsv' | fzf -d "`t" --with-nth 1,2 | %{$_.Split("`t")[-1]} }
 function grfo { Start-Process (grf) }
