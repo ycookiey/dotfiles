@@ -8,6 +8,28 @@ vim.opt.clipboard = "unnamedplus"
 vim.opt.number = true
 vim.opt.relativenumber = true
 
+-- 空白文字の可視化
+vim.opt.list = true
+vim.opt.listchars = {
+  tab = "→ ",
+  trail = "·",
+  nbsp = "␣",
+  extends = "»",
+  precedes = "«",
+}
+
+-- 全角スペースハイライト
+vim.api.nvim_create_autocmd("VimEnter", {
+  callback = function()
+    vim.api.nvim_set_hl(0, "ZenkakuSpace", { bg = "#4a3040" })
+  end,
+})
+vim.api.nvim_create_autocmd({ "BufNewFile", "BufRead" }, {
+  callback = function()
+    vim.fn.matchadd("ZenkakuSpace", "　")
+  end,
+})
+
 -- lazy.nvim ブートストラップ
 local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
 if not vim.uv.fs_stat(lazypath) then
