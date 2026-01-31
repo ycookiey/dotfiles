@@ -59,6 +59,8 @@
 	last = log -1 HEAD
 	unstage = reset HEAD --
 	undo = reset --soft HEAD^
+	# 特定コミットまでpush
+	pushto = "!git push origin $1:$(git branch --show-current) #"
 
 [color]
 	# カラー出力を有効化
