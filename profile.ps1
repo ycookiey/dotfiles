@@ -93,6 +93,7 @@ function cb {
     $env:CLAUDE_CODE_USE_BEDROCK = "1"
     $env:AWS_REGION = "ap-northeast-1"
     $env:CLAUDE_CODE_MAX_OUTPUT_TOKENS = "4096"
+    $env:ANTHROPIC_MODEL = "global.anthropic.claude-opus-4-5-20251101-v1:0"
     if ($args[0] -eq 'r') { claude /resume @($args[1..999]) } else { claude @args }
 }
 function z- { z - }
