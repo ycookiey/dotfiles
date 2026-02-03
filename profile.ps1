@@ -72,6 +72,21 @@ function grfc { gh repo clone (grf) }
 function locked($Path='.') {sudo handle (Resolve-Path $Path).Path.TrimEnd('\')}
 function agy { antigravity . }
 function lg { lazygit }
+function frun {
+    $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+    $flavors = @('develop', 'staging', 'production')
+    $emu = flutter emulators 2>$null | Select-String '•' | % { ($_ -split '•')[0].Trim() } | Select-Object -Skip 1 | fzf --prompt='Emulator: '
+    if (-not $emu) { return }
+    $flavor = $flavors | fzf --prompt='Flavor: '
+    if (-not $flavor) { return }
+    $before = (& $adb devices | Select-String 'emulator').Count
+    flutter emulators --launch $emu
+    if ((& $adb devices | Select-String 'emulator').Count -gt $before) {
+        & $adb wait-for-device
+        & $adb shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done'
+    }
+    flutter run --flavor $flavor
+}
 function v { nvim @args }
 function c { if ($args[0] -eq 'r') { claude /resume @($args[1..999]) } else { claude @args } }
 function cb {
