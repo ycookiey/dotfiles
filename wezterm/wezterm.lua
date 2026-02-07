@@ -82,47 +82,52 @@ local SOLID_LEFT_ARROW = wezterm.nerdfonts.ple_left_half_circle_thick
 local SOLID_RIGHT_ARROW = wezterm.nerdfonts.ple_right_half_circle_thick
 
 wezterm.on("format-tab-title", function(tab, tabs, panes, config, hover, max_width)
-  local background
-  local foreground
   local edge_background = "none"
-  local title
+  local tab_bg = tab.is_active and "#6c7086" or "#45475a"
+  local active_fg = "#ffffff"
+  local inactive_fg = "#959cb4"
+  local dim_fg = "#6c7086"
 
-  if tab.is_active then
-    -- アクティブタブ
-    background = "#6c7086"
-    foreground = "#ffffff"
+  -- タブの丸括弧（左）
+  local elements = {
+    { Background = { Color = edge_background } },
+    { Foreground = { Color = tab_bg } },
+    { Text = SOLID_LEFT_ARROW },
+  }
 
-    -- アクティブタブの幅を30文字に固定（中央揃え）
-    local fixed_width = 30
-    title = wezterm.truncate_right(tab.active_pane.title, fixed_width)
+  -- 各ペインのタイトルを表示
+  local pane_count = #tab.panes
+  for i, p in ipairs(tab.panes) do
+    local pane_title = p.title
+    -- ペインごとの幅を制限
+    local pane_max = math.floor((max_width - pane_count + 1) / pane_count)
+    if pane_max < 10 then pane_max = 10 end
+    pane_title = wezterm.truncate_right(pane_title, pane_max)
 
-    local title_width = wezterm.column_width(title)
-    local padding_total = fixed_width - title_width
-    local padding_left = math.floor(padding_total / 2)
-    local padding_right = padding_total - padding_left
+    local fg
+    if p.pane_id == tab.active_pane.pane_id then
+      fg = active_fg
+    else
+      fg = tab.is_active and inactive_fg or dim_fg
+    end
 
-    title = string.rep(" ", padding_left) .. title .. string.rep(" ", padding_right)
-  else
-    -- 非アクティブタブ
-    background = "#45475a"
-    foreground = "#959cb4"
+    table.insert(elements, { Background = { Color = tab_bg } })
+    table.insert(elements, { Foreground = { Color = fg } })
+    table.insert(elements, { Text = " " .. pane_title .. " " })
 
-    -- 非アクティブタブは通常の幅
-    title = wezterm.truncate_right(tab.active_pane.title, max_width - 1)
+    -- ペイン間の区切り
+    if i < pane_count then
+      table.insert(elements, { Foreground = { Color = dim_fg } })
+      table.insert(elements, { Text = "|" })
+    end
   end
 
-  local edge_foreground = background
-  return {
-    { Background = { Color = edge_background } },
-    { Foreground = { Color = edge_foreground } },
-    { Text = SOLID_LEFT_ARROW },
-    { Background = { Color = background } },
-    { Foreground = { Color = foreground } },
-    { Text = title },
-    { Background = { Color = edge_background } },
-    { Foreground = { Color = edge_foreground } },
-    { Text = SOLID_RIGHT_ARROW },
-  }
+  -- タブの丸括弧（右）
+  table.insert(elements, { Background = { Color = edge_background } })
+  table.insert(elements, { Foreground = { Color = tab_bg } })
+  table.insert(elements, { Text = SOLID_RIGHT_ARROW })
+
+  return elements
 end)
 
 ----------------------------------------------------
@@ -131,6 +136,4 @@ end)
 config.disable_default_key_bindings = true
 config.keys = require("keybinds").keys
 config.key_tables = require("keybinds").key_tables
-config.leader = { key = "q", mods = "CTRL", timeout_milliseconds = 2000 }
-
 return config
