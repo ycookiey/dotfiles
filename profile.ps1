@@ -88,7 +88,17 @@ function frun {
     flutter run --flavor $flavor
 }
 function v { nvim @args }
-function c { if ($args[0] -eq 'r') { claude /resume @($args[1..999]) } else { claude @args } }
+function c {
+    $d = "$HOME/.claude"; $a = @($args); $lf = "$d/.last_account"
+    if ($a[0] -eq 'save') { cp "$d/.credentials.json" "$d-$($a[1])/.credentials.json"; echo "Account $($a[1]) saved"; return }
+    $n = if ($a[0] -match '^\d+$') { $a[0]; $a = $a[1..99] } elseif (Test-Path $lf) { gc $lf -Raw }
+    if ($n) {
+        if (!(Test-Path "$d-$n")) { echo "Not found. Run setup.ps1"; return }
+        $env:CLAUDE_CONFIG_DIR = "$d-$n"; $n | sc $lf -No
+    } else { rm env:CLAUDE_CONFIG_DIR -ea Ignore }
+    if ($a[0] -eq 'r') { $a[0] = '/resume' }
+    claude @a
+}
 function cb {
     $env:CLAUDE_CODE_USE_BEDROCK = "1"
     $env:AWS_REGION = "ap-northeast-1"
