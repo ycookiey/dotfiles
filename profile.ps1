@@ -1,4 +1,11 @@
 # ==========================================
+# 0. Interactive Detection
+# ==========================================
+$script:IsInteractive = -not (
+    [Environment]::GetCommandLineArgs() | Where-Object { $_ -eq '-NonInteractive' }
+)
+
+# ==========================================
 # 1. Config & Auto Update (Async)
 # ==========================================
 $DotfilesDir = 'C:\Main\Project\dotfiles'
@@ -7,19 +14,21 @@ $DotfilesDir = 'C:\Main\Project\dotfiles'
 # ただし `git summary` 等の外部サブコマンドは、起動した git.exe が自身の探索パス（exec-path / PATH）から見つけて実行する
 function git { & "$env:USERPROFILE\scoop\shims\git.exe" @args }
 
-function Start-DotfilesAutoUpdateJob {
-    param([Parameter(Mandatory)][string]$RepoDir)
-    Start-ThreadJob {
-        Set-Location $using:RepoDir
-        git fetch -q
-        git diff --quiet HEAD '@{u}'
-        if (-not $?) { git pull -q -r --autostash; $true }
+if ($script:IsInteractive) {
+    function Start-DotfilesAutoUpdateJob {
+        param([Parameter(Mandatory)][string]$RepoDir)
+        Start-ThreadJob {
+            Set-Location $using:RepoDir
+            git fetch -q
+            git diff --quiet HEAD '@{u}'
+            if (-not $?) { git pull -q -r --autostash; $true }
+        }
     }
+
+    if ($global:j) { Remove-Job $global:j -Force -ErrorAction SilentlyContinue }
+
+    $global:j = Start-DotfilesAutoUpdateJob -RepoDir $DotfilesDir
 }
-
-if ($global:j) { Remove-Job $global:j -Force -ErrorAction SilentlyContinue }
-
-$global:j = Start-DotfilesAutoUpdateJob -RepoDir $DotfilesDir
 
 
 # ==========================================
@@ -132,24 +141,26 @@ function viv { vivaldi }
 function rmt { explorer parsec: }
 function spotify { explorer spotify: }
 
-# ==========================================
-# 4. Initialize Tools
-# ==========================================
-Invoke-Expression (& { (zoxide init powershell | Out-String) })
-Invoke-Expression (&starship init powershell)
+if ($script:IsInteractive) {
+    # ==========================================
+    # 4. Initialize Tools
+    # ==========================================
+    Invoke-Expression (& { (zoxide init powershell | Out-String) })
+    Invoke-Expression (&starship init powershell)
 
-# zoxide自動学習用フック
-function Invoke-Starship-PreCommand { $null = __zoxide_hook }
+    # zoxide自動学習用フック
+    function Invoke-Starship-PreCommand { $null = __zoxide_hook }
 
 
-# ==========================================
-# 5. Prompt Hook 
-# ==========================================
-$oldPrompt = $function:prompt
-function prompt {
-    if ($global:j -and $global:j.State -eq 'Completed') {
-        if (Receive-Job $global:j) { Write-Host "`n✨ Dotfiles Updated!" -Fg Green }
-        Remove-Job $global:j; $global:j = $null
+    # ==========================================
+    # 5. Prompt Hook
+    # ==========================================
+    $oldPrompt = $function:prompt
+    function prompt {
+        if ($global:j -and $global:j.State -eq 'Completed') {
+            if (Receive-Job $global:j) { Write-Host "`n✨ Dotfiles Updated!" -Fg Green }
+            Remove-Job $global:j; $global:j = $null
+        }
+        & $oldPrompt
     }
-    & $oldPrompt
 }
