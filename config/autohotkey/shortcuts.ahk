@@ -1,5 +1,7 @@
 ; AutoHotkey Shortcuts
 
+#Include "discord.ahk"
+
 ; Ctrl+R をNVIDIA Broadcastより先にインターセプトしてアプリに送る
 $^r::Send "{Ctrl down}r{Ctrl up}"
 
