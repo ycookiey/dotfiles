@@ -8,20 +8,25 @@
 #>
 param(
     [Parameter(Position = 0)]
-    [string]$Name
+    [string]$Name,
+    # カレントディレクトリに作成する（デフォルトは C:\Main\Project）
+    [Alias('h')]
+    [switch]$Here
 )
 
 $ErrorActionPreference = 'Stop'
+$DefaultRoot = 'C:\Main\Project'
 
-# repo-name省略時はカレントフォルダ名を使う
 if (-not $Name) {
+    # 名前省略: カレントフォルダをそのまま使う
     $Name = Split-Path -Leaf (Get-Location)
 } else {
-    # repo-name指定ならフォルダも作る
-    if (-not (Test-Path $Name)) {
-        New-Item -ItemType Directory -Path $Name | Out-Null
+    $BaseDir = if ($Here) { Get-Location } else { $DefaultRoot }
+    $TargetPath = Join-Path $BaseDir $Name
+    if (-not (Test-Path $TargetPath)) {
+        New-Item -ItemType Directory -Path $TargetPath | Out-Null
     }
-    Set-Location $Name
+    Set-Location $TargetPath
 }
 
 git init -b main
