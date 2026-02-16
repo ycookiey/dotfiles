@@ -1,34 +1,63 @@
 $ErrorActionPreference = "Stop"
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$ScriptDir = Split-Path $MyInvocation.MyCommand.Definition
+. "$ScriptDir\aliases.ps1"
 $LogFile = "$HOME\.claude\setup.log"
 
-# 管理者権限チェック・自己昇格
-if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Start-Process powershell -Verb RunAs -ArgumentList "-ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Wait
-    exit
-}
+if (!(isadmin)) { elevate "-File `"$PSCommandPath`"" }
 
-"$(Get-Date) - Start (ScriptDir: $ScriptDir)" | Out-File $LogFile
+"$(Get-Date) - Start (ScriptDir: $ScriptDir)" > $LogFile
 
 try {
-    ni -ItemType Directory "$HOME\.config" -Force | Out-Null
-    ni -ItemType SymbolicLink -Path "$HOME\.config\wezterm" -Target "$ScriptDir\wezterm" -Force | Out-Null
+    mkd "$HOME\.config"
+    mkl "$HOME\.config\wezterm" "$ScriptDir\wezterm"
+    mkd "$env:APPDATA\yazi\config"
+    mkl "$env:APPDATA\yazi\config" "$ScriptDir\yazi"
+    mkl "$env:LOCALAPPDATA\nvim" "$ScriptDir\config\nvim"
+    mkd "$env:LOCALAPPDATA\lazygit"
+    mkl "$env:LOCALAPPDATA\lazygit\config.yml" "$ScriptDir\lazygit\config.yml"
+    mkd "$HOME\.claude"
+    mkl "$HOME\.claude\aliases.ps1" "$ScriptDir\aliases.ps1"
+    mkl "$HOME\.claude\statusline.ps1" "$ScriptDir\claude\statusline.ps1"
+    mkl "$HOME\.claude\settings.json" "$ScriptDir\claude\settings.json"
+    mkl "$HOME\.claude\CLAUDE.md" "$ScriptDir\claude\CLAUDE.md"
+    mkl "$HOME\.claude\rules" "$ScriptDir\claude\rules"
+    mkl "$HOME\.claude\docs" "$ScriptDir\claude\docs"
 
-    ni -ItemType Directory "$env:APPDATA\yazi\config" -Force | Out-Null
-    ni -ItemType SymbolicLink -Path "$env:APPDATA\yazi\config" -Target "$ScriptDir\yazi" -Force | Out-Null
+    # File association: Neovim (WezTerm)
+    $wt = "$HOME\scoop\apps\wezterm\current\wezterm-gui.exe"
+    if (!(tp $wt)) { $wt = "$HOME\scoop\shims\wezterm.exe" }
+    if (tp $wt) {
+        $cmd = "`"$wt`" start -- nvim `"%1`""
+        $id = 'WezTermNvim'
+        $exts = '.txt','.md','.json','.yaml','.yml','.toml','.xml','.csv','.log',
+                '.ps1','.psm1','.lua','.vim','.js','.ts','.jsx','.tsx',
+                '.py','.go','.rs','.c','.cpp','.h','.sh','.conf','.ini','.env'
 
-    ni -ItemType SymbolicLink -Path "$env:LOCALAPPDATA\nvim" -Target "$ScriptDir\config\nvim" -Force | Out-Null
+        $null = ni "HKCU:\Software\Classes\$id\shell\open\command" -Force
+        sp "HKCU:\Software\Classes\$id" '(Default)' 'Neovim (WezTerm)'
+        sp "HKCU:\Software\Classes\$id\shell\open\command" '(Default)' $cmd
 
-    ni -ItemType Directory "$env:LOCALAPPDATA\lazygit" -Force | Out-Null
-    ni -ItemType SymbolicLink -Path "$env:LOCALAPPDATA\lazygit\config.yml" -Target "$ScriptDir\lazygit\config.yml" -Force | Out-Null
+        foreach ($e in $exts) {
+            $null = ni "HKCU:\Software\Classes\$e\OpenWithProgids" -Force
+            sp "HKCU:\Software\Classes\$e\OpenWithProgids" $id '' -Type String
+        }
+        "$(Get-Date) - Registered WezTermNvim for $($exts.Count) extensions" >> $LogFile
+    }
 
-    ni -ItemType Directory "$HOME\.claude" -Force | Out-Null
-    ni -ItemType SymbolicLink -Path "$HOME\.claude\statusline.ps1" -Target "$ScriptDir\claude\statusline.ps1" -Force | Out-Null
-    ni -ItemType SymbolicLink -Path "$HOME\.claude\settings.json" -Target "$ScriptDir\claude\settings.json" -Force | Out-Null
-    ni -ItemType SymbolicLink -Path "$HOME\.claude\CLAUDE.md" -Target "$ScriptDir\claude\CLAUDE.md" -Force | Out-Null
-    ni -ItemType SymbolicLink -Path "$HOME\.claude\rules" -Target "$ScriptDir\claude\rules" -Force | Out-Null
+    # Claude マルチアカウント
+    $claudeExclude = '.credentials*', '.statusline_cache', '.statusline_debug.json'
+    foreach ($n in 1..3) {
+        $dir = "$HOME\.claude-$n"
+        mkd $dir
+        gci "$HOME\.claude" -Force | ? {
+            $name = $_.Name
+            !($claudeExclude | ? { $name -like $_ })
+        } | % {
+            mkl "$dir\$($_.Name)" $_.FullName
+        }
+    }
 
-    "$(Get-Date) - Done" | Out-File $LogFile -Append
+    "$(Get-Date) - Done" >> $LogFile
 } catch {
-    "$(Get-Date) - Error: $_" | Out-File $LogFile -Append
+    "$(Get-Date) - Error: $_" >> $LogFile
 }
