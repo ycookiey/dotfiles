@@ -1,8 +1,8 @@
 # ==========================================
 # 0. Interactive Detection
 # ==========================================
-$script:IsInteractive = -not (
-    [Environment]::GetCommandLineArgs() | Where-Object { $_ -eq '-NonInteractive' }
+$script:IsInteractive = !(
+    [Environment]::GetCommandLineArgs() | ? { $_ -eq '-NonInteractive' }
 )
 
 # ==========================================
@@ -10,73 +10,69 @@ $script:IsInteractive = -not (
 # ==========================================
 $DotfilesDir = 'C:\Main\Project\dotfiles'
 
-# PowerShell の `git` を関数で上書きして、常に Scoop の git.exe を使う（PATH 上の別 git.exe を無視）
-# ただし `git summary` 等の外部サブコマンドは、起動した git.exe が自身の探索パス（exec-path / PATH）から見つけて実行する
-function git { & "$env:USERPROFILE\scoop\shims\git.exe" @args }
+# Scoop の git.exe を強制使用
+function git { & "$HOME\scoop\shims\git.exe" @args }
 
 if ($script:IsInteractive) {
     function Start-DotfilesAutoUpdateJob {
         param([Parameter(Mandatory)][string]$RepoDir)
         Start-ThreadJob {
-            Set-Location $using:RepoDir
+            cd $using:RepoDir
             git fetch -q
             git diff --quiet HEAD '@{u}'
-            if (-not $?) { git pull -q -r --autostash; $true }
+            if (!$?) { git pull -q -r --autostash; $true }
         }
     }
 
-    if ($global:j) { Remove-Job $global:j -Force -ErrorAction SilentlyContinue }
+    if ($global:j) { Remove-Job $global:j -Force -ea 0 }
 
     $global:j = Start-DotfilesAutoUpdateJob -RepoDir $DotfilesDir
 }
 
-
 # ==========================================
 # 2. Environment & Encodings
 # ==========================================
-# BOMなしUTF-8設定
-$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+$utf8NoBom = [Text.UTF8Encoding]::new($false)
 [Console]::OutputEncoding = $utf8NoBom
 [Console]::InputEncoding = $utf8NoBom
 $OutputEncoding = $utf8NoBom
 $PSDefaultParameterValues['Out-File:Encoding'] = 'utf8NoBOM'
 
-# Starship 設定ファイルのパス
-$env:STARSHIP_CONFIG = Join-Path $DotfilesDir 'starship.toml'
-
-# Yazi用のfile.exeパス
-$env:YAZI_FILE_ONE = "$env:USERPROFILE\scoop\apps\git\current\usr\bin\file.exe"
-
+$env:STARSHIP_CONFIG = "$DotfilesDir\starship.toml"
+$env:YAZI_FILE_ONE = "$HOME\scoop\apps\git\current\usr\bin\file.exe"
 
 # ==========================================
 # 3. Tools & Aliases
 # ==========================================
+. "$DotfilesDir\aliases.ps1"
 function Add-PathEntryIfMissing {
     param([Parameter(Mandatory)][string]$PathEntry)
-    $paths = $env:Path -split ';' | Where-Object { $_ }
-    if ($paths -notcontains $PathEntry) {
+    $paths = $env:Path -split ';' | ? { $_ }
+    if ($PathEntry -notin $paths) {
         $env:Path = ($paths + $PathEntry) -join ';'
     }
 }
 
-# Git Worktree Runner
 $gtrBin = 'C:\Main\Script\git-worktree-runner\bin'
-Add-PathEntryIfMissing -PathEntry $gtrBin
-$gitGtrScript = Join-Path $gtrBin 'git-gtr.ps1'
-if (Test-Path $gitGtrScript) {
+Add-PathEntryIfMissing $gtrBin
+$gitGtrScript = "$gtrBin\git-gtr.ps1"
+if (tp $gitGtrScript) {
     function git-gtr { & $gitGtrScript @args }
-    Set-Alias -Name gtr -Value git-gtr -Scope Global
+    sal -Name gtr -Value git-gtr -Scope Global
 }
 
-# MiKTeX (LaTeX)
-$miktexBin = Join-Path $env:USERPROFILE 'scoop\apps\miktex\current\texmfs\install\miktex\bin\x64'
-Add-PathEntryIfMissing -PathEntry $miktexBin
+$miktexBin = "$HOME\scoop\apps\miktex\current\texmfs\install\miktex\bin\x64"
+Add-PathEntryIfMissing $miktexBin
 
-# Dotfiles bin
+$androidPlatformTools = "$env:LOCALAPPDATA\Android\Sdk\platform-tools"
+Add-PathEntryIfMissing $androidPlatformTools
+
 function gnew { & "$DotfilesDir\bin\git-new.ps1" @args }
+function toggle-theme { & "$DotfilesDir\bin\toggle-theme.ps1" @args }
+function admin { start wezterm -Verb RunAs -Arg 'start','--cwd',$PWD }
 
 function grf { gh repo list $args -L 1000 --json nameWithOwner,description,url -q '.[]|[.nameWithOwner,.description,.url]|@tsv' | fzf -d "`t" --with-nth 1,2 | %{$_.Split("`t")[-1]} }
-function grfo { Start-Process (grf) }
+function grfo { start (grf) }
 function grfc { gh repo clone (grf) }
 function locked($Path='.') {sudo handle (Resolve-Path $Path).Path.TrimEnd('\')}
 function agy { antigravity . }
@@ -84,13 +80,13 @@ function lg { lazygit }
 function frun {
     $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
     $flavors = @('develop', 'staging', 'production')
-    $emu = flutter emulators 2>$null | Select-String '•' | % { ($_ -split '•')[0].Trim() } | Select-Object -Skip 1 | fzf --prompt='Emulator: '
-    if (-not $emu) { return }
+    $emu = flutter emulators 2>$null | sls '•' | % { ($_ -split '•')[0].Trim() } | select -Skip 1 | fzf --prompt='Emulator: '
+    if (!$emu) { return }
     $flavor = $flavors | fzf --prompt='Flavor: '
-    if (-not $flavor) { return }
-    $before = (& $adb devices | Select-String 'emulator').Count
+    if (!$flavor) { return }
+    $before = (& $adb devices | sls 'emulator').Count
     flutter emulators --launch $emu
-    if ((& $adb devices | Select-String 'emulator').Count -gt $before) {
+    if ((& $adb devices | sls 'emulator').Count -gt $before) {
         & $adb wait-for-device
         & $adb shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done'
     }
@@ -100,9 +96,9 @@ function v { nvim @args }
 function c {
     $d = "$HOME/.claude"; $a = @($args); $lf = "$d/.last_account"
     if ($a[0] -eq 'save') { cp "$d/.credentials.json" "$d-$($a[1])/.credentials.json"; echo "Account $($a[1]) saved"; return }
-    $n = if ($a[0] -match '^\d+$') { $a[0]; $a = $a[1..99] } elseif (Test-Path $lf) { gc $lf -Raw }
+    $n = if ($a[0] -match '^\d+$') { $a[0]; $a = $a[1..99] } elseif (tp $lf) { gc $lf -Raw }
     if ($n) {
-        if (!(Test-Path "$d-$n")) { echo "Not found. Run setup.ps1"; return }
+        if (!(tp "$d-$n")) { echo "Not found. Run setup.ps1"; return }
         $env:CLAUDE_CONFIG_DIR = "$d-$n"; $n | sc $lf -No
     } else { rm env:CLAUDE_CONFIG_DIR -ea Ignore }
     if ($a[0] -eq 'r') { $a[0] = '/resume' }
@@ -120,37 +116,23 @@ function f { fzf @args }
 function fm { fzf -m @args }
 function zp { zoxide query -i @args }
 function y {
-    $tmp = [System.IO.Path]::GetTempFileName()
+    $tmp = [IO.Path]::GetTempFileName()
     yazi $args --cwd-file=$tmp
-    $cwd = Get-Content $tmp
-    if ($cwd -and $cwd -ne $PWD.Path) {
-        Set-Location $cwd
-    }
-    Remove-Item $tmp
+    $cwd = gc $tmp
+    if ($cwd -and $cwd -ne $PWD.Path) { cd $cwd }
+    rm $tmp
 }
 
-function Start-App($Name) {
-    explorer "shell:AppsFolder\$((Get-StartApps $Name | select -f 1).AppID)"
-}
-function kindle { explorer kindle: }
-function dis { explorer discord: }
-function slk { explorer slack: }
-function obsd { obsidian }
-function cal { Start-App "Notion Calendar" }
-function viv { vivaldi }
-function rmt { explorer parsec: }
-function spotify { explorer spotify: }
 
 if ($script:IsInteractive) {
     # ==========================================
     # 4. Initialize Tools
     # ==========================================
-    Invoke-Expression (& { (zoxide init powershell | Out-String) })
-    Invoke-Expression (&starship init powershell)
+    iex (& { (zoxide init powershell | Out-String) })
+    iex (&starship init powershell)
 
     # zoxide自動学習用フック
     function Invoke-Starship-PreCommand { $null = __zoxide_hook }
-
 
     # ==========================================
     # 5. Prompt Hook
@@ -158,7 +140,7 @@ if ($script:IsInteractive) {
     $oldPrompt = $function:prompt
     function prompt {
         if ($global:j -and $global:j.State -eq 'Completed') {
-            if (Receive-Job $global:j) { Write-Host "`n✨ Dotfiles Updated!" -Fg Green }
+            if (Receive-Job $global:j) { wh "`n✨ Dotfiles Updated!" -Fg Green }
             Remove-Job $global:j; $global:j = $null
         }
         & $oldPrompt
