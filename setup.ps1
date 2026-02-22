@@ -3,6 +3,11 @@ $ScriptDir = Split-Path $MyInvocation.MyCommand.Definition
 . "$ScriptDir\aliases.ps1"
 $LogFile = "$HOME\.claude\setup.log"
 
+# Scoop セットアップ（未インストール時は自動、既存マシンは --scoop で手動）
+if ($args -contains '--scoop' -or !(gcm scoop -ea 0)) {
+    & "$ScriptDir\install-scoop.ps1"
+}
+
 if (!(isadmin)) { elevate "-File `"$PSCommandPath`"" }
 
 "$(Get-Date) - Start (ScriptDir: $ScriptDir)" > $LogFile
