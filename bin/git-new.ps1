@@ -1,15 +1,8 @@
 #Requires -Version 5.1
-<#
-.SYNOPSIS
-    新規Gitリポジトリを作成してGitHubにプッシュする
-.EXAMPLE
-    git-new           # カレントフォルダ名でリポジトリ作成
-    git-new my-repo   # my-repoフォルダを作成してリポジトリ作成
-#>
+# git-new [name] [-Here] — 新規Gitリポジトリを作成してGitHubにプッシュ
 param(
     [Parameter(Position = 0)]
     [string]$Name,
-    # カレントディレクトリに作成する（デフォルトは C:\Main\Project）
     [Alias('h')]
     [switch]$Here
 )
@@ -17,24 +10,18 @@ param(
 $ErrorActionPreference = 'Stop'
 $DefaultRoot = 'C:\Main\Project'
 
-if (-not $Name) {
-    # 名前省略: カレントフォルダをそのまま使う
-    $Name = Split-Path -Leaf (Get-Location)
+if (!$Name) {
+    $Name = Split-Path -Leaf (gl)
 } else {
-    $BaseDir = if ($Here) { Get-Location } else { $DefaultRoot }
-    $TargetPath = Join-Path $BaseDir $Name
-    if (-not (Test-Path $TargetPath)) {
-        New-Item -ItemType Directory -Path $TargetPath | Out-Null
-    }
-    Set-Location $TargetPath
+    $BaseDir = $Here ? (gl) : $DefaultRoot
+    $TargetPath = "$BaseDir\$Name"
+    if (!(tp $TargetPath)) { [void](ni -I Directory $TargetPath) }
+    cd $TargetPath
 }
 
 git init -b main
+sc 'README.md' "# $Name" -No
 
-# README
-Set-Content -Path 'README.md' -Value "# $Name" -NoNewline
-
-# .gitignore
 @'
 # OS
 .DS_Store
@@ -50,10 +37,8 @@ nul
 
 # Logs
 *.log
-'@ | Set-Content -Path '.gitignore'
+'@ | sc '.gitignore'
 
-git add -A
-git commit -m 'chore: initial commit'
-
-# GitHubにPrivateで作ってpush
+git add README.md .gitignore
+git commit -m 'initial commit'
 gh repo create $Name --private --source=. --remote=origin --push
