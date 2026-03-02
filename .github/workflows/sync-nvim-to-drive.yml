@@ -1,0 +1,48 @@
+name: Sync Neovim config to Google Drive
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "config/nvim/**"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bundle nvim config into single file
+        run: |
+          {
+            echo "# Neovim Configuration (auto-generated)"
+            echo "# $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo ""
+            find config/nvim -name "*.lua" | sort | while read -r f; do
+              echo "================================================================"
+              echo "-- FILE: $f"
+              echo "================================================================"
+              cat "$f"
+              echo ""
+            done
+          } > nvim-config.txt
+
+      - name: Install rclone
+        run: curl -fsSL https://rclone.org/install.sh | sudo bash
+
+      - name: Configure rclone
+        env:
+          RCLONE_TOKEN: ${{ secrets.RCLONE_DRIVE_TOKEN }}
+        run: |
+          mkdir -p ~/.config/rclone
+          cat > ~/.config/rclone/rclone.conf <<EOF
+          [gdrive]
+          type = drive
+          scope = drive
+          token = ${RCLONE_TOKEN}
+          root_folder_id = ${{ secrets.DRIVE_FOLDER_ID }}
+          EOF
+
+      - name: Upload to Google Drive
+        run: rclone copyto nvim-config.txt gdrive:/nvim-config.txt --verbose
