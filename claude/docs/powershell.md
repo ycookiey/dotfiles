@@ -1,0 +1,50 @@
+# PowerShell コーディング規約
+
+- 実行エンジンは pwsh（PS7）。powershell.exe（PS5）は使わない
+
+- | Out-Null でなく [void]() で出力を破棄
+- Join-Path $a $b でなく "$a\$b" 文字列補間
+- $env:USERPROFILE でなく $HOME
+- -not でなく !
+- -ea SilentlyContinue → -ea 0（数値enum: 0=SilentlyContinue）
+- New-Object Type(args) → [Type]::new(args)
+- using namespace で FQDN 短縮（[System.Windows.Forms.Form] → [Form]）
+- [System.X] → [X]（System名前空間は省略可能）
+- | Out-File $f → > $f、| Out-File $f -Append → >> $f
+- Split-Path -Parent → Split-Path（-Parent はデフォルト）
+- New-TimeSpan -Hours 1 → [timespan]'1:0:0'
+- PS7+の三項演算子: if ($x) { $a } else { $b } → $x ? $a : $b
+- Add-Type -AssemblyName → -AN
+- 標準エイリアスを積極的に使う:
+  - Get-Content → gc、Set-Content → sc、Add-Content → ac
+  - Get-ChildItem → gci、Get-Item → gi
+  - Remove-Item → rm、Copy-Item → cp、Move-Item → mv
+  - New-Item → ni、Select-Object → select
+  - Where-Object → ? またはパイプ外では Where-Object
+  - ForEach-Object → % またはパイプ外では ForEach-Object
+  - Write-Output → echo
+  - Set-Location → cd、Get-Location → gl
+  - Push-Location → pushd、Pop-Location → popd
+  - Start-Process → start、Start-Sleep → sleep
+  - Invoke-Expression → iex、Invoke-RestMethod → irm
+  - Select-String → sls、Measure-Object → measure
+  - Set-Alias → $alias:name = 'CmdletName'（コマンドレット JIT 回避。sal は使わない）
+- カスタムエイリアス/ヘルパー（aliases.ps1 で定義）:
+  - Test-Path → tp
+  - Write-Host → wh
+  - mkd $path — ディレクトリ作成（ni -I Directory $p -Force のラッパー）
+  - mkl $path $target — シンボリックリンク作成（ni -I SymbolicLink のラッパー）
+  - isadmin — 管理者権限判定（bool返却）
+  - elevate $args_str — 管理者として再起動して exit
+- パラメータ部分一致で短縮:
+  - -ErrorAction → -ea
+  - -WarningAction → -wa
+  - -NoNewline → -No
+  - -ForegroundColor → -Fg
+  - -ArgumentList → -Arg
+  - -ItemType → -I
+  - -Encoding → -Enc
+  - -WindowStyle → -W
+  - -Confirm → -Con
+  - -Description → -Des
+  - -Maximum → -Max
