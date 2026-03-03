@@ -107,31 +107,34 @@ local merge_adjacent_tab = wezterm.action_callback(function(window, pane)
   })
 end)
 
--- ペイン幅を均等化
+-- ペイン幅を均等化（毎回再取得して1境界ずつ調整）
 local equalize_panes = wezterm.action_callback(function(window, pane)
   local tab = window:active_tab()
   local panes_info = tab:panes_with_info()
   if #panes_info <= 1 then return end
 
+  local n = #panes_info
   table.sort(panes_info, function(a, b) return a.left < b.left end)
 
   local total_width = 0
   for _, info in ipairs(panes_info) do
     total_width = total_width + info.width
   end
+  local target = math.floor(total_width / n)
 
-  local target = math.floor(total_width / #panes_info)
-  local cumulative_shift = 0
+  for i = 1, n - 1 do
+    -- 各境界調整前に最新の状態を取得
+    local fresh = tab:panes_with_info()
+    table.sort(fresh, function(a, b) return a.left < b.left end)
 
-  for i = 1, #panes_info - 1 do
-    local effective_width = panes_info[i].width - cumulative_shift
-    local diff = target - effective_width
+    local diff = fresh[i].width - target
     if diff > 0 then
-      window:perform_action(act.AdjustPaneSize({ "Right", diff }), panes_info[i].pane)
+      -- i番目が大きすぎる → i+1番目を左に広げて縮める
+      window:perform_action(act.AdjustPaneSize({ "Left", diff }), fresh[i + 1].pane)
     elseif diff < 0 then
-      window:perform_action(act.AdjustPaneSize({ "Left", -diff }), panes_info[i + 1].pane)
+      -- i番目が小さすぎる → i番目を右に広げる
+      window:perform_action(act.AdjustPaneSize({ "Right", -diff }), fresh[i].pane)
     end
-    cumulative_shift = cumulative_shift + diff
   end
 end)
 
@@ -149,9 +152,75 @@ return {
     { key = "t", mods = "CTRL", action = act({ SpawnTab = "CurrentPaneDomain" }) },
     -- タブを閉じる
     { key = "w", mods = "CTRL", action = act({ CloseCurrentTab = { confirm = true } }) },
-    -- タブ位置入れ替え
-    { key = ",", mods = "ALT", action = act({ MoveTabRelative = -1 }) },
-    { key = ".", mods = "ALT", action = act({ MoveTabRelative = 1 }) },
+    -- タブ/ペイン位置入れ替え（隣のペインとスワップ、端なら外へ → タブ移動）
+    {
+      key = ",",
+      mods = "ALT",
+      action = wezterm.action_callback(function(window, pane)
+        local tab = window:active_tab()
+        local panes = tab:panes()
+        local current_id = pane:pane_id()
+        local idx = nil
+        for i, p in ipairs(panes) do
+          if p:pane_id() == current_id then idx = i; break end
+        end
+        if #panes <= 1 or idx == 1 then
+          window:perform_action(act.MoveTabRelative(-1), pane)
+        else
+          local info = tab:panes_with_info()
+          local cur_w, nbr_w
+          for _, pi in ipairs(info) do
+            if pi.pane:pane_id() == current_id then cur_w = pi.width end
+            if pi.pane:pane_id() == panes[idx - 1]:pane_id() then nbr_w = pi.width end
+          end
+          local pct = math.floor(cur_w / (cur_w + nbr_w) * 100 + 0.5)
+          wezterm.run_child_process({
+            "wezterm", "cli", "split-pane",
+            "--move-pane-id", tostring(current_id),
+            "--pane-id", tostring(panes[idx - 1]:pane_id()),
+            "--left", "--percent", tostring(pct),
+          })
+          wezterm.run_child_process({
+            "wezterm", "cli", "activate-pane",
+            "--pane-id", tostring(current_id),
+          })
+        end
+      end),
+    },
+    {
+      key = ".",
+      mods = "ALT",
+      action = wezterm.action_callback(function(window, pane)
+        local tab = window:active_tab()
+        local panes = tab:panes()
+        local current_id = pane:pane_id()
+        local idx = nil
+        for i, p in ipairs(panes) do
+          if p:pane_id() == current_id then idx = i; break end
+        end
+        if #panes <= 1 or idx == #panes then
+          window:perform_action(act.MoveTabRelative(1), pane)
+        else
+          local info = tab:panes_with_info()
+          local cur_w, nbr_w
+          for _, pi in ipairs(info) do
+            if pi.pane:pane_id() == current_id then cur_w = pi.width end
+            if pi.pane:pane_id() == panes[idx + 1]:pane_id() then nbr_w = pi.width end
+          end
+          local pct = math.floor(cur_w / (cur_w + nbr_w) * 100 + 0.5)
+          wezterm.run_child_process({
+            "wezterm", "cli", "split-pane",
+            "--move-pane-id", tostring(current_id),
+            "--pane-id", tostring(panes[idx + 1]:pane_id()),
+            "--right", "--percent", tostring(pct),
+          })
+          wezterm.run_child_process({
+            "wezterm", "cli", "activate-pane",
+            "--pane-id", tostring(current_id),
+          })
+        end
+      end),
+    },
 
     -- タブ合成・分離
     { key = "m", mods = "ALT", action = merge_adjacent_tab },
@@ -225,6 +294,7 @@ return {
       { key = "k", action = act.AdjustPaneSize({ "Up", 1 }) },
       { key = "j", action = act.AdjustPaneSize({ "Down", 1 }) },
       { key = "Enter", action = "PopKeyTable" },
+      { key = "Escape", action = "PopKeyTable" },
     },
     -- コピーモード Alt+v
     copy_mode = {
