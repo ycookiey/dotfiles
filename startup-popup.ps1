@@ -1,72 +1,52 @@
-# Startup Popup Notifications
-# Provides toast-style popup notifications for startup manager
-
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
+Add-Type -AN System.Windows.Forms
+Add-Type -AN System.Drawing
 
 $script:ActivePopupCount = 0
 
 function Show-PopupNotification {
-    param(
-        [string]$Title,
-        [string]$Message,
-        [int]$Duration = 3000
-    )
+    param([string]$Title, [string]$Message, [int]$Duration = 3000)
+    $offset = $script:ActivePopupCount * 110
+    $script:ActivePopupCount++
     try {
-        $form = New-Object System.Windows.Forms.Form
-        $form.FormBorderStyle = 'FixedSingle'
-        $form.BackColor = [System.Drawing.Color]::FromArgb(45, 45, 48)
-        $form.Width = 350
-        $form.Height = 100
-        $form.StartPosition = 'Manual'
-        $form.TopMost = $true
-        $form.ShowInTaskbar = $false
-        $form.MaximizeBox = $false
-        $form.MinimizeBox = $false
-        $form.ControlBox = $false
-
-        $screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-        $margin = 20
-        $spacing = 10
-
-        $form.Left = $screen.Right - 350 - $margin
-        $form.Top = $screen.Bottom - 100 - $margin - ($script:ActivePopupCount * 110)
-        $script:ActivePopupCount++
-
-        $labelTitle = New-Object System.Windows.Forms.Label
-        $labelTitle.Text = $Title
-        $labelTitle.ForeColor = [System.Drawing.Color]::White
-        $labelTitle.Font = New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)
-        $labelTitle.AutoSize = $false
-        $labelTitle.SetBounds(10, 10, 330, 30)
-        $form.Controls.Add($labelTitle)
-
-        $labelMessage = New-Object System.Windows.Forms.Label
-        $labelMessage.Text = $Message
-        $labelMessage.ForeColor = [System.Drawing.Color]::LightGray
-        $labelMessage.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-        $labelMessage.AutoSize = $false
-        $labelMessage.SetBounds(10, 40, 330, 50)
-        $form.Controls.Add($labelMessage)
-
-        $timer = New-Object System.Windows.Forms.Timer
-        $timer.Interval = $Duration
-        $timer.Add_Tick({ $form.Close(); $timer.Dispose() })
-        $timer.Start()
-
-        $form.Add_FormClosed({
-            $script:ActivePopupCount = [Math]::Max(0, $script:ActivePopupCount - 1)
-        })
-
-        $form.Add_Click({ $form.Close() })
-        $labelTitle.Add_Click({ $form.Close() })
-        $labelMessage.Add_Click({ $form.Close() })
-
-        $form.Show()
-        [System.Windows.Forms.Application]::DoEvents()
-    } catch {
-        # Silently ignore popup errors
-    }
+        $rs = [runspacefactory]::CreateRunspace()
+        $rs.ApartmentState = 'STA'
+        $rs.Open()
+        $ps = [powershell]::Create()
+        $ps.Runspace = $rs
+        [void]$ps.AddScript({
+            param($t, $m, $d, $o)
+            Add-Type -AN System.Windows.Forms
+            Add-Type -AN System.Drawing
+            Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern IntPtr FindWindow(string c, string w);' -Name W32 -Namespace Popup
+            while ([Popup.W32]::FindWindow("Shell_TrayWnd", $null) -eq [IntPtr]::Zero) { [Threading.Thread]::Sleep(500) }
+            $f = [Windows.Forms.Form]::new()
+            $f.FormBorderStyle = 'FixedSingle'
+            $f.BackColor = [Drawing.Color]::FromArgb(45, 45, 48)
+            $f.Width = 350; $f.Height = 100
+            $f.StartPosition = 'Manual'; $f.TopMost = $true
+            $f.ShowInTaskbar = $false
+            $f.MaximizeBox = $false; $f.MinimizeBox = $false; $f.ControlBox = $false
+            $scr = [Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+            $f.Left = $scr.Right - 370; $f.Top = $scr.Bottom - 120 - $o
+            $lt = [Windows.Forms.Label]::new()
+            $lt.Text = $t; $lt.ForeColor = [Drawing.Color]::White
+            $lt.Font = [Drawing.Font]::new("Segoe UI", 11, [Drawing.FontStyle]::Bold)
+            $lt.SetBounds(10, 10, 330, 30); $f.Controls.Add($lt)
+            $lm = [Windows.Forms.Label]::new()
+            $lm.Text = $m; $lm.ForeColor = [Drawing.Color]::LightGray
+            $lm.Font = [Drawing.Font]::new("Segoe UI", 9)
+            $lm.SetBounds(10, 40, 330, 50); $f.Controls.Add($lm)
+            $tmr = [Windows.Forms.Timer]::new()
+            $tmr.Interval = $d
+            $tmr.Add_Tick({ $f.Close() })
+            $tmr.Start()
+            $cl = { $f.Close() }
+            $f.Add_Click($cl); $lt.Add_Click($cl); $lm.Add_Click($cl)
+            [void]$f.ShowDialog()
+            $tmr.Dispose(); $f.Dispose()
+        }).AddArgument($Title).AddArgument($Message).AddArgument($Duration).AddArgument($offset)
+        [void]$ps.BeginInvoke()
+    } catch {}
 }
 
 function Show-AppStatus {

@@ -1,72 +1,48 @@
-<#
-.SYNOPSIS
-    Register or unregister Startup Manager to Windows startup (Task Scheduler).
-
-.PARAMETER Action
-    Action: Register or Unregister
-
-.EXAMPLE
-    .\register-startup.ps1 -Action Register
-#>
-
+# register-startup.ps1 -Action Register|Unregister
 param(
     [Parameter(Mandatory)]
     [ValidateSet("Register", "Unregister")]
     [string]$Action
 )
 
-# Require admin
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $isAdmin) {
-    Write-Host "Restarting as administrator..." -ForegroundColor Yellow
-    Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -File `"$PSCommandPath`" -Action $Action" -Verb RunAs
-    exit
-}
+. "$PSScriptRoot\aliases.ps1"
 
-$TaskName = "CustomStartupManager"
-$ScriptPath = Join-Path $PSScriptRoot "startup-manager.ps1"
+$TaskName   = "CustomStartupManager"
+$Pwsh       = (Get-Command pwsh).Source
+$ScriptPath = "$PSScriptRoot\startup-manager.ps1"
+$RegKey     = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
 
 function Register-Startup {
-    if (-not (Test-Path $ScriptPath)) {
-        Write-Host "Error: startup-manager.ps1 not found" -ForegroundColor Red
+    if (!(tp $ScriptPath)) {
+        wh "Error: startup-manager.ps1 not found" -Fg Red
         exit 1
     }
 
-    # Remove existing task
-    $existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-    if ($existing) {
-        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+    if (!(isadmin)) { elevate "-ExecutionPolicy Bypass -File `"$PSCommandPath`" -Action Register" }
+
+    # 旧レジストリ登録を解除
+    if (gp $RegKey -Name $TaskName -ea 0) {
+        rp $RegKey -Name $TaskName
+        wh "Removed old registry entry" -Fg Gray
     }
 
-    # Create task
-    $trigger = New-ScheduledTaskTrigger -AtLogOn
-    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -NoProfile -File `"$ScriptPath`""
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 1) -Priority 0
-    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
-
-    Register-ScheduledTask -TaskName $TaskName -Trigger $trigger -Action $action -Settings $settings -Principal $principal -Description "Custom Startup Manager" | Out-Null
-
-    Write-Host "✓ Registered: $TaskName" -ForegroundColor Green
+    $action   = New-ScheduledTaskAction -Execute $Pwsh -Argument "-ExecutionPolicy Bypass -W Hidden -NonInteractive -File `"$ScriptPath`""
+    $trigger  = New-ScheduledTaskTrigger -AtLogOn
+    $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([timespan]'0:5:0')
+    [void](Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Force)
+    wh "Registered: $TaskName (TaskScheduler)" -Fg Green
 }
 
 function Unregister-Startup {
-    $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-    if ($task) {
-        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-        Write-Host "✓ Unregistered: $TaskName" -ForegroundColor Green
+    if (Get-ScheduledTask -TaskName $TaskName -ea 0) {
+        Unregister-ScheduledTask -TaskName $TaskName -Con:$false
+        wh "Unregistered: $TaskName" -Fg Green
     } else {
-        Write-Host "Not registered" -ForegroundColor Yellow
+        wh "Not registered" -Fg Yellow
     }
 }
 
-# Main
 switch ($Action) {
     "Register"   { Register-Startup }
     "Unregister" { Unregister-Startup }
-}
-
-# Show status
-$task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-if ($task) {
-    Write-Host "Status: $($task.State)" -ForegroundColor Gray
 }
