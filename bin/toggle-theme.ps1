@@ -50,7 +50,9 @@ public class Wallpaper {
 $claudeJson = "$HOME\.claude-3\.claude.json"
 if (tp $claudeJson) {
     $json = gc $claudeJson -Raw | ConvertFrom-Json
-    $json.theme = $isDark ? 'dark' : 'light'
+    $val = $isDark ? 'dark' : 'light'
+    if ($json.PSObject.Properties['theme']) { $json.theme = $val }
+    else { $json | Add-Member theme $val }
     $json | ConvertTo-Json -Depth 10 > $claudeJson
 }
 
