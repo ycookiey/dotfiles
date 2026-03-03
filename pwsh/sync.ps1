@@ -21,6 +21,27 @@ if ([IO.File]::Exists($settingsTemplate)) {
     }
 }
 
+# --- Scoopfile ---
+$scoopfile = "$Dot\install\scoopfile.json"
+if (Get-Command scoop -ea 0) {
+    $export = scoop export | ConvertFrom-Json
+    foreach ($b in $export.buckets) {
+        $b.PSObject.Properties.Remove('Updated')
+        $b.PSObject.Properties.Remove('Manifests')
+    }
+    foreach ($app in $export.apps) {
+        $app.PSObject.Properties.Remove('Version')
+        $app.PSObject.Properties.Remove('Updated')
+        $app.PSObject.Properties.Remove('Info')
+    }
+    $new = $export | ConvertTo-Json -Depth 3
+    $old = if ([IO.File]::Exists($scoopfile)) { [IO.File]::ReadAllText($scoopfile).TrimEnd() } else { '' }
+    if ($new -ne $old) {
+        $new | sc $scoopfile
+        $synced = $true
+    }
+}
+
 # --- MCP servers ---
 $claude = Get-Command claude -ea 0
 if (!$claude) { return }
