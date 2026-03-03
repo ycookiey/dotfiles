@@ -1,6 +1,6 @@
 #!/usr/bin/env pwsh
 # ycusage — 全アカウントのClaude Code使用状況一覧
-. "$PSScriptRoot\..\aliases.ps1"
+. "$PSScriptRoot\..\pwsh\aliases.ps1"
 
 $script:LogFile = "$HOME\.claude\ycusage.log"
 

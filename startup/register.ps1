@@ -1,20 +1,20 @@
-# register-startup.ps1 -Action Register|Unregister
+# startup/register.ps1 -Action Register|Unregister
 param(
     [Parameter(Mandatory)]
     [ValidateSet("Register", "Unregister")]
     [string]$Action
 )
 
-. "$PSScriptRoot\aliases.ps1"
+. "$PSScriptRoot\..\pwsh\aliases.ps1"
 
 $TaskName   = "CustomStartupManager"
 $Pwsh       = (Get-Command pwsh).Source
-$ScriptPath = "$PSScriptRoot\startup-manager.ps1"
+$ScriptPath = "$PSScriptRoot\manager.ps1"
 $RegKey     = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
 
 function Register-Startup {
     if (!(tp $ScriptPath)) {
-        wh "Error: startup-manager.ps1 not found" -Fg Red
+        wh "Error: manager.ps1 not found" -Fg Red
         exit 1
     }
 
