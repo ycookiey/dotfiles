@@ -21,3 +21,15 @@ desktop.ini
 
 # Startup Manager
 logs/
+
+# Nushell generated cache
+nushell/cache/
+
+# dotcli generated files
+generated-aliases.ps1
+nushell/generated-aliases.nu
+cli/target/
+
+# Claude Skills
+claude/skills/life
+claude/skills/browser-fetch/scratchpad/
