@@ -2,6 +2,21 @@
 
 #Include "discord.ahk"
 
+; .ahkファイル変更時に自動リロード
+SetTimer(CheckReload, 1000)
+CheckReload() {
+    static lastHash := DirModHash()
+    current := DirModHash()
+    if (current != lastHash)
+        Reload
+}
+DirModHash() {
+    hash := ""
+    loop files A_ScriptDir "\*.ahk"
+        hash .= A_LoopFileTimeModified
+    return hash
+}
+
 ; Ctrl+R をNVIDIA Broadcastより先にインターセプトしてアプリに送る
 $^r::Send "{Ctrl down}r{Ctrl up}"
 
