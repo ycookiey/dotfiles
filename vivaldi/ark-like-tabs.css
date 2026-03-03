@@ -139,3 +139,138 @@ originally from https://note.com/webru/n/ne919635377a2
 #tabs-container .toolbar.toolbar-tabbar-before .workspace-popup .button-icon {
     justify-content: flex-start !important;
 }
+
+/* ===========================================
+   上部UI：最小高さ＋透明＋ホバーで濃く
+   =========================================== */
+:root {
+    --ui-top-height: 32px;
+    --ui-reveal-hit: 10px;
+    --ui-bg-alpha: 0.10;
+    --ui-bg-alpha-hover: 0.28;
+    --ui-page-offset: 0px;
+}
+
+/* 上部バーを固定し、薄く表示 */
+#browser .toolbar-mainbar {
+    position: fixed !important;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: var(--ui-top-height) !important;
+    min-height: var(--ui-top-height) !important;
+    background-color: transparent !important;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    box-shadow: none !important;
+    border: none !important;
+    z-index: 100;
+    transition: background-color 0.2s ease;
+}
+
+/* ホバー判定の拡張（上部に寄せたら反応） */
+#browser .toolbar-mainbar::before {
+    content: "";
+    position: absolute;
+    top: calc(-1 * var(--ui-reveal-hit));
+    left: 0;
+    right: 0;
+    height: calc(var(--ui-top-height) + var(--ui-reveal-hit));
+}
+
+/* ホバー時だけ濃く */
+#browser .toolbar-mainbar:hover,
+#browser .toolbar-mainbar:focus-within {
+    background-color: rgba(255, 255, 255, var(--ui-bg-alpha-hover)) !important;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+
+/* アドレスバー周りの高さを詰める */
+#browser .toolbar-addressbar,
+#browser .UrlBar-AddressField {
+    height: var(--ui-top-height) !important;
+    min-height: var(--ui-top-height) !important;
+    padding: 0 6px !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+/* アドレスバーの枠を消す */
+#browser .addressfield,
+#browser .UrlBar-AddressField {
+    border: none !important;
+    box-shadow: none !important;
+}
+
+/* 拡張機能：通常は非表示、ホバーで表示 */
+#browser .toolbar-mainbar .toolbar-extensions {
+    opacity: 0 !important;
+    pointer-events: none !important;
+    transform: translateY(-2px);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+#browser .toolbar-mainbar:hover .toolbar-extensions,
+#browser .toolbar-mainbar:focus-within .toolbar-extensions {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    transform: translateY(0);
+}
+
+/* ページアクション（QRなど）：通常は非表示、上部に近づくと表示 */
+#browser .UrlBar-AddressField .toolbar .button-toolbar,
+#browser .addressfield .toolbar .button-toolbar {
+    display: none !important;
+}
+
+#browser .toolbar-mainbar:hover .UrlBar-AddressField .toolbar .button-toolbar,
+#browser .toolbar-mainbar:focus-within .UrlBar-AddressField .toolbar .button-toolbar,
+#browser .toolbar-mainbar:hover .addressfield .toolbar .button-toolbar,
+#browser .toolbar-mainbar:focus-within .addressfield .toolbar .button-toolbar {
+    display: flex !important;
+}
+
+/* 右側のユーザーアイコン：通常は非表示、上部に近づくと表示 */
+#browser .toolbar-mainbar .profile-popup,
+#browser .toolbar-mainbar .button-toolbar.profile-popup,
+#browser .toolbar-mainbar .button-toolbar.profile-button {
+    display: none !important;
+}
+
+#browser .toolbar-mainbar:hover .profile-popup,
+#browser .toolbar-mainbar:focus-within .profile-popup,
+#browser .toolbar-mainbar:hover .button-toolbar.profile-popup,
+#browser .toolbar-mainbar:focus-within .button-toolbar.profile-popup,
+#browser .toolbar-mainbar:hover .button-toolbar.profile-button,
+#browser .toolbar-mainbar:focus-within .button-toolbar.profile-button {
+    display: flex !important;
+}
+
+/* ウィンドウ操作ボタン（最小化/最大化/閉じる）を非表示 */
+#browser .window-buttongroup,
+#browser .window-buttongroup button,
+#browser .button-toolbar.window-minimize,
+#browser .button-toolbar.window-maximize,
+#browser .button-toolbar.window-close {
+    display: none !important;
+}
+
+/* Vivaldi メニュー（左上アイコン）を非表示 */
+#browser .button-toolbar.vivaldi,
+#browser .vivaldi {
+    display: none !important;
+}
+
+/* ページ領域を上に詰める（最小限） */
+#browser #webview-container {
+    margin-top: var(--ui-page-offset) !important;
+}
+
+/* ===========================================
+   F11 全画面時：上部バーを完全非表示
+   =========================================== */
+#browser.fullscreen .toolbar-mainbar {
+    display: none !important;
+}
