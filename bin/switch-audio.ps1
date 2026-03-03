@@ -3,7 +3,7 @@
 # switch-audio — デフォルト音声デバイス（入力/出力）をインタラクティブに選択・変更
 
 $ErrorActionPreference = 'Stop'
-. "$PSScriptRoot\..\aliases.ps1"
+. "$PSScriptRoot\..\pwsh\aliases.ps1"
 
 $all = Get-AudioDevice -List
 $playback = @($all | ? Type -eq 'Playback')

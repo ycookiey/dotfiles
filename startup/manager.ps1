@@ -1,7 +1,7 @@
 # Windows Startup Manager
 
-. "$PSScriptRoot\aliases.ps1"
-. "$PSScriptRoot\startup-popup.ps1"
+. "$PSScriptRoot\..\pwsh\aliases.ps1"
+. "$PSScriptRoot\popup.ps1"
 
 $script:LogFile = $null
 
@@ -32,13 +32,13 @@ function Start-App-Logged {
     }
 }
 
-Initialize-Logging -Dir "$PSScriptRoot\logs"
+Initialize-Logging -Dir "$PSScriptRoot\..\logs"
 Show-PopupNotification "Startup" "Starting apps" 2000
 
 # --- High priority ---
 Start-App-Logged "WezTerm" { wezterm-gui }
 Start-App-Logged "AutoHotkey" {
-    start "$HOME\scoop\shims\autohotkey.exe" -Arg "C:\Main\Project\dotfiles\config\autohotkey\shortcuts.ahk"
+    start "$HOME\scoop\shims\autohotkey.exe" -Arg "C:\Main\Project\dotfiles\autohotkey\shortcuts.ahk"
 }
 sleep -Seconds 1
 Start-App-Logged "yClocky" { yclocky }

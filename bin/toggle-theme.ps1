@@ -7,7 +7,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-. "$PSScriptRoot\..\aliases.ps1"
+. "$PSScriptRoot\..\pwsh\aliases.ps1"
 
 $ThemePath = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize'
 

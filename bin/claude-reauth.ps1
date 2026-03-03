@@ -3,7 +3,7 @@
 # Usage: claude-reauth <accNum>
 param([Parameter(Mandatory)][int]$AccNum)
 
-. "$PSScriptRoot\..\aliases.ps1"
+. "$PSScriptRoot\..\pwsh\aliases.ps1"
 Add-Type -AN System.Security.Cryptography
 
 $ClientId    = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
