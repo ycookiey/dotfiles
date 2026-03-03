@@ -1,12 +1,25 @@
 {
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
+  "permissions": {
+    "allow": [
+      "WebFetch",
+      "WebSearch",
+      "Read(~/.claude/docs/**)",
+      "Read(~/.claude-*/docs/**)"
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "pwsh -NoProfile -File \"$HOME\\.claude\\statusline.ps1\""
+  },
   "enabledPlugins": {
     "github@claude-plugins-official": true,
     "frontend-design@claude-plugins-official": true,
-    "typescript-lsp@claude-plugins-official": true
+    "typescript-lsp@claude-plugins-official": true,
+    "atlassian@claude-plugins-official": true,
+    "rust-analyzer-lsp@claude-plugins-official": true
   },
-  "language": "日本語",
-  "statusLine": {
-    "type": "command",
-    "command": "powershell -NoProfile -Command \". $HOME\\.claude\\statusline.ps1\""
-  }
+  "language": "日本語"
 }

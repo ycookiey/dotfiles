@@ -1,0 +1,18 @@
+{
+  "gtr": {
+    "command": "node",
+    "args": ["{PROJECTS}/gtr-mcp-server/build/index.js"],
+    "env": {
+      "PATH": "{PROJECTS}/git-worktree-runner/bin;{HOME}/scoop/apps/git/current/mingw64/bin;{HOME}/scoop/apps/git/current/usr/bin;C:/Program Files/nodejs",
+      "GTR_BASH_PATH": "{HOME}/scoop/apps/git/current/usr/bin/bash.exe"
+    }
+  },
+  "ytasky": {
+    "command": "ytasky",
+    "args": ["mcp"]
+  },
+  "pencil": {
+    "command": "{LOCALAPPDATA}/Programs/Pencil/resources/app.asar.unpacked/out/mcp-server-windows-x64.exe",
+    "args": ["--app", "desktop"]
+  }
+}

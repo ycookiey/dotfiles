@@ -150,6 +150,8 @@ return {
     { key = "Tab", mods = "SHIFT|CTRL", action = navigate_prev },
     -- タブ新規作成
     { key = "t", mods = "CTRL", action = act({ SpawnTab = "CurrentPaneDomain" }) },
+    -- nushellタブ
+    { key = "n", mods = "SHIFT|CTRL", action = act.SpawnCommandInNewTab({ args = { "nu" } }) },
     -- タブを閉じる
     { key = "w", mods = "CTRL", action = act({ CloseCurrentTab = { confirm = true } }) },
     -- タブ/ペイン位置入れ替え（隣のペインとスワップ、端なら外へ → タブ移動）

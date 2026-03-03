@@ -1,0 +1,196 @@
+# dotcli definitions — 全関数・エイリアスの単一ソース
+# `cargo build` で型チェック、`dotcli generate` で .ps1 / .nu 生成
+
+# =============================================
+# A. Simple aliases
+# =============================================
+
+[[alias]]
+name = "lg"
+command = "lazygit"
+
+[[alias]]
+name = "v"
+command = "nvim"
+
+[[alias]]
+name = "f"
+command = "fzf"
+
+[[alias]]
+name = "fm"
+command = "fzf"
+args = ["-m"]
+
+[[alias]]
+name = "agy"
+command = "antigravity"
+args = ["."]
+
+[[alias]]
+name = "zp"
+command = "zoxide"
+args = ["query", "-i"]
+
+[[alias]]
+name = "z-"
+command = "z"
+args = ["-"]
+
+# =============================================
+# B. Script wrappers (bin/*.ps1)
+# =============================================
+
+[[script]]
+name = "gnew"
+path = "bin/git-new.ps1"
+
+[[script]]
+name = "toggle-theme"
+path = "bin/toggle-theme.ps1"
+
+[[script]]
+name = "audio"
+path = "bin/switch-audio.ps1"
+
+[[script]]
+name = "ycusage"
+path = "bin/ycusage.ps1"
+
+[[script]]
+name = "claude-reauth"
+path = "bin/claude-reauth.ps1"
+
+# =============================================
+# C. App launchers
+# =============================================
+
+# --- URI scheme ---
+[[launcher]]
+name = "kindle"
+type = "uri"
+uri = "kindle:"
+platform = "windows"
+
+[[launcher]]
+name = "dis"
+type = "uri"
+uri = "discord:"
+platform = "windows"
+
+[[launcher]]
+name = "slk"
+type = "uri"
+uri = "slack:"
+platform = "windows"
+
+[[launcher]]
+name = "obsd"
+type = "uri"
+uri = "obsidian:"
+platform = "windows"
+
+[[launcher]]
+name = "viv"
+type = "exe"
+path = "vivaldi"
+platform = "windows"
+
+[[launcher]]
+name = "rmt"
+type = "uri"
+uri = "parsec:"
+platform = "windows"
+
+[[launcher]]
+name = "spotify"
+type = "uri"
+uri = "spotify:"
+platform = "windows"
+
+# --- Start-App (Windows shell:AppsFolder) ---
+[[launcher]]
+name = "cal"
+type = "start_app"
+app_name = "Notion Calendar"
+platform = "windows"
+
+# --- Direct exe ---
+[[launcher]]
+name = "htb"
+type = "exe"
+path = 'C:\Main\Project\HideTaskBar-temp\src\HideTaskBar\bin\Debug\net8.0-windows\HideTaskBar.exe'
+platform = "windows"
+
+[[launcher]]
+name = "lghub"
+type = "exe"
+path = '{PROGRAM_FILES}\LGHUB\system_tray\lghub_system_tray.exe'
+args = ["--minimized"]
+platform = "windows"
+
+[[launcher]]
+name = "nvbc"
+type = "exe"
+path = '{PROGRAM_FILES}\NVIDIA Corporation\NVIDIA Broadcast\NVIDIA Broadcast.exe'
+args = ['--process-start-args "--launch-hidden"']
+platform = "windows"
+
+# =============================================
+# D. Complex commands (Rust subcommands)
+#    Phase 2 で Rust 実装予定。enabled = true のものは生成スキップ
+# =============================================
+
+[[command]]
+name = "proxy"
+subcommand = "proxy"
+modifies_shell = true
+enabled = true
+
+[[command]]
+name = "c"
+subcommand = "claude-switch"
+modifies_shell = true
+enabled = true
+
+[[command]]
+name = "cb"
+subcommand = "claude-bedrock"
+modifies_shell = true
+enabled = true
+
+[[command]]
+name = "y"
+subcommand = "yazi-cd"
+modifies_shell = true
+enabled = false
+
+[[command]]
+name = "grf"
+subcommand = "grf"
+modifies_shell = false
+enabled = true
+
+[[command]]
+name = "grfo"
+subcommand = "grfo"
+modifies_shell = false
+enabled = true
+
+[[command]]
+name = "grfc"
+subcommand = "grfc"
+modifies_shell = false
+enabled = true
+
+[[command]]
+name = "frun"
+subcommand = "frun"
+modifies_shell = false
+enabled = true
+
+[[command]]
+name = "locked"
+subcommand = "locked"
+modifies_shell = false
+enabled = true
