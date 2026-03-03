@@ -1,14 +1,18 @@
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path $MyInvocation.MyCommand.Definition
-. "$ScriptDir\aliases.ps1"
+. "$ScriptDir\pwsh\aliases.ps1"
 $LogFile = "$HOME\.claude\setup.log"
 
 # Scoop セットアップ（未インストール時は自動、既存マシンは --scoop で手動）
 if ($args -contains '--scoop' -or !(gcm scoop -ea 0)) {
-    & "$ScriptDir\install-scoop.ps1"
+    & "$ScriptDir\install\scoop.ps1"
 }
 
-if (!(isadmin)) { elevate "-File `"$PSCommandPath`"" }
+if (!(isadmin)) {
+    start pwsh -Verb RunAs -Arg "-ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Wait
+    if (tp $LogFile) { gc $LogFile | % { wh $_ -ForegroundColor ($_ -match 'Error' ? 'Red' : 'Green') } }
+    exit
+}
 
 "$(Get-Date) - Start (ScriptDir: $ScriptDir)" > $LogFile
 
@@ -17,16 +21,18 @@ try {
     mkl "$HOME\.config\wezterm" "$ScriptDir\wezterm"
     mkd "$env:APPDATA\yazi\config"
     mkl "$env:APPDATA\yazi\config" "$ScriptDir\yazi"
-    mkl "$env:LOCALAPPDATA\nvim" "$ScriptDir\config\nvim"
+    mkl "$env:LOCALAPPDATA\nvim" "$ScriptDir\nvim"
+    mkl "$env:APPDATA\nushell" "$ScriptDir\nushell"
     mkd "$env:LOCALAPPDATA\lazygit"
     mkl "$env:LOCALAPPDATA\lazygit\config.yml" "$ScriptDir\lazygit\config.yml"
     mkd "$HOME\.claude"
-    mkl "$HOME\.claude\aliases.ps1" "$ScriptDir\aliases.ps1"
+    mkl "$HOME\.claude\aliases.ps1" "$ScriptDir\pwsh\aliases.ps1"
     mkl "$HOME\.claude\statusline.ps1" "$ScriptDir\claude\statusline.ps1"
-    mkl "$HOME\.claude\settings.json" "$ScriptDir\claude\settings.json"
     mkl "$HOME\.claude\CLAUDE.md" "$ScriptDir\claude\CLAUDE.md"
     mkl "$HOME\.claude\rules" "$ScriptDir\claude\rules"
     mkl "$HOME\.claude\docs" "$ScriptDir\claude\docs"
+    mkl "$HOME\.claude\skills" "$ScriptDir\claude\skills"
+    mkl "$ScriptDir\claude\skills\life" "C:\Main\Project\life\skills\life"
 
     # File association: Neovim (WezTerm)
     $wt = "$HOME\scoop\apps\wezterm\current\wezterm-gui.exe"
@@ -50,17 +56,28 @@ try {
     }
 
     # Claude マルチアカウント
-    $claudeExclude = '.credentials*', '.statusline_cache', '.statusline_debug.json'
-    foreach ($n in 1..3) {
-        $dir = "$HOME\.claude-$n"
-        mkd $dir
+    $claudeExclude = '.credentials*', '.statusline_cache', '.statusline_debug.json', 'settings.json'
+    foreach ($dir in gci "$HOME\.claude-*" -Dir -Force) {
         gci "$HOME\.claude" -Force | ? {
             $name = $_.Name
             !($claudeExclude | ? { $name -like $_ })
         } | % {
-            mkl "$dir\$($_.Name)" $_.FullName
+            $l = "$dir\$($_.Name)"
+            if (tp $l) { rm $l -Force -Recurse -ea 0 }
+            mkl $l $_.FullName
         }
     }
+
+    # dotcli (Rust CLI) — ビルド＆エイリアス生成
+    if (gcm cargo -ea 0) {
+        cargo install --path "$ScriptDir\cli" --quiet 2>$null
+        dotcli generate -o $ScriptDir
+        "$(Get-Date) - dotcli installed and generated" >> $LogFile
+    }
+
+    # Startup manager (TaskScheduler)
+    & "$ScriptDir\startup\register.ps1" -Action Register
+    "$(Get-Date) - Startup registered" >> $LogFile
 
     "$(Get-Date) - Done" >> $LogFile
 } catch {
