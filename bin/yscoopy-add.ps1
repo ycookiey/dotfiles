@@ -25,15 +25,30 @@ $release = gh api "repos/$owner/$Repo/releases/latest" --jq '{tag: .tag_name, as
 if (!$release) { Write-Error "No release found for $owner/$Repo"; return }
 
 $version = $release.tag -replace '^v', ''
-$exe = $release.assets | ? { $_.name -match '\.exe$' } | select -First 1
-if (!$exe) { Write-Error "No .exe asset found in release"; return }
+# Find Windows asset: bare .exe or windows .zip
+$asset = $release.assets | ? { $_.name -match '\.exe$' } | select -First 1
+$isZip = $false
+if (!$asset) {
+  $asset = $release.assets | ? { $_.name -match 'windows.*\.zip$' } | select -First 1
+  $isZip = $true
+}
+if (!$asset) { Write-Error "No Windows asset (.exe or .zip) found in release"; return }
 
 # --- Hash ---
-wh "Downloading $($exe.name) for hash..." -Fg Cyan
-$tmp = "$env:TEMP/$($exe.name)"
-iwr $exe.url -OutFile $tmp
+wh "Downloading $($asset.name) for hash..." -Fg Cyan
+$tmp = "$env:TEMP/$($asset.name)"
+iwr $asset.url -OutFile $tmp
 $hash = (Get-FileHash $tmp -Algorithm SHA256).Hash.ToLower()
+
+if ($isZip) {
+  $zip = [IO.Compression.ZipFile]::OpenRead($tmp)
+  $exeName = ($zip.Entries | ? { $_.Name -match '\.exe$' } | select -First 1).Name
+  $zip.Dispose()
+} else {
+  $exeName = $asset.name
+}
 rm $tmp
+if (!$exeName) { Write-Error "No .exe found in zip"; return }
 
 # --- Manifest ---
 $manifest = [ordered]@{
@@ -41,13 +56,14 @@ $manifest = [ordered]@{
   description = $Description
   homepage    = "https://github.com/$owner/$Repo"
   license     = 'MIT'
-  url         = "https://github.com/$owner/$Repo/releases/download/v$version/$($exe.name)"
+  url         = "https://github.com/$owner/$Repo/releases/download/v$version/$($asset.name)"
   hash        = $hash
-  bin         = $exe.name
-  shortcuts   = @(, @($exe.name, $App))
+  bin         = $exeName
+  shortcuts   = @(, @($exeName, $App))
   checkver    = @{ github = "https://github.com/$owner/$Repo" }
-  autoupdate  = @{ url = "https://github.com/$owner/$Repo/releases/download/v`$version/$($exe.name)" }
+  autoupdate  = @{ url = "https://github.com/$owner/$Repo/releases/download/v`$version/$($asset.name)" }
 }
+if ($isZip) { $manifest['extract_dir'] = $exeName -replace '\.exe$', '' }
 $json = $manifest | ConvertTo-Json -Depth 4
 
 wh "`nManifest:" -Fg Green
