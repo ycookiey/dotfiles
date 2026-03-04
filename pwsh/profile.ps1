@@ -26,7 +26,7 @@ foreach ($p in @(
 )) { if ($p -notin $paths) { $paths += $p } }
 $env:Path = $paths -join ';'
 
-$gitGtrScript = "$gtrBin\git-gtr.ps1"
+$gitGtrScript = "$Dot\bin\git-gtr.ps1"
 if ([IO.File]::Exists($gitGtrScript)) {
     function git-gtr { & $gitGtrScript @args }
     $alias:gtr = 'git-gtr'
