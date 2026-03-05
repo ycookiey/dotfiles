@@ -31,8 +31,7 @@ try {
     mkl "$HOME\.claude\CLAUDE.md" "$ScriptDir\claude\CLAUDE.md"
     mkl "$HOME\.claude\rules" "$ScriptDir\claude\rules"
     mkl "$HOME\.claude\docs" "$ScriptDir\claude\docs"
-    mkl "$HOME\.claude\skills" "$ScriptDir\claude\skills"
-    mkl "$ScriptDir\claude\skills\life" "C:\Main\Project\life\skills\life"
+    mkd "$HOME\.claude\skills"
 
     # File association: Neovim (WezTerm)
     $wt = "$HOME\scoop\apps\wezterm\current\wezterm-gui.exe"
