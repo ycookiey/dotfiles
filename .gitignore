@@ -33,3 +33,4 @@ cli/target/
 # Claude Skills
 claude/skills/life
 claude/skills/browser-fetch/scratchpad/
+/nushell/history.txt
