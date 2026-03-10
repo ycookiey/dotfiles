@@ -37,7 +37,7 @@ if (Get-Command scoop -ea 0) {
     $new = $export | ConvertTo-Json -Depth 3
     $old = if ([IO.File]::Exists($scoopfile)) { [IO.File]::ReadAllText($scoopfile).TrimEnd() } else { '' }
     if ($new -ne $old) {
-        $new | sc $scoopfile
+        $new | Set-Content $scoopfile
         $synced = $true
     }
 }
