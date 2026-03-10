@@ -59,6 +59,10 @@
       "Name": "dark"
     },
     {
+      "Source": "yscoopy",
+      "Name": "dirtygit"
+    },
+    {
       "Source": "extras",
       "Name": "discord"
     },
@@ -133,6 +137,10 @@
     {
       "Source": null,
       "Name": "llama.cpp-cu131"
+    },
+    {
+      "Source": "main",
+      "Name": "llvm"
     },
     {
       "Source": "main",
@@ -225,6 +233,10 @@
     {
       "Source": "extras",
       "Name": "sumatrapdf"
+    },
+    {
+      "Source": "main",
+      "Name": "supabase"
     },
     {
       "Source": "extras",
