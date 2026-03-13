@@ -8,6 +8,9 @@ if ($args -contains '--scoop' -or !(gcm scoop -ea 0)) {
     & "$ScriptDir\install\scoop.ps1"
 }
 
+# Scoop 以外のツール（irm | iex 等）
+& "$ScriptDir\install\tools.ps1"
+
 if (!(isadmin)) {
     start pwsh -Verb RunAs -Arg "-ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Wait
     if (tp $LogFile) { gc $LogFile | % { wh $_ -ForegroundColor ($_ -match 'Error' ? 'Red' : 'Green') } }
