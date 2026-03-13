@@ -1,0 +1,7 @@
+[
+  {
+    "name": "Claude Code",
+    "cmd": "claude",
+    "install": "irm https://claude.ai/install.ps1 | iex"
+  }
+]
