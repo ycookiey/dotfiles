@@ -12,7 +12,7 @@ config.use_ime = true
 
 -- デフォルトをPowerShellに設定
 config.default_prog = { 'pwsh' }
-config.default_cwd = 'C:\\Main\\Project'
+config.default_cwd = 'C:\Main\Project'
 
 ----------------------------------------------------
 -- フォント設定
@@ -151,4 +151,7 @@ end)
 config.disable_default_key_bindings = true
 config.keys = require("keybinds").keys
 config.key_tables = require("keybinds").key_tables
+
+config.wsl_domains = {}
+
 return config
