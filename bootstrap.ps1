@@ -1,5 +1,6 @@
 # bootstrap.ps1 — Fresh PC: irm https://raw.githubusercontent.com/ycookiey/dotfiles/main/bootstrap.ps1 | iex
 $ErrorActionPreference = "Stop"
+$env:SCOOP_ALLOW_ADMIN = "true"
 $Repo = "https://github.com/ycookiey/dotfiles.git"
 $Dir  = "C:\Main\Project\dotfiles"
 
