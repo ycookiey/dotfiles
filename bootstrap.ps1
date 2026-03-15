@@ -6,10 +6,18 @@ $Dir  = "C:\Main\Project\dotfiles"
 
 Write-Host "=== dotfiles bootstrap ===" -ForegroundColor Cyan
 
+# 管理者権限で実行されているか確認
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
 # Scoop
 if (!(Get-Command scoop -ea 0)) {
     Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
-    irm get.scoop.sh | iex
+    if ($isAdmin) {
+        Write-Host "Running Scoop installer as Administrator..." -ForegroundColor Yellow
+        iex "& {$(irm get.scoop.sh)} -RunAsAdmin"
+    } else {
+        irm get.scoop.sh | iex
+    }
 }
 
 # git + pwsh（clone & setup.ps1 に必要な最小セット）
