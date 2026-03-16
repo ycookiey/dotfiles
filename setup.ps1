@@ -65,6 +65,22 @@ try {
         "$(Get-Date) - Registered WezTermNvim for $($exts.Count) extensions" >> $LogFile
     }
 
+    # Claude Code: PATH ($HOME\.local\bin)
+    $claudeBin = "$HOME\.local\bin"
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    if ($userPath -notlike "*$claudeBin*") {
+        [Environment]::SetEnvironmentVariable('Path', "$userPath;$claudeBin", 'User')
+        "$(Get-Date) - Added $claudeBin to User PATH" >> $LogFile
+    }
+
+    # Claude Code: WSL セットアップ + bash 切り替え
+    try {
+        & "$ScriptDir\install\wsl.ps1"
+    } catch {
+        wh "WSL セットアップでエラー: $_" -Fg Yellow
+        "$(Get-Date) - WSL setup error: $_" >> $LogFile
+    }
+
     # Claude マルチアカウント
     $claudeExclude = '.credentials*', '.statusline_cache', '.statusline_debug.json', 'settings.json'
     foreach ($dir in gci "$HOME\.claude-*" -Dir -Force) {
