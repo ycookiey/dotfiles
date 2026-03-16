@@ -7,7 +7,7 @@ $script:IsInteractive = [Environment]::GetCommandLineArgs() -notcontains '-NonIn
 # 1. Config & Environment
 # ==========================================
 $_me = Get-Item $PSCommandPath
-$Dot = Split-Path (if ($_me.Target) { Split-Path $_me.Target } else { $PSScriptRoot })
+$Dot = Split-Path $(if ($_me.Target) { Split-Path $_me.Target } else { $PSScriptRoot })
 $Proj = Split-Path $Dot
 $PSDefaultParameterValues['Out-File:Encoding'] = 'utf8NoBOM'
 $env:STARSHIP_CONFIG = "$Dot\starship.toml"
@@ -59,6 +59,9 @@ if ($script:IsInteractive) {
     # 3. Initialize Tools
     # ==========================================
 
+    # --- mise ---
+    if (gcm mise -ea 0) { (mise activate pwsh) -join "`n" | iex }
+
     # --- zoxide (手書き最小版、dot-source不要) ---
     function global:__zoxide_pwd { $l = gl; if ($l.Provider.Name -eq 'FileSystem') { $l.ProviderPath } }
     function global:__zoxide_cd($dir, $literal) {
@@ -98,7 +101,7 @@ if ($script:IsInteractive) {
     $starshipCache = "$cacheDir\starship-init.ps1"
     if (![IO.File]::Exists($starshipCache) -or
         [IO.File]::GetLastWriteTime($starshipExe) -gt [IO.File]::GetLastWriteTime($starshipCache)) {
-        & $starshipExe init powershell --print-full-init | sc $starshipCache
+        & $starshipExe init powershell --print-full-init > $starshipCache
     }
 
     # --- Prompt hook (inlined) ---
@@ -141,7 +144,7 @@ if ($script:IsInteractive) {
             return "$PWD> "
         }
         . "$HOME\.cache\pwsh\starship-init.ps1"
-        function global:Invoke-Starship-PreCommand { $null = __zoxide_hook }
+        function global:Invoke-Starship-PreCommand { if (Test-Path Function:\_mise_hook) { _mise_hook }; $null = __zoxide_hook }
         $global:_starshipFn = $function:prompt
         function global:prompt {
             & $global:_promptHook
