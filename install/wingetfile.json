@@ -1,5 +1,52 @@
 {
   "apps": [
-    { "Id": "Google.JapaneseIME" }
+    {
+      "Id": "AutoHotkey.AutoHotkey"
+    },
+    {
+      "Id": "Canonical.Ubuntu"
+    },
+    {
+      "Id": "EpicGames.EpicGamesLauncher"
+    },
+    {
+      "Id": "Google.JapaneseIME"
+    },
+    {
+      "Id": "Microsoft.AppInstaller"
+    },
+    {
+      "Id": "Microsoft.Edge"
+    },
+    {
+      "Id": "Microsoft.EdgeWebView2Runtime"
+    },
+    {
+      "Id": "Microsoft.OneDrive"
+    },
+    {
+      "Id": "Microsoft.Teams"
+    },
+    {
+      "Id": "Microsoft.Teams.Free"
+    },
+    {
+      "Id": "Microsoft.UI.Xaml.2.7"
+    },
+    {
+      "Id": "Microsoft.UI.Xaml.2.8"
+    },
+    {
+      "Id": "Microsoft.VCLibs.Desktop.14"
+    },
+    {
+      "Id": "Microsoft.VisualStudio.BuildTools"
+    },
+    {
+      "Id": "Microsoft.WindowsTerminal"
+    },
+    {
+      "Id": "Microsoft.WSL"
+    }
   ]
 }

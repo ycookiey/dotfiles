@@ -109,10 +109,17 @@ try {
     "$(Get-Date) - Winget apps install checked" >> $LogFile
 
     # dotcli (Rust CLI) — ビルド＆エイリアス生成
-    if (gcm cargo -ea 0) {
-        cargo install --path "$ScriptDir\cli" --quiet 2>$null
-        dotcli generate -o $ScriptDir
-        "$(Get-Date) - dotcli installed and generated" >> $LogFile
+    $cargoExe = gcm cargo -ea 0
+    if ($cargoExe) {
+        $cargoBin = Split-Path $cargoExe.Source
+        cargo install --path "$ScriptDir\cli" --quiet
+        $dotcliExe = "$cargoBin\dotcli.exe"
+        if (tp $dotcliExe) {
+            & $dotcliExe generate -o $ScriptDir
+            "$(Get-Date) - dotcli installed and generated" >> $LogFile
+        } else {
+            "$(Get-Date) - Error: dotcli build failed" >> $LogFile
+        }
     }
 
     # Startup manager (TaskScheduler)
