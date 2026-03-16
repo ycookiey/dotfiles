@@ -1,5 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $ScriptDir = Split-Path $MyInvocation.MyCommand.Definition
+. "$ScriptDir\..\pwsh\aliases.ps1"
 
 $list = gc "$ScriptDir\webinstall.json" -Raw | ConvertFrom-Json
 foreach ($app in $list) {
