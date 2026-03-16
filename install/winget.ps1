@@ -9,9 +9,15 @@ if (!(gcm winget -ea 0)) {
 
 $json = gc $WingetFile -Raw | ConvertFrom-Json
 
+# Cache list of installed apps once to avoid repeated winget invocations in the loop
+$installedAppsText = ""
+$installedAppsOutput = winget list 2>$null
+if ($LASTEXITCODE -eq 0) {
+    $installedAppsText = $installedAppsOutput -join "`n"
+}
+
 foreach ($app in $json.apps) {
-    $check = winget list --id $app.Id -e 2>$null
-    if ($LASTEXITCODE -eq 0 -and $check -match [regex]::Escape($app.Id)) {
+    if ($installedAppsText -and $installedAppsText -match ("\b" + [regex]::Escape($app.Id) + "\b")) {
         continue
     }
     wh "Installing $($app.Id)..." -Fg Cyan
