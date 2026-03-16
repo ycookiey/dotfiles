@@ -14,7 +14,7 @@ $RegKey     = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
 
 function Register-Startup {
     if (!(tp $ScriptPath)) {
-        wh "Error: manager.ps1 not found" -Fg Red
+        wh "Error: manager.ps1 not found" -Fo Red
         exit 1
     }
 
@@ -23,22 +23,22 @@ function Register-Startup {
     # 旧レジストリ登録を解除
     if (gp $RegKey -Name $TaskName -ea 0) {
         rp $RegKey -Name $TaskName
-        wh "Removed old registry entry" -Fg Gray
+        wh "Removed old registry entry" -Fo Gray
     }
 
     $action   = New-ScheduledTaskAction -Execute $Pwsh -Argument "-ExecutionPolicy Bypass -W Hidden -NonInteractive -File `"$ScriptPath`""
     $trigger  = New-ScheduledTaskTrigger -AtLogOn
     $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([timespan]'0:5:0')
     [void](Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Force)
-    wh "Registered: $TaskName (TaskScheduler)" -Fg Green
+    wh "Registered: $TaskName (TaskScheduler)" -Fo Green
 }
 
 function Unregister-Startup {
     if (Get-ScheduledTask -TaskName $TaskName -ea 0) {
         Unregister-ScheduledTask -TaskName $TaskName -Con:$false
-        wh "Unregistered: $TaskName" -Fg Green
+        wh "Unregistered: $TaskName" -Fo Green
     } else {
-        wh "Not registered" -Fg Yellow
+        wh "Not registered" -Fo Yellow
     }
 }
 

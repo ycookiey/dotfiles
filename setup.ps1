@@ -77,7 +77,7 @@ try {
     try {
         & "$ScriptDir\install\wsl.ps1"
     } catch {
-        wh "WSL セットアップでエラー: $_" -Fg Yellow
+        wh "WSL セットアップでエラー: $_" -Fo Yellow
         "$(Get-Date) - WSL setup error: $_" >> $LogFile
     }
 

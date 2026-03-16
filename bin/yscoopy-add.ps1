@@ -20,7 +20,7 @@ if (!$cfg.worker_url -or !$cfg.webhook_secret) {
 }
 
 # --- Latest release ---
-wh "Fetching latest release from $owner/$Repo..." -Fg Cyan
+wh "Fetching latest release from $owner/$Repo..." -Fo Cyan
 $release = gh api "repos/$owner/$Repo/releases/latest" --jq '{tag: .tag_name, assets: [.assets[] | {name: .name, url: .browser_download_url}]}' | ConvertFrom-Json
 if (!$release) { Write-Error "No release found for $owner/$Repo"; return }
 
@@ -35,7 +35,7 @@ if (!$asset) {
 if (!$asset) { Write-Error "No Windows asset (.exe or .zip) found in release"; return }
 
 # --- Hash ---
-wh "Downloading $($asset.name) for hash..." -Fg Cyan
+wh "Downloading $($asset.name) for hash..." -Fo Cyan
 $tmp = "$env:TEMP/$($asset.name)"
 iwr $asset.url -OutFile $tmp
 $hash = (Get-FileHash $tmp -Algorithm SHA256).Hash.ToLower()
@@ -66,11 +66,11 @@ $manifest = [ordered]@{
 if ($isZip) { $manifest['extract_dir'] = $exeName -replace '\.exe$', '' }
 $json = $manifest | ConvertTo-Json -Depth 4
 
-wh "`nManifest:" -Fg Green
+wh "`nManifest:" -Fo Green
 wh $json
 
 # --- Push to yscoopy ---
-wh "`nPushing manifest to $bucket..." -Fg Cyan
+wh "`nPushing manifest to $bucket..." -Fo Cyan
 $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
 $existing = gh api "repos/$owner/$bucket/contents/$App.json" --jq '.sha' 2>$null
 
@@ -80,13 +80,13 @@ $bodyJson = $body | ConvertTo-Json -Compress
 
 $bodyJson | gh api "repos/$owner/$bucket/contents/$App.json" -X PUT --input - > $null
 if ($LASTEXITCODE -ne 0) { Write-Error "Failed to push manifest"; return }
-wh "Manifest pushed." -Fg Green
+wh "Manifest pushed." -Fo Green
 
 # --- Webhook ---
-wh "Registering webhook on $owner/$Repo..." -Fg Cyan
+wh "Registering webhook on $owner/$Repo..." -Fo Cyan
 $hooks = gh api "repos/$owner/$Repo/hooks" --jq '.[].config.url' 2>$null
 if ($hooks -and ($hooks -split "`n") -contains $cfg.worker_url) {
-  wh "Webhook already registered." -Fg Yellow
+  wh "Webhook already registered." -Fo Yellow
 } else {
   $hookBody = @{
     config = @{
@@ -100,7 +100,7 @@ if ($hooks -and ($hooks -split "`n") -contains $cfg.worker_url) {
 
   $hookBody | gh api "repos/$owner/$Repo/hooks" -X POST --input - > $null
   if ($LASTEXITCODE -ne 0) { Write-Error "Failed to register webhook"; return }
-  wh "Webhook registered." -Fg Green
+  wh "Webhook registered." -Fo Green
 }
 
-wh "`nDone! $App added to $bucket." -Fg Green
+wh "`nDone! $App added to $bucket." -Fo Green
