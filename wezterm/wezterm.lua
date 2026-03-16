@@ -12,7 +12,7 @@ config.use_ime = true
 
 -- デフォルトをPowerShellに設定
 config.default_prog = { 'pwsh' }
-config.default_cwd = 'C:\Main\Project'
+config.default_cwd = [[C:\Main\Project]]
 
 ----------------------------------------------------
 -- フォント設定
