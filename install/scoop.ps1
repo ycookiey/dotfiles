@@ -3,6 +3,10 @@ param(
     [switch]$OnlyLarge
 )
 
+if ($SkipLarge -and $OnlyLarge) {
+    throw "-SkipLarge and -OnlyLarge cannot be used together. Please specify only one of these switches."
+}
+
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path $MyInvocation.MyCommand.Definition
 $ScoopFile = "$ScriptDir\scoopfile.json"
