@@ -10,14 +10,30 @@ if (!(gcm winget -ea 0)) {
 $json = gc $WingetFile -Raw | ConvertFrom-Json
 
 # Cache list of installed apps once to avoid repeated winget invocations in the loop
-$installedAppsText = ""
-$installedAppsOutput = winget list 2>$null
+$installedAppIds = @{}
+$installedAppsOutput = winget list --output json 2>$null
 if ($LASTEXITCODE -eq 0) {
-    $installedAppsText = $installedAppsOutput -join "`n"
+    try {
+        $installedApps = $installedAppsOutput | ConvertFrom-Json
+        foreach ($pkg in $installedApps) {
+            # Support both possible property names depending on winget version
+            $pkgId = $null
+            if ($pkg.PSObject.Properties.Name -contains 'Id') {
+                $pkgId = $pkg.Id
+            } elseif ($pkg.PSObject.Properties.Name -contains 'PackageIdentifier') {
+                $pkgId = $pkg.PackageIdentifier
+            }
+            if ($pkgId) {
+                $installedAppIds[$pkgId] = $true
+            }
+        }
+    } catch {
+        # If parsing fails, leave $installedAppIds empty and let winget handle re-installs
+    }
 }
 
 foreach ($app in $json.apps) {
-    if ($installedAppsText -and $installedAppsText -match ("\b" + [regex]::Escape($app.Id) + "\b")) {
+    if ($installedAppIds.ContainsKey($app.Id)) {
         continue
     }
     wh "Installing $($app.Id)..." -Fg Cyan
