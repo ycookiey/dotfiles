@@ -14,7 +14,7 @@ $ScoopFile = "$ScriptDir\scoopfile.json"
 
 # Scoop インストール
 if (!(gcm scoop -ea 0)) {
-    wh "Installing Scoop..." -Fg Cyan
+    wh "Installing Scoop..." -Fo Cyan
     Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
     irm get.scoop.sh | iex
 }
@@ -29,7 +29,7 @@ $json = gc $ScoopFile -Raw | ConvertFrom-Json
 $existing = scoop bucket list 2>$null | % { $_.Name }
 foreach ($b in $json.buckets) {
     if ($b.Name -notin $existing) {
-        wh "Adding bucket: $($b.Name)" -Fg Cyan
+        wh "Adding bucket: $($b.Name)" -Fo Cyan
         scoop bucket add $b.Name $b.Source
     }
 }
@@ -46,13 +46,13 @@ if (Test-Path $orderFile) {
     $failed = @()
     foreach ($app in $apps) {
         if ($app.Name -notin $installed) {
-            wh "Installing $($app.Name)..." -Fg Cyan
+            wh "Installing $($app.Name)..." -Fo Cyan
             if ($OnlyLarge) {
                 try {
                     scoop install $app.Name
                     if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "scoop install exited with code $LASTEXITCODE" }
                 } catch {
-                    wh "  Skipped (failed): $($app.Name) — $_" -Fg Yellow
+                    wh "  Skipped (failed): $($app.Name) — $_" -Fo Yellow
                     $failed += $app.Name
                 }
             } else {
@@ -61,12 +61,12 @@ if (Test-Path $orderFile) {
         }
     }
     if ($failed.Count -gt 0) {
-        wh "`nFailed large apps: $($failed -join ', ')" -Fg Yellow
-        wh "Retry later: scoop install $($failed -join ' ')" -Fg Yellow
+        wh "`nFailed large apps: $($failed -join ', ')" -Fo Yellow
+        wh "Retry later: scoop install $($failed -join ' ')" -Fo Yellow
     }
 } else {
     scoop import $ScoopFile
 }
 
-wh "`nScoop setup complete." -Fg Green
-wh "Note: node, python, java, awscli は mise で管理 (mise.toml)" -Fg Yellow
+wh "`nScoop setup complete." -Fo Green
+wh "Note: node, python, java, awscli は mise で管理 (mise.toml)" -Fo Yellow
