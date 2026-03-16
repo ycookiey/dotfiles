@@ -40,7 +40,7 @@
   - -ErrorAction → -ea
   - -WarningAction → -wa
   - -NoNewline → -No
-  - -ForegroundColor → -Fg
+  - -ForegroundColor → -Fo
   - -ArgumentList → -Arg
   - -ItemType → -I
   - -Encoding → -Enc
