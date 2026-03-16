@@ -42,6 +42,34 @@ if (Get-Command scoop -ea 0) {
     }
 }
 
+# --- Wingetfile ---
+$wingetfile = "$Dot\install\wingetfile.json"
+if (Get-Command winget -ea 0) {
+    $tmp = "$env:TEMP\winget-export-$PID.json"
+    try {
+        winget export -o $tmp --accept-source-agreements 2>$null | Out-Null
+        if ([IO.File]::Exists($tmp) -and (Get-Item $tmp).Length -gt 0) {
+            $export = Get-Content $tmp -Raw | ConvertFrom-Json
+            # winget ソースのパッケージのみ抽出（msstore・システムは除外）
+            $apps = @()
+            foreach ($src in $export.Sources) {
+                if ($src.SourceDetails.Name -eq 'winget') {
+                    $apps += $src.Packages | ForEach-Object { @{ Id = $_.PackageIdentifier } }
+                }
+            }
+            $apps = @($apps | Sort-Object { $_.Id })
+            $new = @{ apps = $apps } | ConvertTo-Json -Depth 3
+            $old = if ([IO.File]::Exists($wingetfile)) { [IO.File]::ReadAllText($wingetfile).TrimEnd() } else { '' }
+            if ($new -ne $old) {
+                $new | Set-Content $wingetfile
+                $synced = $true
+            }
+        }
+    } finally {
+        Remove-Item $tmp -ea 0
+    }
+}
+
 # --- MCP servers ---
 $claude = Get-Command claude -ea 0
 if (!$claude) { return }
