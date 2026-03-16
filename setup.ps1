@@ -67,13 +67,9 @@ try {
         }
     }
 
-    # Claude Code (npm)
-    & "$ScriptDir\install\claude-code.ps1"
-    "$(Get-Date) - Claude Code install checked" >> $LogFile
-
-    # Google 日本語入力 (winget)
-    & "$ScriptDir\install\google-ime.ps1"
-    "$(Get-Date) - Google Japanese Input install checked" >> $LogFile
+    # Winget アプリ (wingetfile.json)
+    & "$ScriptDir\install\winget.ps1"
+    "$(Get-Date) - Winget apps install checked" >> $LogFile
 
     # dotcli (Rust CLI) — ビルド＆エイリアス生成
     if (gcm cargo -ea 0) {
