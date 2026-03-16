@@ -60,7 +60,6 @@ if (Get-Command winget -ea 0) {
                 Sort-Object { $_.Id }
             $new = @{ apps = $apps } | ConvertTo-Json -Depth 3
             $old = if ([IO.File]::Exists($wingetfile)) { [IO.File]::ReadAllText($wingetfile).TrimEnd() } else { '' }
-            $old = if ([IO.File]::Exists($wingetfile)) { [IO.File]::ReadAllText($wingetfile).TrimEnd() } else { '' }
             if ($new -ne $old) {
                 $new | Set-Content $wingetfile
                 $synced = $true
