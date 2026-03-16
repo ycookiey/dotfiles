@@ -1,30 +1,4 @@
 {
-  "buckets": [
-    {
-      "Name": "main",
-      "Source": "https://github.com/ScoopInstaller/Main.git"
-    },
-    {
-      "Name": "extras",
-      "Source": "https://github.com/ScoopInstaller/Extras"
-    },
-    {
-      "Name": "versions",
-      "Source": "https://github.com/ScoopInstaller/Versions"
-    },
-    {
-      "Name": "nonportable",
-      "Source": "https://github.com/ScoopInstaller/Nonportable"
-    },
-    {
-      "Name": "games",
-      "Source": "https://github.com/Calinou/scoop-games"
-    },
-    {
-      "Name": "yscoopy",
-      "Source": "https://github.com/ycookiey/yscoopy"
-    }
-  ],
   "apps": [
     {
       "Source": "main",
@@ -143,12 +117,12 @@
       "Name": "miktex"
     },
     {
-      "Source": "extras",
-      "Name": "mpv"
-    },
-    {
       "Source": "main",
       "Name": "mise"
+    },
+    {
+      "Source": "extras",
+      "Name": "mpv"
     },
     {
       "Source": "main",
@@ -167,7 +141,7 @@
       "Name": "oci-cli"
     },
     {
-      "Source": "main",
+      "Source": null,
       "Name": "ollama"
     },
     {
@@ -175,7 +149,7 @@
       "Name": "onlyoffice-desktopeditors"
     },
     {
-      "Source": "nonportable",
+      "Source": null,
       "Name": "parsec-np"
     },
     {
@@ -247,7 +221,7 @@
       "Name": "ungoogled-chromium"
     },
     {
-      "Source": "main",
+      "Source": null,
       "Name": "vcpkg"
     },
     {
@@ -305,6 +279,36 @@
     {
       "Source": "main",
       "Name": "zoxide"
+    }
+  ],
+  "buckets": [
+    {
+      "Name": "main",
+      "Source": "https://github.com/ScoopInstaller/Main"
+    },
+    {
+      "Name": "extras",
+      "Source": "https://github.com/ScoopInstaller/Extras"
+    },
+    {
+      "Name": "versions",
+      "Source": "https://github.com/ScoopInstaller/Versions"
+    },
+    {
+      "Name": "nerd-fonts",
+      "Source": "https://github.com/matthewjberger/scoop-nerd-fonts"
+    },
+    {
+      "Name": "nonportable",
+      "Source": "https://github.com/ScoopInstaller/Nonportable"
+    },
+    {
+      "Name": "games",
+      "Source": "https://github.com/Calinou/scoop-games"
+    },
+    {
+      "Name": "yscoopy",
+      "Source": "https://github.com/ycookiey/yscoopy"
     }
   ]
 }
