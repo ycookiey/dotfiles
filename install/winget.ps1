@@ -12,9 +12,11 @@ $json = gc $WingetFile -Raw | ConvertFrom-Json
 # Cache list of installed apps once to avoid repeated winget invocations in the loop
 $installedAppIds = @{}
 $installedAppsOutput = winget list --output json 2>$null
-if ($LASTEXITCODE -eq 0) {
+if ($LASTEXITCODE -eq 0 -and $installedAppsOutput) {
     try {
-        $installedApps = $installedAppsOutput | ConvertFrom-Json
+        # winget output is captured as an array of lines; convert to a single JSON string first
+        $installedAppsJson = $installedAppsOutput | Out-String
+        $installedApps = $installedAppsJson | ConvertFrom-Json
         foreach ($pkg in $installedApps) {
             # Support both possible property names depending on winget version
             $pkgId = $null
