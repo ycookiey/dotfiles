@@ -18,6 +18,9 @@ if (!(Get-Command scoop -ea 0)) {
     } else {
         irm get.scoop.sh | iex
     }
+    # 現在のセッションの PATH にScoopのshimsを追加（インストーラーはレジストリのみ更新するため）
+    $scoopShims = if ($env:SCOOP) { "$env:SCOOP\shims" } else { "$HOME\scoop\shims" }
+    if ($scoopShims -notin ($env:PATH -split ';')) { $env:PATH = "$scoopShims;$env:PATH" }
 }
 
 # git + pwsh（clone & setup.ps1 に必要な最小セット）
