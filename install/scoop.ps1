@@ -69,4 +69,4 @@ if (Test-Path $orderFile) {
 }
 
 wh "`nScoop setup complete." -Fo Green
-wh "Note: node, python, java, awscli は mise で管理 (mise.toml)" -Fo Yellow
+wh "Note: node, python, java, awscli は mise で管理 (~/.config/mise/config.toml)" -Fo Yellow
