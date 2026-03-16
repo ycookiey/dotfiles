@@ -1,3 +1,8 @@
+param(
+    [switch]$SkipLarge,
+    [switch]$OnlyLarge
+)
+
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path $MyInvocation.MyCommand.Definition
 $ScoopFile = "$ScriptDir\scoopfile.json"
@@ -30,12 +35,27 @@ if (Test-Path $orderFile) {
     $order = gc $orderFile -Raw | ConvertFrom-Json
     $large = $order.large
     $apps = $json.apps | Sort-Object { if ($_.Name -in $large) { 1 } else { 0 } }
+    if ($SkipLarge) { $apps = $apps | ? { $_.Name -notin $large } }
+    if ($OnlyLarge) { $apps = $apps | ? { $_.Name -in $large } }
     $installed = scoop list 2>$null | % { $_.Name }
+    $failed = @()
     foreach ($app in $apps) {
         if ($app.Name -notin $installed) {
             wh "Installing $($app.Name)..." -Fg Cyan
-            scoop install $app.Name
+            if ($OnlyLarge) {
+                try { scoop install $app.Name }
+                catch {
+                    wh "  Skipped (failed): $($app.Name) — $_" -Fg Yellow
+                    $failed += $app.Name
+                }
+            } else {
+                scoop install $app.Name
+            }
         }
+    }
+    if ($failed.Count -gt 0) {
+        wh "`nFailed large apps: $($failed -join ', ')" -Fg Yellow
+        wh "Retry later: scoop install $($failed -join ' ')" -Fg Yellow
     }
 } else {
     scoop import $ScoopFile
