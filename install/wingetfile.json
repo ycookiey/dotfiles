@@ -1,5 +1,5 @@
 {
   "apps": [
-    { "Id": "Google.JapaneseInput" }
+    { "Id": "Google.JapaneseIME" }
   ]
 }

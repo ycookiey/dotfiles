@@ -107,10 +107,6 @@
       "Name": "git"
     },
     {
-      "Source": "yscoopy",
-      "Name": "git-all-status"
-    },
-    {
       "Source": "extras",
       "Name": "googlechrome"
     },
@@ -135,8 +131,8 @@
       "Name": "libreoffice"
     },
     {
-      "Source": null,
-      "Name": "llama.cpp-cu131"
+      "Source": "versions",
+      "Name": "llama.cpp-cu124"
     },
     {
       "Source": "main",

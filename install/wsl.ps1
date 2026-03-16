@@ -59,15 +59,18 @@ if (-not $ubuntuPkg) {
 wh "[WSL 4/4] Ubuntu 初期化..." -Fo Cyan
 wsl --set-default-version 2 2>$null | Out-Null
 
-# WindowsApps は直接アクセス不可のため PATH 経由で探す
-$exe = (Get-Command "ubuntu*.exe" -CommandType Application -ea 0 | Select-Object -First 1).Source
-
-if ($exe) {
-    $proc = Start-Process -FilePath $exe -ArgumentList "install --root" -Wait -NoNewWindow -PassThru
-    if ($proc.ExitCode -notin @(0, -1)) {
-        wh "  初期化失敗 (Code: $($proc.ExitCode))" -Fo Red
-        wh "  0x80370114 の場合、BIOS で CPU 仮想化 (VT-x/AMD-V) を有効にしてください" -Fo Yellow
-        return
+$registered = wsl -l -q 2>&1 | Out-String
+if ($registered -match "Ubuntu") {
+    wh "  初期化済み" -Fo Green
+} else {
+    $exe = (Get-Command "ubuntu*.exe" -CommandType Application -ea 0 | Select-Object -First 1).Source
+    if ($exe) {
+        $proc = Start-Process -FilePath $exe -ArgumentList "install --root" -Wait -NoNewWindow -PassThru
+        if ($proc.ExitCode -notin @(0, -1)) {
+            wh "  初期化失敗 (Code: $($proc.ExitCode))" -Fo Red
+            wh "  0x80370114 の場合、BIOS で CPU 仮想化 (VT-x/AMD-V) を有効にしてください" -Fo Yellow
+            return
+        }
     }
 }
 
