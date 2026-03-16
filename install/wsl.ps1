@@ -6,9 +6,8 @@ $GitBash = "$HOME\scoop\apps\git\current\bin\bash.exe"
 $WslBash = "C:\Windows\System32\bash.exe"
 $RebootFlag = "$HOME\.claude\wsl-pending-reboot"
 
-# ─── Step 1: git-bash フォールバック ───
-$currentBash = [Environment]::GetEnvironmentVariable('CLAUDE_CODE_GIT_BASH_PATH', 'User')
-if (!$currentBash -and (tp $GitBash)) {
+# ─── Step 1: Claude Code bash = git-bash ───
+if ((tp $GitBash) -and ([Environment]::GetEnvironmentVariable('CLAUDE_CODE_GIT_BASH_PATH', 'User') -ne $GitBash)) {
     [Environment]::SetEnvironmentVariable('CLAUDE_CODE_GIT_BASH_PATH', $GitBash, 'User')
     wh "  CLAUDE_CODE_GIT_BASH_PATH -> git-bash" -Fo Cyan
 }
@@ -75,11 +74,10 @@ if ($registered -match "Ubuntu") {
     }
 }
 
-# ─── Step 6: 疎通確認 → WSL bash に切り替え ───
+# ─── Step 6: WSL 疎通確認 ───
 $test = wsl -- echo ok 2>&1 | Out-String
 if ($test -match "ok") {
-    [Environment]::SetEnvironmentVariable('CLAUDE_CODE_GIT_BASH_PATH', $WslBash, 'User')
-    wh "  CLAUDE_CODE_GIT_BASH_PATH -> WSL bash に切り替えました" -Fo Green
+    wh "  WSL 疎通OK" -Fo Green
 } else {
-    wh "  WSL 疎通失敗。git-bash を維持します。" -Fo Yellow
+    wh "  WSL 疎通失敗" -Fo Yellow
 }
