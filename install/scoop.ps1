@@ -43,8 +43,10 @@ if (Test-Path $orderFile) {
         if ($app.Name -notin $installed) {
             wh "Installing $($app.Name)..." -Fg Cyan
             if ($OnlyLarge) {
-                try { scoop install $app.Name }
-                catch {
+                try {
+                    scoop install $app.Name
+                    if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "scoop install exited with code $LASTEXITCODE" }
+                } catch {
                     wh "  Skipped (failed): $($app.Name) — $_" -Fg Yellow
                     $failed += $app.Name
                 }
