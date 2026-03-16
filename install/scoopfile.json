@@ -1,284 +1,284 @@
 {
   "apps": [
     {
-      "Source": "main",
-      "Name": "7zip"
+      "Name": "7zip",
+      "Source": "main"
     },
     {
-      "Source": "extras",
-      "Name": "android-studio"
+      "Name": "android-studio",
+      "Source": "extras"
     },
     {
-      "Source": "extras",
-      "Name": "autohotkey"
+      "Name": "autohotkey",
+      "Source": "extras"
     },
     {
-      "Source": "extras",
-      "Name": "bitwarden"
+      "Name": "bitwarden",
+      "Source": "extras"
     },
     {
-      "Source": "main",
-      "Name": "bun"
+      "Name": "bun",
+      "Source": "main"
     },
     {
-      "Source": "extras",
-      "Name": "chatterino"
+      "Name": "chatterino",
+      "Source": "extras"
     },
     {
-      "Source": "main",
-      "Name": "cmake"
+      "Name": "cmake",
+      "Source": "main"
     },
     {
-      "Source": "main",
-      "Name": "dark"
+      "Name": "dark",
+      "Source": "main"
     },
     {
-      "Source": "yscoopy",
-      "Name": "dirtygit"
+      "Name": "dirtygit",
+      "Source": "yscoopy"
     },
     {
-      "Source": "extras",
-      "Name": "discord"
+      "Name": "discord",
+      "Source": "extras"
     },
     {
-      "Source": "games",
-      "Name": "epic-games-launcher"
+      "Name": "epic-games-launcher",
+      "Source": "games"
     },
     {
-      "Source": "extras",
-      "Name": "everything"
+      "Name": "everything",
+      "Source": "extras"
     },
     {
-      "Source": "main",
-      "Name": "fd"
+      "Name": "fd",
+      "Source": "main"
     },
     {
-      "Source": "main",
-      "Name": "ffmpeg"
+      "Name": "ffmpeg",
+      "Source": "main"
     },
     {
-      "Source": "extras",
-      "Name": "fiddler"
+      "Name": "fiddler",
+      "Source": "extras"
     },
     {
-      "Source": "main",
-      "Name": "file"
+      "Name": "file",
+      "Source": "main"
     },
     {
-      "Source": "main",
-      "Name": "fzf"
+      "Name": "fzf",
+      "Source": "main"
     },
     {
-      "Source": "main",
-      "Name": "gh"
+      "Name": "gh",
+      "Source": "main"
     },
     {
-      "Source": "main",
-      "Name": "ghostscript"
+      "Name": "ghostscript",
+      "Source": "main"
     },
     {
-      "Source": "main",
-      "Name": "git"
+      "Name": "git",
+      "Source": "main"
     },
     {
-      "Source": "extras",
-      "Name": "googlechrome"
+      "Name": "googlechrome",
+      "Source": "extras"
     },
     {
-      "Source": "main",
-      "Name": "imagemagick"
+      "Name": "imagemagick",
+      "Source": "main"
     },
     {
-      "Source": "main",
-      "Name": "innounp"
+      "Name": "innounp",
+      "Source": "main"
     },
     {
-      "Source": "main",
-      "Name": "jq"
+      "Name": "jq",
+      "Source": "main"
     },
     {
-      "Source": "extras",
-      "Name": "lazygit"
+      "Name": "lazygit",
+      "Source": "extras"
     },
     {
-      "Source": "extras",
-      "Name": "libreoffice"
+      "Name": "libreoffice",
+      "Source": "extras"
     },
     {
-      "Source": "versions",
-      "Name": "llama.cpp-cu124"
+      "Name": "llama.cpp-cu124",
+      "Source": "versions"
     },
     {
-      "Source": "main",
-      "Name": "llvm"
+      "Name": "llvm",
+      "Source": "main"
     },
     {
-      "Source": "main",
-      "Name": "miktex"
+      "Name": "miktex",
+      "Source": "main"
     },
     {
-      "Source": "main",
-      "Name": "mise"
+      "Name": "mise",
+      "Source": "main"
     },
     {
-      "Source": "extras",
-      "Name": "mpv"
+      "Name": "mpv",
+      "Source": "extras"
     },
     {
-      "Source": "main",
-      "Name": "neovim"
+      "Name": "neovim",
+      "Source": "main"
     },
     {
-      "Source": "main",
-      "Name": "nu"
+      "Name": "nu",
+      "Source": "main"
     },
     {
-      "Source": "extras",
-      "Name": "obsidian"
+      "Name": "obsidian",
+      "Source": "extras"
     },
     {
-      "Source": "main",
-      "Name": "oci-cli"
+      "Name": "oci-cli",
+      "Source": "main"
     },
     {
-      "Source": null,
-      "Name": "ollama"
+      "Name": "ollama",
+      "Source": null
     },
     {
-      "Source": "extras",
-      "Name": "onlyoffice-desktopeditors"
+      "Name": "onlyoffice-desktopeditors",
+      "Source": "extras"
     },
     {
-      "Source": null,
-      "Name": "parsec-np"
+      "Name": "parsec-np",
+      "Source": null
     },
     {
-      "Source": "main",
-      "Name": "perl"
+      "Name": "perl",
+      "Source": "main"
     },
     {
-      "Source": "main",
-      "Name": "poppler"
+      "Name": "poppler",
+      "Source": "main"
     },
     {
-      "Source": "extras",
-      "Name": "powertoys"
+      "Name": "powertoys",
+      "Source": "extras"
     },
     {
-      "Source": "main",
-      "Name": "pwsh"
+      "Name": "pwsh",
+      "Source": "main"
     },
     {
-      "Source": "main",
-      "Name": "rclone"
+      "Name": "rclone",
+      "Source": "main"
     },
     {
-      "Source": "main",
-      "Name": "ripgrep"
+      "Name": "ripgrep",
+      "Source": "main"
     },
     {
-      "Source": "main",
-      "Name": "rust"
+      "Name": "rust",
+      "Source": "main"
     },
     {
-      "Source": "main",
-      "Name": "rustup"
+      "Name": "rustup",
+      "Source": "main"
     },
     {
-      "Source": "main",
-      "Name": "scoop-search"
+      "Name": "scoop-search",
+      "Source": "main"
     },
     {
-      "Source": "main",
-      "Name": "starship"
+      "Name": "starship",
+      "Source": "main"
     },
     {
-      "Source": "versions",
-      "Name": "steam"
+      "Name": "steam",
+      "Source": "versions"
     },
     {
-      "Source": "extras",
-      "Name": "streamlink"
+      "Name": "streamlink",
+      "Source": "extras"
     },
     {
-      "Source": "extras",
-      "Name": "streamlink-twitch-gui"
+      "Name": "streamlink-twitch-gui",
+      "Source": "extras"
     },
     {
-      "Source": "extras",
-      "Name": "sumatrapdf"
+      "Name": "sumatrapdf",
+      "Source": "extras"
     },
     {
-      "Source": "main",
-      "Name": "supabase"
+      "Name": "supabase",
+      "Source": "main"
     },
     {
-      "Source": "extras",
-      "Name": "sysinternals"
+      "Name": "sysinternals",
+      "Source": "extras"
     },
     {
-      "Source": "extras",
-      "Name": "ungoogled-chromium"
+      "Name": "ungoogled-chromium",
+      "Source": "extras"
     },
     {
-      "Source": null,
-      "Name": "vcpkg"
+      "Name": "vcpkg",
+      "Source": null
     },
     {
-      "Source": "extras",
-      "Name": "vcxsrv"
+      "Name": "vcxsrv",
+      "Source": "extras"
     },
     {
-      "Source": "extras",
-      "Name": "vivaldi"
+      "Name": "vivaldi",
+      "Source": "extras"
     },
     {
-      "Source": "extras",
-      "Name": "vlc"
+      "Name": "vlc",
+      "Source": "extras"
     },
     {
-      "Source": "extras",
-      "Name": "vscode"
+      "Name": "vscode",
+      "Source": "extras"
     },
     {
-      "Source": "versions",
-      "Name": "wezterm-nightly"
+      "Name": "wezterm-nightly",
+      "Source": "versions"
     },
     {
-      "Source": "main",
-      "Name": "yazi"
+      "Name": "yazi",
+      "Source": "main"
     },
     {
-      "Source": "yscoopy",
-      "Name": "yclocky"
+      "Name": "yclocky",
+      "Source": "yscoopy"
     },
     {
-      "Source": "yscoopy",
-      "Name": "yCursory"
+      "Name": "yCursory",
+      "Source": "yscoopy"
     },
     {
-      "Source": "yscoopy",
-      "Name": "yhwndy"
+      "Name": "yhwndy",
+      "Source": "yscoopy"
     },
     {
-      "Source": "yscoopy",
-      "Name": "ymonitory"
+      "Name": "ymonitory",
+      "Source": "yscoopy"
     },
     {
-      "Source": "yscoopy",
-      "Name": "yStrokey"
+      "Name": "yStrokey",
+      "Source": "yscoopy"
     },
     {
-      "Source": "yscoopy",
-      "Name": "ytasky"
+      "Name": "ytasky",
+      "Source": "yscoopy"
     },
     {
-      "Source": "extras",
-      "Name": "zoom"
+      "Name": "zoom",
+      "Source": "extras"
     },
     {
-      "Source": "main",
-      "Name": "zoxide"
+      "Name": "zoxide",
+      "Source": "main"
     }
   ],
   "buckets": [
