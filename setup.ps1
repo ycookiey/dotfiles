@@ -20,7 +20,7 @@ try {
 }
 
 if (!(isadmin)) {
-    start pwsh -Verb RunAs -Arg "-ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Wait
+    start pwsh -Verb RunAs -Arg "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Wait
     if (tp $LogFile) { gc $LogFile | % { wh $_ -ForegroundColor ($_ -match 'Error' ? 'Red' : 'Green') } }
     exit
 }
