@@ -9,6 +9,7 @@ if ($SkipLarge -and $OnlyLarge) {
 
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path $MyInvocation.MyCommand.Definition
+. "$ScriptDir\..\pwsh\aliases.ps1"
 $ScoopFile = "$ScriptDir\scoopfile.json"
 
 # Scoop インストール
