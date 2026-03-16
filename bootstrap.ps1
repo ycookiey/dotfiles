@@ -45,7 +45,13 @@ if ($LASTEXITCODE -ne 0) {
     throw "Phase 2 (setup) failed with exit code $LASTEXITCODE."
 }
 
-# Phase 3: large apps（失敗しても bootstrap 全体は成功扱い）
+# Phase 3: mise install（開発ツールランタイム）
+if (Get-Command mise -ea 0) {
+    Write-Host "`nInstalling mise tools..." -ForegroundColor Cyan
+    mise install --yes
+}
+
+# Phase 4: large apps（失敗しても bootstrap 全体は成功扱い）
 & $pwsh -ExecutionPolicy Bypass -File "$Dir\install\scoop.ps1" -OnlyLarge
 
 Write-Host "`nDone! Restart terminal to apply." -ForegroundColor Green

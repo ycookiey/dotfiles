@@ -36,6 +36,8 @@ try {
     mkl "$env:APPDATA\nushell" "$ScriptDir\nushell"
     mkd "$env:LOCALAPPDATA\lazygit"
     mkl "$env:LOCALAPPDATA\lazygit\config.yml" "$ScriptDir\lazygit\config.yml"
+    mkd "$HOME\.config\mise"
+    mkl "$HOME\.config\mise\config.toml" "$ScriptDir\mise.toml"
     mkd "$HOME\.claude"
     mkl "$HOME\.claude\aliases.ps1" "$ScriptDir\pwsh\aliases.ps1"
     mkl "$HOME\.claude\statusline.ps1" "$ScriptDir\claude\statusline.ps1"

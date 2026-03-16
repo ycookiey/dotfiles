@@ -148,6 +148,10 @@
     },
     {
       "Source": "main",
+      "Name": "mise"
+    },
+    {
+      "Source": "main",
       "Name": "neovim"
     },
     {
