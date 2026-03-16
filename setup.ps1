@@ -8,6 +8,8 @@ if ($args -contains '--scoop' -or !(gcm scoop -ea 0)) {
     & "$ScriptDir\install\scoop.ps1"
 }
 
+& "$ScriptDir\install\claude-code.ps1"
+
 if (!(isadmin)) {
     start pwsh -Verb RunAs -Arg "-ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Wait
     if (tp $LogFile) { gc $LogFile | % { wh $_ -ForegroundColor ($_ -match 'Error' ? 'Red' : 'Green') } }
