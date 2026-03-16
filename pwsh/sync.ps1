@@ -52,14 +52,14 @@ if (Get-Command winget -ea 0) {
         if ($exitCode -eq 0 -and [IO.File]::Exists($tmp) -and (Get-Item $tmp).Length -gt 0) {
             $export = Get-Content $tmp -Raw | ConvertFrom-Json
             # winget ソースのパッケージのみ抽出（msstore・システムは除外）
-            $apps = @()
-            foreach ($src in $export.Sources) {
-                if ($src.SourceDetails.Name -eq 'winget') {
-                    $apps += $src.Packages | ForEach-Object { @{ Id = $_.PackageIdentifier } }
-                }
-            }
-            $apps = @($apps | Sort-Object { $_.Id })
+            $apps = $export.Sources |
+                Where-Object { $_.SourceDetails.Name -eq 'winget' } |
+                ForEach-Object {
+                    $_.Packages | ForEach-Object { @{ Id = $_.PackageIdentifier } }
+                } |
+                Sort-Object { $_.Id }
             $new = @{ apps = $apps } | ConvertTo-Json -Depth 3
+            $old = if ([IO.File]::Exists($wingetfile)) { [IO.File]::ReadAllText($wingetfile).TrimEnd() } else { '' }
             $old = if ([IO.File]::Exists($wingetfile)) { [IO.File]::ReadAllText($wingetfile).TrimEnd() } else { '' }
             if ($new -ne $old) {
                 $new | Set-Content $wingetfile
