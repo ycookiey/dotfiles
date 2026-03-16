@@ -10,6 +10,7 @@ Write-Host "=== dotfiles bootstrap ===" -ForegroundColor Cyan
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 # Scoop
+$scoopShims = if ($env:SCOOP) { "$env:SCOOP\shims" } else { "$HOME\scoop\shims" }
 if (!(Get-Command scoop -ea 0)) {
     Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
     if ($isAdmin) {
@@ -19,7 +20,6 @@ if (!(Get-Command scoop -ea 0)) {
         irm get.scoop.sh | iex
     }
     # 現在のセッションの PATH にScoopのshimsを追加（インストーラーはレジストリのみ更新するため）
-    $scoopShims = if ($env:SCOOP) { "$env:SCOOP\shims" } else { "$HOME\scoop\shims" }
     if ($scoopShims -notin ($env:PATH -split ';')) { $env:PATH = "$scoopShims;$env:PATH" }
 }
 
@@ -33,6 +33,6 @@ if (!(Test-Path $Dir)) {
 }
 
 # Setup（--scoop で全アプリも一括インストール）
-& "$HOME\scoop\shims\pwsh.exe" -ExecutionPolicy Bypass -File "$Dir\setup.ps1" --scoop
+& (Join-Path $scoopShims 'pwsh.exe') -ExecutionPolicy Bypass -File "$Dir\setup.ps1" --scoop
 
 Write-Host "`nDone! Restart terminal to apply." -ForegroundColor Green
