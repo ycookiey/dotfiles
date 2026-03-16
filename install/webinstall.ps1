@@ -4,7 +4,7 @@ $ScriptDir = Split-Path $MyInvocation.MyCommand.Definition
 
 $list = gc "$ScriptDir\webinstall.json" -Raw | ConvertFrom-Json
 foreach ($app in $list) {
-    if (gcm -CommandType Application -Name $app.cmd -ea 0) {
+    if ((gcm -CommandType Application -Name $app.cmd -ea 0) -or (tp "$HOME\.local\bin\$($app.cmd).exe")) {
         wh "$($app.name) is already installed." -Fg Green
         continue
     }
