@@ -32,7 +32,14 @@ if (!(Test-Path $Dir)) {
     git clone $Repo $Dir
 }
 
-# Setup（--scoop で全アプリも一括インストール）
-& (Join-Path $scoopShims 'pwsh.exe') -ExecutionPolicy Bypass -File "$Dir\setup.ps1" --scoop
+# Phase 1: core apps（large を除く — 失敗時は即停止）
+$pwsh = Join-Path $scoopShims 'pwsh.exe'
+& $pwsh -ExecutionPolicy Bypass -File "$Dir\install\scoop.ps1" -SkipLarge
+
+# Phase 2: config, symlinks, dotcli, startup（core apps だけで実行可能）
+& $pwsh -ExecutionPolicy Bypass -File "$Dir\setup.ps1"
+
+# Phase 3: large apps（失敗しても bootstrap 全体は成功扱い）
+& $pwsh -ExecutionPolicy Bypass -File "$Dir\install\scoop.ps1" -OnlyLarge
 
 Write-Host "`nDone! Restart terminal to apply." -ForegroundColor Green
