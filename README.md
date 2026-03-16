@@ -11,6 +11,7 @@ irm https://raw.githubusercontent.com/ycookiey/dotfiles/main/bootstrap.ps1 | iex
 ```
 
 Scoop・git・pwsh のインストールからアプリ導入、シンボリックリンク作成まで自動で行う。
+Scoop 以外のアプリ（Claude Code, Google 日本語入力）も自動インストールされる。
 
 既存環境で設定を再適用する場合:
 
