@@ -34,13 +34,13 @@ if (!(Test-Path $Dir)) {
 
 # Phase 1: core apps（large を除く — 失敗時は即停止）
 $pwsh = Join-Path $scoopShims 'pwsh.exe'
-& $pwsh -ExecutionPolicy Bypass -File "$Dir\install\scoop.ps1" -SkipLarge
+& $pwsh -NoProfile -ExecutionPolicy Bypass -File "$Dir\install\scoop.ps1" -SkipLarge
 if ($LASTEXITCODE -ne 0) {
     throw "Phase 1 failed with exit code $LASTEXITCODE."
 }
 
 # Phase 2: config, symlinks, dotcli, startup（core apps だけで実行可能）
-& $pwsh -ExecutionPolicy Bypass -File "$Dir\setup.ps1"
+& $pwsh -NoProfile -ExecutionPolicy Bypass -File "$Dir\setup.ps1"
 if ($LASTEXITCODE -ne 0) {
     throw "Phase 2 (setup) failed with exit code $LASTEXITCODE."
 }
@@ -52,6 +52,6 @@ if (Get-Command mise -ea 0) {
 }
 
 # Phase 4: large apps（失敗しても bootstrap 全体は成功扱い）
-& $pwsh -ExecutionPolicy Bypass -File "$Dir\install\scoop.ps1" -OnlyLarge
+& $pwsh -NoProfile -ExecutionPolicy Bypass -File "$Dir\install\scoop.ps1" -OnlyLarge
 
 Write-Host "`nDone! Restart terminal to apply." -ForegroundColor Green

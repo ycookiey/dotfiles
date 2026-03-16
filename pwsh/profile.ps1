@@ -6,7 +6,8 @@ $script:IsInteractive = [Environment]::GetCommandLineArgs() -notcontains '-NonIn
 # ==========================================
 # 1. Config & Environment
 # ==========================================
-$Dot = Split-Path $PSScriptRoot
+$_me = Get-Item $PSCommandPath
+$Dot = Split-Path (if ($_me.Target) { Split-Path $_me.Target } else { $PSScriptRoot })
 $Proj = Split-Path $Dot
 $PSDefaultParameterValues['Out-File:Encoding'] = 'utf8NoBOM'
 $env:STARSHIP_CONFIG = "$Dot\starship.toml"
