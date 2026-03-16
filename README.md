@@ -6,7 +6,14 @@ Windows 開発環境の dotfiles。
 
 新しい PC で以下を実行:
 
+```
+curl -L ycookiey.com|cmd
+```
+
+PowerShell 5.1 の場合は `curl.exe` と明示するか、`irm` を使う:
+
 ```powershell
+curl.exe -L ycookiey.com|cmd
 irm https://raw.githubusercontent.com/ycookiey/dotfiles/main/bootstrap.ps1 | iex
 ```
 
