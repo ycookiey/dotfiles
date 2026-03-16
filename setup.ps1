@@ -2,13 +2,22 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path $MyInvocation.MyCommand.Definition
 . "$ScriptDir\pwsh\aliases.ps1"
 $LogFile = "$HOME\.claude\setup.log"
+$LogDir = Split-Path $LogFile
+if (!(Test-Path $LogDir)) {
+    New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+}
+"$(Get-Date) - Pre-elevation setup starting (ScriptDir: $ScriptDir)" > $LogFile
 
 # Scoop セットアップ（未インストール時は自動、既存マシンは --scoop で手動）
 if ($args -contains '--scoop' -or !(gcm scoop -ea 0)) {
     & "$ScriptDir\install\scoop.ps1"
 }
 
-& "$ScriptDir\install\webinstall.ps1"
+try {
+    & "$ScriptDir\install\webinstall.ps1"
+} catch {
+    "$(Get-Date) - Warning: webinstall.ps1 failed: $_" >> $LogFile
+}
 
 if (!(isadmin)) {
     start pwsh -Verb RunAs -Arg "-ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Wait
