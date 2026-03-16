@@ -16,7 +16,7 @@ $env:YAZI_FILE_ONE = "$HOME\scoop\apps\git\current\usr\bin\file.exe"
 # 2. Tools & Aliases
 # ==========================================
 . "$Dot\pwsh\aliases.ps1"
-. "$Dot\generated-aliases.ps1"
+if ([IO.File]::Exists("$Dot\generated-aliases.ps1")) { . "$Dot\generated-aliases.ps1" }
 $gtrBin = "$Proj\git-worktree-runner\bin"
 $paths = $env:Path.Split(';', [StringSplitOptions]::RemoveEmptyEntries)
 foreach ($p in @(

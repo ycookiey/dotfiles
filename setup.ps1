@@ -28,6 +28,10 @@ if (!(isadmin)) {
 "$(Get-Date) - Start (ScriptDir: $ScriptDir)" > $LogFile
 
 try {
+    # PowerShell profile
+    mkd "$HOME\Documents\PowerShell"
+    mkl "$HOME\Documents\PowerShell\Microsoft.PowerShell_profile.ps1" "$ScriptDir\pwsh\profile.ps1"
+
     mkd "$HOME\.config"
     mkl "$HOME\.config\wezterm" "$ScriptDir\wezterm"
     mkd "$env:APPDATA\yazi\config"
