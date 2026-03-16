@@ -48,7 +48,8 @@ if (Get-Command winget -ea 0) {
     $tmp = "$env:TEMP\winget-export-$PID.json"
     try {
         winget export -o $tmp --accept-source-agreements 2>$null | Out-Null
-        if ([IO.File]::Exists($tmp) -and (Get-Item $tmp).Length -gt 0) {
+        $exitCode = $LASTEXITCODE
+        if ($exitCode -eq 0 -and [IO.File]::Exists($tmp) -and (Get-Item $tmp).Length -gt 0) {
             $export = Get-Content $tmp -Raw | ConvertFrom-Json
             # winget ソースのパッケージのみ抽出（msstore・システムは除外）
             $apps = @()
@@ -65,6 +66,8 @@ if (Get-Command winget -ea 0) {
                 $synced = $true
             }
         }
+    } catch {
+        # Best-effort: ignore winget export / parse failures so sync.ps1 remains non-fatal.
     } finally {
         Remove-Item $tmp -ea 0
     }
