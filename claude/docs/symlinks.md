@@ -8,6 +8,7 @@ setup.ps1 で管理。追加・変更は setup.ps1 の mkl で行う（直接コ
 
 | リンク元（使われる場所） | 実体 |
 |---|---|
+| ~/Documents/PowerShell/Microsoft.PowerShell_profile.ps1 | dotfiles/pwsh/profile.ps1 |
 | ~/.config/wezterm/ | dotfiles/wezterm/ |
 | %APPDATA%/yazi/config/ | dotfiles/yazi/ |
 | %LOCALAPPDATA%/nvim/ | dotfiles/config/nvim/ |
