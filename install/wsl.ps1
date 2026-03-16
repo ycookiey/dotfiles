@@ -59,7 +59,8 @@ if (-not $ubuntuPkg) {
 wh "[WSL 4/4] Ubuntu 初期化..." -Fo Cyan
 wsl --set-default-version 2 2>$null | Out-Null
 
-$registered = wsl -l -q 2>&1 | Out-String
+# wsl -l -q は UTF-16LE で出力するためヌルバイトを除去
+$registered = (wsl -l -q 2>&1) -replace "`0", "" | Out-String
 if ($registered -match "Ubuntu") {
     wh "  初期化済み" -Fo Green
 } else {
