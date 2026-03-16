@@ -78,6 +78,10 @@ try {
         }
     }
 
+    # Winget アプリ (wingetfile.json)
+    & "$ScriptDir\install\winget.ps1"
+    "$(Get-Date) - Winget apps install checked" >> $LogFile
+
     # dotcli (Rust CLI) — ビルド＆エイリアス生成
     if (gcm cargo -ea 0) {
         cargo install --path "$ScriptDir\cli" --quiet 2>$null
