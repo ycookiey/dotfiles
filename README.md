@@ -20,7 +20,7 @@ pwsh -ExecutionPolicy Bypass -File setup.ps1
 
 ## ブートストラップの流れ
 
-`bootstrap.ps1` → `setup.ps1` → `install/scoop.ps1` の順で実行される。
+`bootstrap.ps1` → `install/scoop.ps1 -SkipLarge` → `setup.ps1` → `install/scoop.ps1 -OnlyLarge` の順で実行される。
 
 ### 1. `bootstrap.ps1`（エントリポイント）
 
@@ -31,20 +31,26 @@ pwsh -ExecutionPolicy Bypass -File setup.ps1
 3. PATH に Scoop shims を追加
 4. **git・pwsh をインストール**（clone と setup.ps1 に必要な最小セット）
 5. dotfiles リポジトリを `C:\Main\Project\dotfiles` に clone
-6. `setup.ps1 --scoop` を pwsh で実行
+6. `install/scoop.ps1 -SkipLarge` を pwsh で実行（small なアプリのみ先に導入）
+7. `setup.ps1` を pwsh で実行（メインセットアップ）
+8. `install/scoop.ps1 -OnlyLarge` を pwsh で実行（large なアプリを後から導入）
 
 ### 2. `setup.ps1`（メインセットアップ）
 
 1. エイリアス読み込み（`pwsh/aliases.ps1`）
-2. `--scoop` フラグまたは Scoop 未インストール → `install/scoop.ps1` を実行
-3. 管理者権限でなければ自身を管理者として再起動し待機
-4. **シンボリックリンク作成**（wezterm, yazi, nvim, nushell, lazygit, claude 等）
-5. **ファイル関連付け**（Neovim を WezTerm 経由で開く拡張子の登録）
-6. Claude マルチアカウントのシンボリックリンク同期
-7. **dotcli**（Rust CLI）のビルドとエイリアス生成
-8. **スタートアップ登録**（TaskScheduler で `startup/manager.ps1` を登録）
+2. 管理者権限でなければ自身を管理者として再起動し待機
+3. **シンボリックリンク作成**（wezterm, yazi, nvim, nushell, lazygit, claude 等）
+4. **ファイル関連付け**（Neovim を WezTerm 経由で開く拡張子の登録）
+5. Claude マルチアカウントのシンボリックリンク同期
+6. **dotcli**（Rust CLI）のビルドとエイリアス生成
+7. **スタートアップ登録**（TaskScheduler で `startup/manager.ps1` を登録）
 
 ### 3. `install/scoop.ps1`（Scoop アプリ管理）
+
+`install/scoop.ps1` は 2 フェーズで呼び出される:
+
+- `-SkipLarge`: small なアプリのみインストールし、`install-order.json` の `large` はスキップ
+- `-OnlyLarge`: スキップされていた `large` アプリのみをインストール
 
 1. Scoop インストール（未インストール時）
 2. git インストール（bucket add に必要）
@@ -53,7 +59,7 @@ pwsh -ExecutionPolicy Bypass -File setup.ps1
 
 #### large アプリの遅延インストール
 
-`install/install-order.json` が存在する場合、`large` に列挙されたアプリは後回しにされる。
+`install/install-order.json` が存在する場合、`large` に列挙されたアプリは `-SkipLarge` フェーズでは後回しにされ、`-OnlyLarge` フェーズでインストールされる。
 小さいアプリを先にインストールすることで、開発環境を早く使えるようにしている。
 
 ```
