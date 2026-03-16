@@ -100,6 +100,10 @@ try {
         }
     }
 
+    # フォント
+    & "$ScriptDir\install\fonts.ps1"
+    "$(Get-Date) - Fonts install checked" >> $LogFile
+
     # Winget アプリ (wingetfile.json)
     & "$ScriptDir\install\winget.ps1"
     "$(Get-Date) - Winget apps install checked" >> $LogFile
