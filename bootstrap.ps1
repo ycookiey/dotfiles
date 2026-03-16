@@ -54,4 +54,12 @@ if (Get-Command mise -ea 0) {
 # Phase 4: large apps (non-fatal)
 & $pwsh -NoProfile -ExecutionPolicy Bypass -File "$Dir\install\scoop.ps1" -OnlyLarge
 
+# Phase 5: startup (skip if apps already running)
+if (!(Get-Process wezterm-gui -ea 0)) {
+    Write-Host "`nLaunching startup apps..." -ForegroundColor Cyan
+    & $pwsh -NoProfile -ExecutionPolicy Bypass -File "$Dir\startup\manager.ps1"
+} else {
+    Write-Host "`nStartup apps already running, skipped." -ForegroundColor Gray
+}
+
 Write-Host "`nDone! Restart terminal to apply." -ForegroundColor Green
