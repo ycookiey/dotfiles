@@ -8,11 +8,11 @@ mkd $FontsDir
 # HackGen Console NF — GitHub latest release からインストール
 $fontCheck = gci $FontsDir -Filter "HackGenConsoleNF-Regular.ttf" -ea 0
 if ($fontCheck) {
-    wh "HackGen Console NF: already installed" -Fg Green
+    wh "HackGen Console NF: already installed" -Fo Green
     return
 }
 
-wh "Installing HackGen Console NF..." -Fg Cyan
+wh "Installing HackGen Console NF..." -Fo Cyan
 $tmp = "$env:TEMP\hackgen_nf"
 rm $tmp -Recurse -Force -ea 0
 mkd $tmp
@@ -36,4 +36,4 @@ foreach ($f in $ttfs) {
 }
 
 rm $tmp -Recurse -Force -ea 0
-wh "HackGen Console NF: installed ($($ttfs.Count) files)" -Fg Green
+wh "HackGen Console NF: installed ($($ttfs.Count) files)" -Fo Green
