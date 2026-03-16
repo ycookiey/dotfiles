@@ -11,7 +11,7 @@ irm https://raw.githubusercontent.com/ycookiey/dotfiles/main/bootstrap.ps1 | iex
 ```
 
 Scoop・git・pwsh のインストールからアプリ導入、シンボリックリンク作成まで自動で行う。
-Winget アプリも `wingetfile.json` から自動インストールされる。
+Winget アプリも `install/wingetfile.json` から自動インストールされる（`setup.ps1` で参照）。
 
 既存環境で設定を再適用する場合:
 
