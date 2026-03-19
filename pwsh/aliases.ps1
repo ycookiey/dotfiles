@@ -8,3 +8,17 @@ function elevate($args_str) { start pwsh -Verb RunAs -Arg "-ExecutionPolicy Bypa
 function Start-App($Name) {
     explorer "shell:AppsFolder\$((Get-StartApps $Name | select -f 1).AppID)"
 }
+
+function Copy-Item {
+    try {
+        Microsoft.PowerShell.Management\Copy-Item @args -ErrorAction Stop
+    } catch {
+        if ($_.Exception.Message -match "Could not find a part of the path '(.+)'") {
+            $parent = Split-Path $Matches[1]
+            if ((Read-Host "Create '$parent'? [y/N]") -eq 'y') {
+                [void](ni -I Directory $parent -Force)
+                Microsoft.PowerShell.Management\Copy-Item @args
+            } else { throw }
+        } else { throw }
+    }
+}
