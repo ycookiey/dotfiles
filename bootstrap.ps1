@@ -9,6 +9,19 @@ Write-Host "=== dotfiles bootstrap ===" -ForegroundColor Cyan
 # Check admin privileges
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
+# System locale UTF-8 (requires admin + reboot)
+if ($isAdmin) {
+    $nlsPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Nls\CodePage"
+    $current = Get-ItemProperty $nlsPath
+    if ($current.ACP -ne "65001") {
+        Write-Host "Setting system locale to UTF-8..." -ForegroundColor Yellow
+        Set-ItemProperty $nlsPath -Name ACP   -Value "65001"
+        Set-ItemProperty $nlsPath -Name OEMCP -Value "65001"
+        Set-ItemProperty $nlsPath -Name MACCP -Value "65001"
+        $script:needsReboot = $true
+    }
+}
+
 # Scoop
 $scoopShims = $(if ($env:SCOOP) { "$env:SCOOP\shims" } else { "$HOME\scoop\shims" })
 if (!(Get-Command scoop -ea 0)) {
@@ -62,4 +75,8 @@ if (!(Get-Process wezterm-gui -ea 0)) {
     Write-Host "`nStartup apps already running, skipped." -ForegroundColor Gray
 }
 
-Write-Host "`nDone! Restart terminal to apply." -ForegroundColor Green
+if ($script:needsReboot) {
+    Write-Host "`nDone! Reboot required (UTF-8 locale changed). Restart terminal after reboot." -ForegroundColor Yellow
+} else {
+    Write-Host "`nDone! Restart terminal to apply." -ForegroundColor Green
+}
