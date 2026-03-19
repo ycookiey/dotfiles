@@ -27,3 +27,4 @@
 - Scoopバケット（yscoopy）リリース手順 → ~/.claude/docs/yscoopy.md
 - agent-browser/browser-fetch → ~/.claude/docs/agent-browser.md
 - シンボリックリンク構成確認・変更 → ~/.claude/docs/symlinks.md
+- 環境を横断して再現したい変更（アプリ・設定等） → ~/.claude/docs/bootstrap.md
