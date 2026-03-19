@@ -40,6 +40,8 @@ try {
     mkl "$env:APPDATA\nushell" "$ScriptDir\nushell"
     mkd "$env:LOCALAPPDATA\lazygit"
     mkl "$env:LOCALAPPDATA\lazygit\config.yml" "$ScriptDir\lazygit\config.yml"
+    mkd "$env:LOCALAPPDATA`Low\Google\Google Japanese Input"
+    mkl "$env:LOCALAPPDATA`Low\Google\Google Japanese Input\config1.db" "$ScriptDir\google-ime-config1.db"
     mkd "$HOME\.config\mise"
     mkl "$HOME\.config\mise\config.toml" "$ScriptDir\mise.toml"
     mkd "$HOME\.claude"

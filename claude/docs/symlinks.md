@@ -13,6 +13,7 @@ setup.ps1 で管理。追加・変更は setup.ps1 の mkl で行う（直接コ
 | %APPDATA%/yazi/config/ | dotfiles/yazi/ |
 | %LOCALAPPDATA%/nvim/ | dotfiles/config/nvim/ |
 | %LOCALAPPDATA%/lazygit/config.yml | dotfiles/lazygit/config.yml |
+| %LOCALAPPDATA%Low/Google/Google Japanese Input/config1.db | dotfiles/google-ime-config1.db |
 
 ## Claude Code (~/.claude/)
 
