@@ -38,6 +38,11 @@ try {
     mkl "$env:APPDATA\yazi\config" "$ScriptDir\yazi"
     mkl "$env:LOCALAPPDATA\nvim" "$ScriptDir\nvim"
     mkl "$env:APPDATA\nushell" "$ScriptDir\nushell"
+    # Nushell: starship/zoxide キャッシュ生成
+    $nuCache = "$ScriptDir\nushell\cache"
+    mkd $nuCache
+    if (gcm starship -ea 0) { starship init nu > "$nuCache\starship.nu" }
+    if (gcm zoxide -ea 0) { zoxide init nushell > "$nuCache\zoxide.nu" }
     mkd "$env:LOCALAPPDATA\lazygit"
     mkl "$env:LOCALAPPDATA\lazygit\config.yml" "$ScriptDir\lazygit\config.yml"
     mkd "$env:LOCALAPPDATA`Low\Google\Google Japanese Input"
@@ -122,6 +127,14 @@ try {
         } else {
             "$(Get-Date) - Error: dotcli build failed" >> $LogFile
         }
+    }
+
+    # Vivaldi 検索エンジン設定
+    try {
+        & "$ScriptDir\vivaldi\apply-search-engines.ps1"
+        "$(Get-Date) - Vivaldi search engine configured" >> $LogFile
+    } catch {
+        "$(Get-Date) - Warning: Vivaldi search engine setup skipped: $_" >> $LogFile
     }
 
     # Startup manager (TaskScheduler)
