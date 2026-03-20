@@ -51,7 +51,7 @@ try {
     mkl "$HOME\.config\mise\config.toml" "$ScriptDir\mise.toml"
     mkd "$HOME\.claude"
     mkl "$HOME\.claude\aliases.ps1" "$ScriptDir\pwsh\aliases.ps1"
-    mkl "$HOME\.claude\statusline.ps1" "$ScriptDir\claude\statusline.ps1"
+    mkl "$HOME\.claude\statusline.py" "$ScriptDir\claude\statusline.py"
     mkl "$HOME\.claude\CLAUDE.md" "$ScriptDir\claude\CLAUDE.md"
     mkl "$HOME\.claude\rules" "$ScriptDir\claude\rules"
     mkl "$HOME\.claude\docs" "$ScriptDir\claude\docs"
@@ -95,7 +95,7 @@ try {
     }
 
     # Claude マルチアカウント
-    $claudeExclude = '.credentials*', '.statusline_cache', '.statusline_debug.json', 'settings.json'
+    $claudeExclude = '.credentials*', '.statusline_debug.json', 'settings.json'
     foreach ($dir in gci "$HOME\.claude-*" -Dir -Force) {
         gci "$HOME\.claude" -Force | ? {
             $name = $_.Name

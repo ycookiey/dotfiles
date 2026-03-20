@@ -11,7 +11,7 @@ setup.ps1 で管理。追加・変更は setup.ps1 の mkl で行う（直接コ
 | ~/Documents/PowerShell/Microsoft.PowerShell_profile.ps1 | dotfiles/pwsh/profile.ps1 |
 | ~/.config/wezterm/ | dotfiles/wezterm/ |
 | %APPDATA%/yazi/config/ | dotfiles/yazi/ |
-| %LOCALAPPDATA%/nvim/ | dotfiles/config/nvim/ |
+| %LOCALAPPDATA%/nvim/ | dotfiles/nvim/ |
 | %LOCALAPPDATA%/lazygit/config.yml | dotfiles/lazygit/config.yml |
 | %LOCALAPPDATA%Low/Google/Google Japanese Input/config1.db | dotfiles/google-ime-config1.db |
 
@@ -22,7 +22,7 @@ setup.ps1 で管理。追加・変更は setup.ps1 の mkl で行う（直接コ
 | ~/.claude/aliases.ps1 | dotfiles/aliases.ps1 |
 | ~/.claude/CLAUDE.md | dotfiles/claude/CLAUDE.md |
 | ~/.claude/settings.json | マージ型（dotfiles/claude/settings.json をテンプレートとしてマージ） |
-| ~/.claude/statusline.ps1 | dotfiles/claude/statusline.ps1 |
+| ~/.claude/statusline.py | dotfiles/claude/statusline.py |
 | ~/.claude/rules/ | dotfiles/claude/rules/ |
 | ~/.claude/docs/ | dotfiles/claude/docs/ |
 | ~/.claude/skills/ | dotfiles/claude/skills/ |
@@ -30,4 +30,4 @@ setup.ps1 で管理。追加・変更は setup.ps1 の mkl で行う（直接コ
 
 ## マルチアカウント (~/.claude-*)
 
-~/.claude-* ディレクトリが存在する場合、~/.claude/ 配下の各エントリが自動ミラーリングされる。除外: .credentials*, .statusline_cache, .statusline_debug.json, settings.json（settings.json は個別にマージ型で管理）
+~/.claude-* ディレクトリが存在する場合、~/.claude/ 配下の各エントリが自動ミラーリングされる。除外: .credentials*, .statusline_debug.json, settings.json（settings.json は個別にマージ型で管理）
