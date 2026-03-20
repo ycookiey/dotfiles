@@ -1,4 +1,34 @@
 {
+  "buckets": [
+    {
+      "Name": "main",
+      "Source": "https://github.com/ScoopInstaller/Main"
+    },
+    {
+      "Name": "extras",
+      "Source": "https://github.com/ScoopInstaller/Extras"
+    },
+    {
+      "Name": "versions",
+      "Source": "https://github.com/ScoopInstaller/Versions"
+    },
+    {
+      "Name": "nerd-fonts",
+      "Source": "https://github.com/matthewjberger/scoop-nerd-fonts"
+    },
+    {
+      "Name": "nonportable",
+      "Source": "https://github.com/ScoopInstaller/Nonportable"
+    },
+    {
+      "Name": "games",
+      "Source": "https://github.com/Calinou/scoop-games"
+    },
+    {
+      "Name": "yscoopy",
+      "Source": "https://github.com/ycookiey/yscoopy"
+    }
+  ],
   "apps": [
     {
       "Name": "7zip",
@@ -39,6 +69,10 @@
     {
       "Name": "discord",
       "Source": "extras"
+    },
+    {
+      "Name": "dotnet-sdk",
+      "Source": "main"
     },
     {
       "Name": "epic-games-launcher",
@@ -189,6 +223,10 @@
       "Source": "main"
     },
     {
+      "Name": "sqlite",
+      "Source": "main"
+    },
+    {
       "Name": "starship",
       "Source": "main"
     },
@@ -279,36 +317,6 @@
     {
       "Name": "zoxide",
       "Source": "main"
-    }
-  ],
-  "buckets": [
-    {
-      "Name": "main",
-      "Source": "https://github.com/ScoopInstaller/Main"
-    },
-    {
-      "Name": "extras",
-      "Source": "https://github.com/ScoopInstaller/Extras"
-    },
-    {
-      "Name": "versions",
-      "Source": "https://github.com/ScoopInstaller/Versions"
-    },
-    {
-      "Name": "nerd-fonts",
-      "Source": "https://github.com/matthewjberger/scoop-nerd-fonts"
-    },
-    {
-      "Name": "nonportable",
-      "Source": "https://github.com/ScoopInstaller/Nonportable"
-    },
-    {
-      "Name": "games",
-      "Source": "https://github.com/Calinou/scoop-games"
-    },
-    {
-      "Name": "yscoopy",
-      "Source": "https://github.com/ycookiey/yscoopy"
     }
   ]
 }
