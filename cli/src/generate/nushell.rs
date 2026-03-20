@@ -51,24 +51,48 @@ pub fn generate(defs: &Definitions) -> String {
                     .unwrap();
                 }
                 LauncherType::Exe => {
-                    let path = l
-                        .path
-                        .as_ref()
-                        .unwrap()
-                        .replace("{PROGRAM_FILES}", "$env.ProgramFiles");
+                    let raw_path = l.path.as_ref().unwrap();
+                    let path_expr = if raw_path.contains("{PROGRAM_FILES}") {
+                        let rest = raw_path
+                            .replace("{PROGRAM_FILES}\\", "")
+                            .replace("{PROGRAM_FILES}", "");
+                        let segments = rest
+                            .split('\\')
+                            .filter(|s| !s.is_empty())
+                            .map(|s| format!("\"{s}\""))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        format!("([$env.ProgramFiles {segments}] | path join)")
+                    } else if raw_path.contains('\\') {
+                        // nushell の "" 内では \ がエスケープ扱いになるため
+                        // path join でセグメント結合する
+                        let segments = raw_path
+                            .split('\\')
+                            .map(|s| format!("\"{s}\""))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        format!("([{segments}] | path join)")
+                    } else {
+                        raw_path.to_string()
+                    };
                     if l.args.is_empty() {
                         writeln!(
                             out,
-                            "def {name} [] {{ start $\"({path})\" }}",
+                            "def {name} [] {{ start {path} }}",
                             name = l.name,
+                            path = path_expr,
                         )
                         .unwrap();
                     } else {
-                        let args_str = l.args.iter().map(|a| format!("\"{a}\"")).collect::<Vec<_>>().join(" ");
+                        let args_str = l.args.iter().map(|a| {
+                            let escaped = a.replace('"', r#"\""#);
+                            format!("\"{escaped}\"")
+                        }).collect::<Vec<_>>().join(" ");
                         writeln!(
                             out,
-                            "def {name} [] {{ ^$\"({path})\" {args} }}",
+                            "def {name} [] {{ ^{path} {args} }}",
                             name = l.name,
+                            path = path_expr,
                             args = args_str,
                         )
                         .unwrap();
