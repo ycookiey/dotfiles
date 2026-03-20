@@ -25,16 +25,9 @@ if ([IO.File]::Exists($settingsTemplate)) {
 $scoopfile = "$Dot\install\scoopfile.json"
 if (Get-Command scoop -ea 0) {
     $export = scoop export | ConvertFrom-Json
-    foreach ($b in $export.buckets) {
-        $b.PSObject.Properties.Remove('Updated')
-        $b.PSObject.Properties.Remove('Manifests')
-    }
-    foreach ($app in $export.apps) {
-        $app.PSObject.Properties.Remove('Version')
-        $app.PSObject.Properties.Remove('Updated')
-        $app.PSObject.Properties.Remove('Info')
-    }
-    $new = $export | ConvertTo-Json -Depth 3
+    $buckets = $export.buckets | % { [ordered]@{ Name = $_.Name; Source = $_.Source } }
+    $apps = $export.apps | % { [ordered]@{ Name = $_.Name; Source = $_.Source } }
+    $new = [ordered]@{ buckets = $buckets; apps = $apps } | ConvertTo-Json -Depth 3
     $old = if ([IO.File]::Exists($scoopfile)) { [IO.File]::ReadAllText($scoopfile).TrimEnd() } else { '' }
     if ($new -ne $old) {
         $new | Set-Content $scoopfile
