@@ -246,6 +246,8 @@ return {
     { key = "m", mods = "ALT", action = merge_adjacent_tab },
     { key = "M", mods = "ALT|SHIFT", action = split_pane_to_tab },
 
+    -- Enter: Win32 Input Mode のエスケープシーケンス漏れ対策
+    { key = "Enter", mods = "NONE", action = act.SendString("\r") },
     -- フルスクリーン
     { key = "Enter", mods = "ALT", action = act.ToggleFullScreen },
 
