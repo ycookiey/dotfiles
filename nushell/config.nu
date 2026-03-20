@@ -1,5 +1,7 @@
 # config.nu — nushell 設定
 
+$env.config.show_banner = "short"
+
 # --- PATH ---
 $env.PATH = ($env.PATH | split row (char esep)
   | append 'C:\Main\Script\git-worktree-runner\bin'
