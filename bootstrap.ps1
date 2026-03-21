@@ -58,6 +58,9 @@ if ($LASTEXITCODE -ne 0) {
     throw "Phase 2 (setup) failed with exit code $LASTEXITCODE."
 }
 
+# Dark theme
+& $pwsh -NoProfile -ExecutionPolicy Bypass -File "$Dir\bin\toggle-theme.ps1" dark
+
 # Phase 3: mise install (dev tool runtimes)
 if (Get-Command mise -ea 0) {
     Write-Host "`nInstalling mise tools..." -ForegroundColor Cyan
