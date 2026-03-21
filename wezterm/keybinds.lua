@@ -1,13 +1,32 @@
 local wezterm = require("wezterm")
 local act = wezterm.action
 
--- フォーカス中のペインが nushell かどうか判定
-local function is_nushell(pane)
+-- フォーカス中のペインのプロセス名を取得
+local function fg_name(pane)
   local proc = pane:get_foreground_process_name()
-  if not proc then return false end
-  local name = proc:match("([^/\\]+)$") or ""
+  if not proc then return "" end
+  return proc:match("([^/\\]+)$") or ""
+end
+
+local function is_nushell(pane)
+  local name = fg_name(pane)
   return name == "nu.exe" or name == "nu"
 end
+
+local function is_nvim(pane)
+  local name = fg_name(pane)
+  if name == "nvim.exe" or name == "nvim" then return true end
+  -- フォールバック: タイトルで判定
+  local title = (pane:get_title() or ""):lower()
+  return title:find("nvim") ~= nil
+end
+
+-- nvimからのペイン移動要求を処理（user-var経由）
+wezterm.on("user-var-changed", function(window, pane, name, value)
+  if name == "pane_right" then
+    window:perform_action(act.ActivatePaneDirection("Right"), pane)
+  end
+end)
 
 -- Show which key table is active in the status area
 wezterm.on("update-right-status", function(window, pane)
@@ -294,7 +313,17 @@ return {
     { key = "x", mods = "ALT", action = act({ CloseCurrentPane = { confirm = true } }) },
     -- ペイン移動
     { key = "h", mods = "ALT", action = act.ActivatePaneDirection("Left") },
-    { key = "l", mods = "ALT", action = act.ActivatePaneDirection("Right") },
+    {
+      key = "l",
+      mods = "ALT",
+      action = wezterm.action_callback(function(window, pane)
+        if is_nvim(pane) then
+          window:perform_action(act.SendKey({ key = "l", mods = "ALT" }), pane)
+        else
+          window:perform_action(act.ActivatePaneDirection("Right"), pane)
+        end
+      end),
+    },
     { key = "k", mods = "ALT", action = act.ActivatePaneDirection("Up") },
     { key = "j", mods = "ALT", action = act.ActivatePaneDirection("Down") },
     -- ペインズーム
@@ -307,6 +336,8 @@ return {
     { key = "-", mods = "CTRL", action = act.DecreaseFontSize },
     { key = "0", mods = "CTRL", action = act.ResetFontSize },
 
+    -- デバッグオーバーレイ
+    { key = "L", mods = "SHIFT|CTRL", action = act.ShowDebugOverlay },
     -- タブ切替 Ctrl + 数字
     { key = "1", mods = "CTRL", action = act.ActivateTab(0) },
     { key = "2", mods = "CTRL", action = act.ActivateTab(1) },

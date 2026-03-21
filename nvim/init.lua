@@ -23,6 +23,9 @@ vim.g.mapleader = " "
 -- クリップボード同期
 vim.opt.clipboard = "unnamedplus"
 
+-- ターミナルタイトル（WezTerm連携に必要）
+vim.opt.title = true
+
 -- 相対行番号
 vim.opt.number = true
 vim.opt.relativenumber = true
@@ -48,6 +51,39 @@ vim.api.nvim_create_autocmd({ "BufNewFile", "BufRead" }, {
     vim.fn.matchadd("ZenkakuSpace", "　")
   end,
 })
+
+-- Markdownチェックボックスのトグル (Alt+L)
+local function toggle_checkbox(line)
+  if line:match("[%-%*%+] %[ %]") then
+    return (line:gsub("([%-%*%+]) %[ %]", "%1 [x]", 1))
+  elseif line:match("[%-%*%+] %[[xX]%]") then
+    return (line:gsub("([%-%*%+]) %[[xX]%]", "%1 [ ]", 1))
+  elseif line:match("^%s*[%-%*%+] ") then
+    return (line:gsub("^(%s*[%-%*%+]) ", "%1 [ ] ", 1))
+  end
+  return nil
+end
+
+vim.keymap.set("n", "<A-l>", function()
+  local result = toggle_checkbox(vim.api.nvim_get_current_line())
+  if result then
+    vim.api.nvim_set_current_line(result)
+  else
+    -- user-var経由でWezTermにペイン移動を要求（プロセス起動不要）
+    vim.api.nvim_chan_send(2, "\x1b]1337;SetUserVar=pane_right=MQ==\x07")
+  end
+end, { desc = "Toggle markdown checkbox / pane right" })
+
+vim.keymap.set("v", "<A-l>", function()
+  local start_line = vim.fn.line("v")
+  local end_line = vim.fn.line(".")
+  if start_line > end_line then start_line, end_line = end_line, start_line end
+  for lnum = start_line, end_line do
+    local line = vim.fn.getline(lnum)
+    local result = toggle_checkbox(line)
+    if result then vim.fn.setline(lnum, result) end
+  end
+end, { desc = "Toggle markdown checkboxes (visual)" })
 
 -- lazy.nvim ブートストラップ
 local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
