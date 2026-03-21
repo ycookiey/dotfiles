@@ -12,7 +12,7 @@ const LOADING: &str = "             \u{29d7}"; // 6 + 4 spaces + ⧗
 // ANSI colors
 const GREEN: &str = "\x1b[32m";
 const RED: &str = "\x1b[31m";
-const YELLOW: &str = "\x1b[33m";
+const YELLOW: &str = "\x1b[38;2;255;220;50m";
 const CYAN: &str = "\x1b[36m";
 const MAGENTA: &str = "\x1b[35m";
 const RST: &str = "\x1b[0m";
@@ -163,13 +163,18 @@ fn read_model_from_transcript(path: &str) -> Option<String> {
     None
 }
 
+// Anthropic brand-inspired colors (TrueColor)
+const CLR_OPUS: &str = "\x1b[38;2;207;144;82m";   // warm orange
+const CLR_SONNET: &str = "\x1b[38;2;180;130;100m"; // warm brown
+const CLR_HAIKU: &str = "\x1b[38;2;120;180;120m";  // soft green
+
 fn model_short(display_name: &str) -> String {
     match display_name {
-        "Opus 4.6" => "\u{1f17e} 4.6".into(),              // 🅾 4.6
-        "Opus 4.6 (1M context)" => "\u{1f17e} 4.6\u{207a}".into(), // 🅾 4.6⁺
-        "Sonnet 4.6" => "\u{1f182} 4.6".into(),             // 🆂 4.6
-        "Sonnet 4.6 (1M context)" => "\u{1f182} 4.6\u{207a}".into(),
-        "Haiku 4.5" => "\u{1f177} 4.5".into(),              // 🅷 4.5
+        "Opus 4.6" => format!("{CLR_OPUS}\u{1f17e} 4.6{RST}"),
+        "Opus 4.6 (1M context)" => format!("{CLR_OPUS}\u{1f17e} 4.6\u{207a}{RST}"),
+        "Sonnet 4.6" => format!("{CLR_SONNET}\u{1f182} 4.6{RST}"),
+        "Sonnet 4.6 (1M context)" => format!("{CLR_SONNET}\u{1f182} 4.6\u{207a}{RST}"),
+        "Haiku 4.5" => format!("{CLR_HAIKU}\u{1f177} 4.5{RST}"),
         other => model_id_short(other),
     }
 }
@@ -177,12 +182,12 @@ fn model_short(display_name: &str) -> String {
 fn model_id_short(id: &str) -> String {
     if id.contains("opus") {
         let suffix = if id.contains("1m") { "\u{207a}" } else { "" };
-        format!("\u{1f17e} 4.6{suffix}")
+        format!("{CLR_OPUS}\u{1f17e} 4.6{suffix}{RST}")
     } else if id.contains("sonnet") {
         let suffix = if id.contains("1m") { "\u{207a}" } else { "" };
-        format!("\u{1f182} 4.6{suffix}")
+        format!("{CLR_SONNET}\u{1f182} 4.6{suffix}{RST}")
     } else if id.contains("haiku") {
-        "\u{1f177} 4.5".into()
+        format!("{CLR_HAIKU}\u{1f177} 4.5{RST}")
     } else {
         id.to_string()
     }
