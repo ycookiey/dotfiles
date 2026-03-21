@@ -194,3 +194,9 @@ name = "locked"
 subcommand = "locked"
 modifies_shell = false
 enabled = true
+
+[[command]]
+name = "dotb"
+subcommand = "build"
+modifies_shell = false
+enabled = true

@@ -115,17 +115,14 @@ try {
     & "$ScriptDir\install\winget.ps1"
     "$(Get-Date) - Winget apps install checked" >> $LogFile
 
-    # dotcli (Rust CLI) — ビルド＆エイリアス生成
-    $cargoExe = gcm cargo -ea 0
-    if ($cargoExe) {
-        $cargoBin = Split-Path $cargoExe.Source
+    # Rust CLIs — 初回ビルド＆エイリアス生成
+    if (gcm cargo -ea 0) {
         cargo install --path "$ScriptDir\cli" --quiet
-        $dotcliExe = "$cargoBin\dotcli.exe"
-        if (tp $dotcliExe) {
-            & $dotcliExe generate -o $ScriptDir
-            "$(Get-Date) - dotcli installed and generated" >> $LogFile
+        if (gcm dotcli -ea 0) {
+            dotcli build
+            "$(Get-Date) - dotcli build completed" >> $LogFile
         } else {
-            "$(Get-Date) - Error: dotcli build failed" >> $LogFile
+            "$(Get-Date) - Error: dotcli initial build failed" >> $LogFile
         }
     }
 

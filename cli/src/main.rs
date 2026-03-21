@@ -55,6 +55,8 @@ enum Commands {
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
     },
+    /// Build all Cargo projects in dotfiles
+    Build,
     /// Flutter emulator runner
     Frun,
     /// Check file locks
@@ -88,6 +90,7 @@ fn main() {
         Commands::Grf { args } => commands::grf::run_print(&args),
         Commands::Grfo { args } => commands::grf::run_open(&args),
         Commands::Grfc { args } => commands::grf::run_clone(&args),
+        Commands::Build => commands::build::run(),
         Commands::Frun => commands::frun::run(),
         Commands::Locked { path } => commands::locked::run(&path),
     }
