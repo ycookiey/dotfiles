@@ -19,6 +19,10 @@ source ($nu.default-config-dir | path join 'cache/zoxide.nu')
 source ($nu.default-config-dir | path join 'generated-aliases.nu')
 
 # --- yazi (TUI needs direct terminal, can't pipe through dotcli) ---
+# --- Build outdated check ---
+if (which dotcli | is-not-empty) { dotcli build --check }
+
+# --- yazi (TUI needs direct terminal, can't pipe through dotcli) ---
 def y [...args: string] {
     let tmp = (mktemp -t "yazi-cwd.XXXXXX")
     yazi ...$args --cwd-file $tmp
