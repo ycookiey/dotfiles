@@ -29,6 +29,7 @@ nushell/cache/
 generated-aliases.ps1
 nushell/generated-aliases.nu
 cli/target/
+claude/statusline/target/
 
 # Claude Skills
 claude/skills/life
