@@ -25,7 +25,7 @@ tail = os.path.basename(claude_dir.rstrip("/\\"))
 m = re.search(r"(\d+)$", tail)
 acc = int(m.group(1)) if m else 0
 
-LOADING = " " * 6 + "   \u29d7"  #          ⧗
+LOADING = " " * 6 + "    \u29d7"  #           ⧗
 
 has_rl = j and "rate_limits" in j
 usage5h = elapsed5h = usage7d = elapsed7d = 0

@@ -12,7 +12,7 @@
   },
   "statusLine": {
     "type": "command",
-    "command": "python ~/.claude/statusline.py"
+    "command": "claude-statusline"
   },
   "enabledPlugins": {
     "github@claude-plugins-official": true,
