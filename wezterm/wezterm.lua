@@ -10,8 +10,8 @@ local is_dark = appearance:find("Dark") ~= nil
 config.automatically_reload_config = true
 config.use_ime = true
 
--- デフォルトをPowerShellに設定
-config.default_prog = { 'pwsh' }
+-- デフォルトをNushellに設定
+config.default_prog = { 'nu' }
 config.default_cwd = [[C:\Main\Project]]
 
 ----------------------------------------------------
