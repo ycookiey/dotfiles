@@ -34,6 +34,14 @@ struct LauncherDef {
 fn main() {
     println!("cargo:rerun-if-changed=definitions.toml");
 
+    // Embed dotfiles root path at compile time
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    let dotfiles_dir = std::path::Path::new(&manifest_dir).parent().unwrap();
+    println!(
+        "cargo:rustc-env=DOTFILES_DIR={}",
+        dotfiles_dir.display()
+    );
+
     let toml_str =
         std::fs::read_to_string("definitions.toml").expect("Failed to read definitions.toml");
 
