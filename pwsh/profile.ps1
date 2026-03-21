@@ -137,6 +137,8 @@ if ($script:IsInteractive) {
                 if (-not `$?) { & '$HOME\scoop\apps\git\current\cmd\git.exe' pull -q -r; `$true }
 "@)
             $global:j = @{ PowerShell = $_ps; Handle = $_ps.BeginInvoke() }
+            # Build outdated check
+            if (gcm dotcli -ea 0) { dotcli build --check }
             # Sync (MCP servers etc.)
             $_syncPs = [PowerShell]::Create()
             [void]$_syncPs.AddScript("& '$Dot\pwsh\sync.ps1' -Dot '$Dot'")
