@@ -4,6 +4,7 @@ param(
   [Parameter(Mandatory)][string]$Description
 )
 
+$ErrorActionPreference = 'Stop'
 $cfgPath = "$HOME/.config/yscoopy.json"
 $owner = 'ycookiey'
 $bucket = 'yscoopy'
@@ -21,8 +22,8 @@ if (!$cfg.worker_url -or !$cfg.webhook_secret) {
 
 # --- Latest release ---
 wh "Fetching latest release from $owner/$Repo..." -Fo Cyan
-$release = gh api "repos/$owner/$Repo/releases/latest" --jq '{tag: .tag_name, assets: [.assets[] | {name: .name, url: .browser_download_url}]}' | ConvertFrom-Json
-if (!$release) { Write-Error "No release found for $owner/$Repo"; return }
+$release = gh api "repos/$owner/$Repo/releases/latest" --jq '{tag: .tag_name, assets: [.assets[] | {name: .name}]}' | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0 -or !$release) { Write-Error "No release found for $owner/$Repo"; return }
 
 $version = $release.tag -replace '^v', ''
 # Find Windows asset: bare .exe or windows .zip
@@ -37,7 +38,8 @@ if (!$asset) { Write-Error "No Windows asset (.exe or .zip) found in release"; r
 # --- Hash ---
 wh "Downloading $($asset.name) for hash..." -Fo Cyan
 $tmp = "$env:TEMP/$($asset.name)"
-iwr $asset.url -OutFile $tmp
+gh release download $release.tag -R "$owner/$Repo" -p $asset.name -D $env:TEMP --clobber
+if ($LASTEXITCODE -ne 0) { Write-Error "Failed to download $($asset.name)"; return }
 $hash = (Get-FileHash $tmp -Algorithm SHA256).Hash.ToLower()
 
 if ($isZip) {
@@ -72,13 +74,14 @@ wh $json
 # --- Push to yscoopy ---
 wh "`nPushing manifest to $bucket..." -Fo Cyan
 $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
-$existing = gh api "repos/$owner/$bucket/contents/$App.json" --jq '.sha' 2>$null
+$manifestPath = "bucket/$App.json"
+$existing = gh api "repos/$owner/$bucket/contents/$manifestPath" --jq '.sha' 2>$null
 
 $body = @{ message = "add $App"; content = $encoded }
 if ($existing) { $body.sha = $existing }
 $bodyJson = $body | ConvertTo-Json -Compress
 
-$bodyJson | gh api "repos/$owner/$bucket/contents/$App.json" -X PUT --input - > $null
+$bodyJson | gh api "repos/$owner/$bucket/contents/$manifestPath" -X PUT --input - > $null
 if ($LASTEXITCODE -ne 0) { Write-Error "Failed to push manifest"; return }
 wh "Manifest pushed." -Fo Green
 
