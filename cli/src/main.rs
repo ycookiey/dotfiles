@@ -30,6 +30,15 @@ enum Commands {
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
     },
+    /// Cursor CLI: ensure .cursor/rules + run `cursor agent`
+    CursorAgent {
+        #[arg(long)]
+        force: bool,
+        #[arg(long)]
+        skip_mdc: bool,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Claude Bedrock mode
     ClaudeBedrock {
         #[arg(trailing_var_arg = true)]
@@ -89,6 +98,11 @@ fn main() {
         }
         Commands::Proxy { args } => commands::proxy::run(&args),
         Commands::ClaudeSwitch { args } => commands::c::run(&args),
+        Commands::CursorAgent {
+            force,
+            skip_mdc,
+            args,
+        } => commands::cursor::run(force, skip_mdc, &args),
         Commands::ClaudeBedrock { args } => commands::cb::run(&args),
         Commands::YaziCd { args } => commands::y::run(&args),
         Commands::Grf { args } => commands::grf::run_print(&args),

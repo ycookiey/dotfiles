@@ -154,6 +154,12 @@ modifies_shell = true
 enabled = true
 
 [[command]]
+name = "a"
+subcommand = "cursor-agent"
+modifies_shell = true
+enabled = true
+
+[[command]]
 name = "cb"
 subcommand = "claude-bedrock"
 modifies_shell = true
