@@ -1,5 +1,6 @@
 pub mod build;
 pub mod cb;
+pub mod cursor;
 pub mod grf;
 pub mod proxy;
 pub mod y;
