@@ -12,7 +12,7 @@ pub fn run(output_dir: &Path) -> anyhow::Result<()> {
     let nu_path = output_dir.join("nushell").join("generated-aliases.nu");
 
     let ps1 = powershell::generate(&defs, &output_dir);
-    let nu = nushell::generate(&defs);
+    let nu = nushell::generate(&defs, &output_dir);
 
     std::fs::write(&ps1_path, &ps1)?;
     std::fs::write(&nu_path, &nu)?;
