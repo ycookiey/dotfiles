@@ -12,13 +12,9 @@ pub fn run(args: &[String]) {
     let d = claude_dir();
     let last_file = d.join(".last_account");
 
-    // "save" subcommand
-    if args.first().map(|s| s.as_str()) == Some("save") {
-        if let Some(name) = args.get(1) {
-            save(name, &d);
-        } else {
-            eprintln!("Usage: c save <name>");
-        }
+    // "save" subcommand: accept both "c save 2" and "c 2 save"
+    if let Some(name) = parse_save_args(args) {
+        save(&name, &d);
         return;
     }
 
@@ -101,6 +97,18 @@ pub fn run(args: &[String]) {
         ..Default::default()
     };
     action.print();
+}
+
+/// Parse "save <name>" or "<name> save" from args
+fn parse_save_args(args: &[String]) -> Option<String> {
+    let (a, b) = (args.first().map(|s| s.as_str()), args.get(1).map(|s| s.as_str()));
+    match (a, b) {
+        (Some("save"), Some(name)) => Some(name.to_string()),
+        (Some(name), Some("save")) if name.chars().all(|c| c.is_ascii_digit()) => {
+            Some(name.to_string())
+        }
+        _ => None,
+    }
 }
 
 fn save(name: &str, d: &PathBuf) {
