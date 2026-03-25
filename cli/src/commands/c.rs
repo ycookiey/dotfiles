@@ -114,16 +114,24 @@ fn parse_save_args(args: &[String]) -> Option<String> {
 fn save(name: &str, d: &PathBuf) {
     let home = dirs::home_dir().expect("home dir");
     let target = home.join(format!(".claude-{name}"));
-    if !target.exists() {
+    let msg = if !target.exists() {
         let _ = fs::create_dir_all(&target);
-        println!("Account {name} saved. Run setup.ps1 to link shared config");
+        format!("Account {name} saved. Run setup.ps1 to link shared config")
     } else {
-        println!("Account {name} saved");
-    }
+        format!("Account {name} saved")
+    };
     let creds = d.join(".credentials.json");
     if creds.exists() {
         let _ = fs::copy(&creds, target.join(".credentials.json"));
     }
+    ShellAction {
+        messages: vec![Message {
+            text: msg,
+            level: MessageLevel::Info,
+        }],
+        ..Default::default()
+    }
+    .print();
 }
 
 fn pick_account(d: &PathBuf, last_file: &PathBuf) -> Option<String> {
