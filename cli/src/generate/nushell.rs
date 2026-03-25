@@ -59,7 +59,9 @@ pub fn generate(defs: &Definitions, dotfiles_dir: &Path) -> String {
     let win_launchers: Vec<_> = defs
         .launcher
         .iter()
-        .filter(|l| l.platform.as_ref() != Some(&Platform::Macos))
+        .filter(|l| {
+            l.platform.as_ref() != Some(&Platform::Macos) && l.nushell
+        })
         .collect();
     if !win_launchers.is_empty() {
         writeln!(out, "# --- Launchers ---").unwrap();
@@ -170,6 +172,149 @@ pub fn generate(defs: &Definitions, dotfiles_dir: &Path) -> String {
     }
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::generate;
+    use crate::definitions::{Definitions, Platform};
+    use crate::generate::powershell;
+    use std::path::Path;
+    use std::process::Command;
+
+    fn dotfiles_path() -> &'static Path {
+        Path::new("C:/Main/dotfiles")
+    }
+
+    fn nu_available() -> bool {
+        Command::new("nu")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn nushell_covers_definitions_present_in_powershell() {
+        let defs = Definitions::load();
+        let ps = powershell::generate(&defs, dotfiles_path());
+        let nu = generate(&defs, dotfiles_path());
+
+        for a in &defs.alias {
+            let marker = format!("function {} {{", a.name);
+            assert!(
+                ps.contains(&marker),
+                "alias {} expected in PowerShell output",
+                a.name
+            );
+            let marker = format!("alias {} =", a.name);
+            assert!(
+                nu.contains(&marker),
+                "alias {} missing from nushell output",
+                a.name
+            );
+        }
+
+        for s in &defs.script {
+            let marker = format!("function {} {{", s.name);
+            assert!(
+                ps.contains(&marker),
+                "script {} expected in PowerShell output",
+                s.name
+            );
+            let marker = format!("def {} [", s.name);
+            assert!(
+                nu.contains(&marker),
+                "script {} missing from nushell output",
+                s.name
+            );
+        }
+
+        for l in &defs.launcher {
+            if l.platform.as_ref() == Some(&Platform::Macos) {
+                continue;
+            }
+            let ps_marker = format!("function {} {{", l.name);
+            assert!(
+                ps.contains(&ps_marker),
+                "launcher {} expected in PowerShell output",
+                l.name
+            );
+            let nu_marker = format!("def {} [", l.name);
+            if l.nushell {
+                assert!(
+                    nu.contains(&nu_marker),
+                    "launcher {} missing from nushell output",
+                    l.name
+                );
+            } else {
+                assert!(
+                    !nu.contains(&nu_marker),
+                    "launcher {} should be excluded from nushell output",
+                    l.name
+                );
+            }
+        }
+
+        for c in &defs.command {
+            if !c.enabled {
+                let marker = format!("function {} {{", c.name);
+                assert!(
+                    !ps.contains(&marker),
+                    "disabled command {} must not appear in PowerShell output",
+                    c.name
+                );
+                let marker = format!("def {} [", c.name);
+                assert!(
+                    !nu.contains(&marker),
+                    "disabled command {} must not appear in nushell output",
+                    c.name
+                );
+                continue;
+            }
+            let marker = format!("function {} {{", c.name);
+            assert!(
+                ps.contains(&marker),
+                "command {} expected in PowerShell output",
+                c.name
+            );
+            let marker = format!("def {} [", c.name);
+            assert!(
+                nu.contains(&marker),
+                "command {} missing from nushell output",
+                c.name
+            );
+        }
+    }
+
+    #[test]
+    fn nushell_generated_passes_ide_check() {
+        if !nu_available() {
+            return;
+        }
+        let defs = Definitions::load();
+        let nu_src = generate(&defs, dotfiles_path());
+        let path = std::env::temp_dir().join(format!(
+            "dotcli-ide-check-{}.nu",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, &nu_src).unwrap();
+        let status = Command::new("nu")
+            .args(["--ide-check", "0", path.to_str().unwrap()])
+            .status()
+            .expect("failed to spawn nu");
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            status.success(),
+            "nu --ide-check failed with status {:?}",
+            status.code()
+        );
+    }
 }
 
 const APPLY_HELPER: &str = r#"def _dotcli_apply [] {
