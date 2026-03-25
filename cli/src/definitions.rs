@@ -31,6 +31,8 @@ pub struct Launcher {
     pub name: String,
     #[serde(rename = "type")]
     pub launcher_type: LauncherType,
+    #[serde(default = "default_true")]
+    pub nushell: bool,
     #[serde(default)]
     pub uri: Option<String>,
     #[serde(default)]
