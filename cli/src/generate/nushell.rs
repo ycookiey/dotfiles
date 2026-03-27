@@ -154,7 +154,7 @@ pub fn generate(defs: &Definitions, dotfiles_dir: &Path) -> String {
             if c.modifies_shell {
                 writeln!(
                     out,
-                    "def {name} [...args: string] {{ dotcli {sub} ...$args | _dotcli_apply }}",
+                    "def --env {name} [...args: string] {{ dotcli {sub} ...$args | _dotcli_apply }}",
                     name = c.name,
                     sub = c.subcommand,
                 )
@@ -266,9 +266,9 @@ mod tests {
                     "disabled command {} must not appear in PowerShell output",
                     c.name
                 );
-                let marker = format!("def {} [", c.name);
                 assert!(
-                    !nu.contains(&marker),
+                    !nu.contains(&format!("def {} [", c.name))
+                        && !nu.contains(&format!("def --env {} [", c.name)),
                     "disabled command {} must not appear in nushell output",
                     c.name
                 );
@@ -280,7 +280,11 @@ mod tests {
                 "command {} expected in PowerShell output",
                 c.name
             );
-            let marker = format!("def {} [", c.name);
+            let marker = if c.modifies_shell {
+                format!("def --env {} [", c.name)
+            } else {
+                format!("def {} [", c.name)
+            };
             assert!(
                 nu.contains(&marker),
                 "command {} missing from nushell output",
@@ -317,13 +321,13 @@ mod tests {
     }
 }
 
-const APPLY_HELPER: &str = r#"def _dotcli_apply [] {
+const APPLY_HELPER: &str = r#"def --env _dotcli_apply [] {
     let action = ($in | from json)
     if ($action | get -o set_env | is-not-empty) {
-        $action.set_env | transpose k v | each { |r| load-env {($r.k): $r.v} } | ignore
+        load-env $action.set_env
     }
     if ($action | get -o unset_env | is-not-empty) {
-        $action.unset_env | each { |k| hide-env $k } | ignore
+        for k in $action.unset_env { hide-env $k }
     }
     if ($action | get -o cd | is-not-empty) { cd $action.cd }
     if ($action | get -o messages | is-not-empty) {
