@@ -34,6 +34,10 @@ try {
 if (!(isadmin)) {
     start pwsh -Verb RunAs -Arg "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Wait
     if (tp $LogFile) { gc $LogFile | % { wh $_ -ForegroundColor ($_ -match 'Error' ? 'Red' : 'Green') } }
+    # Bitwarden secrets: 未取得があれば再実行（今度はウィンドウが埋もれない）
+    if (gcm bw -ea 0) {
+        & "$ScriptDir\install\bw-secrets.ps1"
+    }
     exit
 }
 
