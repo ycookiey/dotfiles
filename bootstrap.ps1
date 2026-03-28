@@ -20,6 +20,14 @@ if ($isAdmin) {
         Set-ItemProperty $nlsPath -Name MACCP -Value "65001"
         $script:needsReboot = $true
     }
+
+    # UAC prompt on desktop (not secure desktop)
+    $uacPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
+    $uac = Get-ItemProperty $uacPath
+    if ($uac.PromptOnSecureDesktop -ne 0) {
+        Write-Host "Setting UAC prompt to desktop..." -ForegroundColor Yellow
+        Set-ItemProperty $uacPath -Name PromptOnSecureDesktop -Value 0
+    }
 }
 
 # Scoop
