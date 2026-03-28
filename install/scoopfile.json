@@ -2,7 +2,7 @@
   "buckets": [
     {
       "Name": "main",
-      "Source": "https://github.com/ScoopInstaller/Main"
+      "Source": "https://github.com/ScoopInstaller/Main.git"
     },
     {
       "Name": "extras",
@@ -47,6 +47,10 @@
       "Source": "extras"
     },
     {
+      "Name": "bitwarden-cli",
+      "Source": "main"
+    },
+    {
       "Name": "bun",
       "Source": "main"
     },
@@ -69,10 +73,6 @@
     {
       "Name": "discord",
       "Source": "extras"
-    },
-    {
-      "Name": "dotnet-sdk",
-      "Source": "main"
     },
     {
       "Name": "epic-games-launcher",
@@ -115,6 +115,10 @@
       "Source": "main"
     },
     {
+      "Name": "git-all-status",
+      "Source": "yscoopy"
+    },
+    {
       "Name": "googlechrome",
       "Source": "extras"
     },
@@ -143,15 +147,15 @@
       "Source": "versions"
     },
     {
+      "Name": "llama.cpp-cu131",
+      "Source": null
+    },
+    {
       "Name": "llvm",
       "Source": "main"
     },
     {
       "Name": "miktex",
-      "Source": "main"
-    },
-    {
-      "Name": "mise",
       "Source": "main"
     },
     {
@@ -176,7 +180,7 @@
     },
     {
       "Name": "ollama",
-      "Source": null
+      "Source": "main"
     },
     {
       "Name": "onlyoffice-desktopeditors",
@@ -184,7 +188,7 @@
     },
     {
       "Name": "parsec-np",
-      "Source": null
+      "Source": "nonportable"
     },
     {
       "Name": "perl",
@@ -223,10 +227,6 @@
       "Source": "main"
     },
     {
-      "Name": "sqlite",
-      "Source": "main"
-    },
-    {
       "Name": "starship",
       "Source": "main"
     },
@@ -260,7 +260,7 @@
     },
     {
       "Name": "vcpkg",
-      "Source": null
+      "Source": "main"
     },
     {
       "Name": "vcxsrv",
@@ -308,6 +308,10 @@
     },
     {
       "Name": "ytasky",
+      "Source": "yscoopy"
+    },
+    {
+      "Name": "ywatchy",
       "Source": "yscoopy"
     },
     {
