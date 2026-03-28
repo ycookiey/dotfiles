@@ -167,6 +167,12 @@ modifies_shell = true
 enabled = true
 
 [[command]]
+name = "cg"
+subcommand = "claude-glm"
+modifies_shell = true
+enabled = true
+
+[[command]]
 name = "y"
 subcommand = "yazi-cd"
 modifies_shell = true

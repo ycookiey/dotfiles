@@ -44,6 +44,11 @@ enum Commands {
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
     },
+    /// Claude GLM mode
+    ClaudeGlm {
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
+    },
     /// Yazi with cwd sync
     YaziCd {
         #[arg(trailing_var_arg = true)]
@@ -104,6 +109,7 @@ fn main() {
             args,
         } => commands::cursor::run(force, skip_mdc, &args),
         Commands::ClaudeBedrock { args } => commands::cb::run(&args),
+        Commands::ClaudeGlm { args } => commands::cg::run(&args),
         Commands::YaziCd { args } => commands::y::run(&args),
         Commands::Grf { args } => commands::grf::run_print(&args),
         Commands::Grfo { args } => commands::grf::run_open(&args),
