@@ -46,17 +46,15 @@ if (Test-Path $orderFile) {
     $failed = @()
     foreach ($app in $apps) {
         if ($app.Name -notin $installed) {
-            wh "Installing $($app.Name)..." -Fo Cyan
+            $scoopArgs = "-NoProfile -Command `"scoop install $($app.Name); if (`$LASTEXITCODE) { exit `$LASTEXITCODE }`""
             if ($OnlyLarge) {
-                try {
-                    scoop install $app.Name
-                    if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "scoop install exited with code $LASTEXITCODE" }
-                } catch {
-                    wh "  Skipped (failed): $($app.Name) — $_" -Fo Yellow
+                $result = Invoke-Skippable "Installing $($app.Name)" pwsh $scoopArgs
+                if ($null -ne $result -and $result -ne 0) {
+                    wh "  Failed: $($app.Name)" -Fo Yellow
                     $failed += $app.Name
                 }
             } else {
-                scoop install $app.Name
+                Invoke-Skippable "Installing $($app.Name)" pwsh $scoopArgs
             }
         }
     }
