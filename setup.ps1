@@ -8,9 +8,21 @@ if (!(Test-Path $LogDir)) {
 }
 "$(Get-Date) - Pre-elevation setup starting (ScriptDir: $ScriptDir)" > $LogFile
 
+# Bitwarden secrets（別ウィンドウで対話入力を受け付ける）
+$bwStarted = $false
+if (gcm bw -ea 0) {
+    start pwsh -Arg "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptDir\install\bw-secrets.ps1`""
+    $bwStarted = $true
+}
+
 # Scoop セットアップ（未インストール時は自動、既存マシンは --scoop で手動）
 if ($args -contains '--scoop' -or !(gcm scoop -ea 0)) {
     & "$ScriptDir\install\scoop.ps1"
+}
+
+# Scoop 後: 新PCでbwがインストールされた場合
+if (!$bwStarted -and (gcm bw -ea 0)) {
+    start pwsh -Arg "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptDir\install\bw-secrets.ps1`""
 }
 
 try {
