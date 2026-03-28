@@ -28,6 +28,30 @@ if ($isAdmin) {
         Write-Host "Setting UAC prompt to desktop..." -ForegroundColor Yellow
         Set-ItemProperty $uacPath -Name PromptOnSecureDesktop -Value 0
     }
+
+    # Skip lock screen
+    $personalizationPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization"
+    $personalization = Get-ItemProperty $personalizationPath -ea 0
+    if ($personalization.NoLockScreen -ne 1) {
+        Write-Host "Disabling lock screen..." -ForegroundColor Yellow
+        Set-ItemProperty $personalizationPath -Name NoLockScreen -Value 1 -Force
+    }
+}
+
+# HKCU settings
+$advPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
+$adv = Get-ItemProperty $advPath -ea 0
+
+# Show file extensions
+if ($adv.HideFileExt -ne 0) {
+    Write-Host "Showing file extensions..." -ForegroundColor Yellow
+    Set-ItemProperty $advPath -Name HideFileExt -Value 0
+}
+
+# Show seconds in taskbar clock
+if ($adv.ShowSecondsInSystemClock -ne 1) {
+    Write-Host "Showing seconds in taskbar clock..." -ForegroundColor Yellow
+    Set-ItemProperty $advPath -Name ShowSecondsInSystemClock -Value 1
 }
 
 # Scoop
