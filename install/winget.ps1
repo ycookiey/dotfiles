@@ -1,5 +1,6 @@
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path $MyInvocation.MyCommand.Definition
+. "$ScriptDir\..\pwsh\aliases.ps1"
 $WingetFile = "$ScriptDir\wingetfile.json"
 
 if (!(gcm winget -ea 0)) {
@@ -52,17 +53,17 @@ $json = gc $WingetFile -Raw | ConvertFrom-Json
 # Cache winget list output for installed check
 $wingetOutput = (winget list 2>$null) -join "`n"
 
+$overrides = @{
+    'Microsoft.VisualStudio.BuildTools' = '--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet --wait'
+}
+
 foreach ($app in $json.apps) {
     if ($wingetOutput -match ([regex]::Escape($app.Id) + '\s')) {
         continue
     }
-    wh "Installing $($app.Id)..." -Fo Cyan
-    $overrides = @{
-        'Microsoft.VisualStudio.BuildTools' = '--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet --wait'
-    }
-    $wingetArgs = @('install', '--id', $app.Id, '-e', '--accept-source-agreements', '--accept-package-agreements')
-    if ($overrides[$app.Id]) { $wingetArgs += '--override', $overrides[$app.Id] }
-    winget @wingetArgs
+    $argStr = "install --id $($app.Id) -e --accept-source-agreements --accept-package-agreements"
+    if ($overrides[$app.Id]) { $argStr += " --override `"$($overrides[$app.Id])`"" }
+    Invoke-Skippable "Installing $($app.Id)" winget $argStr
 }
 
 wh "`nWinget setup complete." -Fo Green

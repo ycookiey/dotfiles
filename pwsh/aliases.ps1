@@ -9,6 +9,24 @@ function Start-App($Name) {
     explorer "shell:AppsFolder\$((Get-StartApps $Name | select -f 1).AppID)"
 }
 
+function Invoke-Skippable {
+    param([string]$Label, [string]$Exe, [string]$Arguments)
+    wh "$Label  (Press S to skip)" -Fo Cyan
+    $proc = Start-Process $Exe -ArgumentList $Arguments -NoNewWindow -PassThru
+    while (!$proc.HasExited) {
+        if ([Console]::KeyAvailable) {
+            $key = [Console]::ReadKey($true)
+            if ($key.Key -eq 'S') {
+                taskkill /T /F /PID $proc.Id *>$null
+                wh "  Skipped" -Fo Yellow
+                return $null
+            }
+        }
+        sleep -Milliseconds 200
+    }
+    $proc.ExitCode
+}
+
 function Copy-Item {
     try {
         Microsoft.PowerShell.Management\Copy-Item @args -ErrorAction Stop
