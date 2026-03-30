@@ -163,33 +163,65 @@ fn read_model_from_transcript(path: &str) -> Option<String> {
     None
 }
 
-// Anthropic brand-inspired colors (TrueColor)
-const CLR_OPUS: &str = "\x1b[38;2;207;144;82m";   // warm orange
-const CLR_SONNET: &str = "\x1b[38;2;180;130;100m"; // warm brown
-const CLR_HAIKU: &str = "\x1b[38;2;120;180;120m";  // soft green
+// ========================================
+// Statusline TOML Rules
+// ========================================
 
-fn model_short(display_name: &str) -> String {
-    match display_name {
-        "Opus 4.6" => format!("{CLR_OPUS}\u{1f17e} 4.6{RST}"),
-        "Opus 4.6 (1M context)" => format!("{CLR_OPUS}\u{1f17e} 4.6\u{207a}{RST}"),
-        "Sonnet 4.6" => format!("{CLR_SONNET}\u{1f182} 4.6{RST}"),
-        "Sonnet 4.6 (1M context)" => format!("{CLR_SONNET}\u{1f182} 4.6\u{207a}{RST}"),
-        "Haiku 4.5" => format!("{CLR_HAIKU}\u{1f177} 4.5{RST}"),
-        other => model_id_short(other),
-    }
+#[derive(Deserialize, Default, Clone)]
+struct ModelRule {
+    #[serde(default)]
+    name: Vec<String>,
+    #[serde(default)]
+    display: String,
+    #[serde(default)]
+    color: String,
 }
 
-fn model_id_short(id: &str) -> String {
-    if id.contains("opus") {
-        let suffix = if id.contains("1m") { "\u{207a}" } else { "" };
-        format!("{CLR_OPUS}\u{1f17e} 4.6{suffix}{RST}")
-    } else if id.contains("sonnet") {
-        let suffix = if id.contains("1m") { "\u{207a}" } else { "" };
-        format!("{CLR_SONNET}\u{1f182} 4.6{suffix}{RST}")
-    } else if id.contains("haiku") {
-        format!("{CLR_HAIKU}\u{1f177} 4.5{RST}")
+#[derive(Deserialize, Default)]
+struct RulesFile {
+    #[serde(default)]
+    model: Vec<ModelRule>,
+}
+
+// ========================================
+// TOML Rule Loading
+// ========================================
+
+fn match_model_rule<'a>(model_name: &'a str, rules: &'a [ModelRule]) -> Option<&'a ModelRule> {
+    rules.iter().find(|rule| {
+        rule.name.iter().any(|n| n.eq_ignore_ascii_case(model_name))
+    })
+}
+
+fn load_rules() -> Vec<ModelRule> {
+    let dir = env::var("CLAUDE_CONFIG_DIR").unwrap_or_else(|_| {
+        env::var("USERPROFILE")
+            .or_else(|_| env::var("HOME"))
+            .map(|h| format!("{}/.claude", h))
+            .unwrap_or_default()
+    });
+    let rules_path = format!("{dir}/statusline-rules.toml");
+    let content = std::fs::read_to_string(&rules_path)
+        .unwrap_or_else(|_| include_str!("../statusline-models.toml").to_string());
+    toml::from_str::<RulesFile>(&content)
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to parse statusline rules: {e}");
+            RulesFile::default()
+        })
+        .model
+}
+
+fn fmt_color(rgb: &str) -> String {
+    format!("\x1b[38;2;{}m", rgb)
+}
+
+fn model_short_with_rules(display_name: &str, rules: &[ModelRule]) -> String {
+    if let Some(rule) = match_model_rule(display_name, rules) {
+        let color = fmt_color(&rule.color);
+        format!("{color}{}{RST}", rule.display)
     } else {
-        id.to_string()
+        // 未知モデル
+        format!("\x1b[38;2;150;150;150m❓ {display_name}\x1b[0m")
     }
 }
 
@@ -271,10 +303,39 @@ fn pad_left(s: &str, width: usize) -> String {
     }
 }
 
+/// Cache rate_limits to $CLAUDE_CONFIG_DIR/.rate-limits.json for ycusage
+fn cache_rate_limits(raw: &str) {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return;
+    };
+    let Some(rl) = v.get("rate_limits") else { return };
+    if rl.is_null() {
+        return;
+    }
+    let dir = env::var("CLAUDE_CONFIG_DIR").unwrap_or_else(|_| {
+        env::var("USERPROFILE")
+            .or_else(|_| env::var("HOME"))
+            .map(|h| format!("{h}/.claude"))
+            .unwrap_or_default()
+    });
+    if dir.is_empty() {
+        return;
+    }
+    let cache = serde_json::json!({
+        "rate_limits": rl,
+        "cached_at": now_unix() as u64,
+    });
+    let _ = std::fs::write(format!("{dir}/.rate-limits.json"), cache.to_string());
+}
+
 fn main() {
     let mut input_str = String::new();
     let _ = io::stdin().read_to_string(&mut input_str);
     let j: Input = serde_json::from_str(&input_str).unwrap_or_default();
+
+    let rules = load_rules();
+
+    cache_rate_limits(&input_str);
 
     let acc = acc_from_env();
     let has_rl = j.rate_limits.is_some();
@@ -300,7 +361,7 @@ fn main() {
             .and_then(read_model_from_transcript)
             .unwrap_or_else(|| "?".into())
     };
-    let model = model_short(&model_raw);
+    let model = model_short_with_rules(&model_raw, &rules);
     let acc_str = if acc > 0 && (acc as usize) <= ACC_ICONS.len() {
         ACC_ICONS[(acc - 1) as usize].to_string()
     } else {
