@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
@@ -75,6 +76,83 @@ fn newest_mtime(dir: &Path) -> Option<SystemTime> {
     newest
 }
 
+struct OutdatedInfo {
+    crate_path: &'static str,
+    commits: Vec<(String, String)>,  // (hash, msg)
+    changed_files: Vec<String>,
+}
+
+fn get_outdated_info(crate_info: &Crate, dotfiles: &Path, bin_mtime: SystemTime) -> Option<OutdatedInfo> {
+    let bin_timestamp = bin_mtime
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+
+    // Get commits after binary build time
+    let after = format!("{}-01-01", 1970 + (bin_timestamp / 31536000));
+    let log_output = match Command::new("git")
+        .args(["log", "--after", &after, "--format=%H %s", "--", crate_info.path])
+        .current_dir(&dotfiles)
+        .output()
+    {
+        Ok(output) => String::from_utf8_lossy(&output.stdout).to_string(),
+        _ => return None,
+    };
+
+    let mut commits = Vec::new();
+    let mut changed_files = HashSet::new();
+    let prefix = format!("{}/", crate_info.path);
+
+    for line in log_output.lines() {
+        if let Some(space_idx) = line.find(' ') {
+            let hash = &line[..space_idx];
+            let msg = &line[space_idx + 1..];
+            // Check commit time
+            let time_output = match Command::new("git")
+                .args(["log", "-1", "--format=%ct", hash, "--", crate_info.path])
+                .current_dir(&dotfiles)
+                .output()
+            {
+                Ok(output) => String::from_utf8_lossy(&output.stdout).trim().to_string(),
+                _ => continue,
+            };
+            if let Ok(commit_ts) = time_output.parse::<u64>() {
+                if commit_ts > bin_timestamp {
+                    commits.push((hash.to_string(), msg.to_string()));
+                    // Get changed files for this commit
+                    let diff_output = match Command::new("git")
+                        .args(["diff", "--name-only", &format!("{}^..{}", hash, hash), "--", crate_info.path])
+                        .current_dir(&dotfiles)
+                        .output()
+                    {
+                        Ok(output) => String::from_utf8_lossy(&output.stdout).to_string(),
+                        _ => continue,
+                    };
+                    for file in diff_output.lines() {
+                        if !file.ends_with("Cargo.lock") && !file.starts_with("target/") {
+                            if let Some(stripped) = file.strip_prefix(&prefix) {
+                                changed_files.insert(stripped.to_string());
+                            } else {
+                                changed_files.insert(file.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if commits.is_empty() || changed_files.is_empty() {
+        return None;
+    }
+
+    Some(OutdatedInfo {
+        crate_path: crate_info.path,
+        commits,
+        changed_files: changed_files.into_iter().collect(),
+    })
+}
+
 pub fn check() {
     let Some(dotfiles) = dotfiles_dir() else {
         return;
@@ -83,7 +161,7 @@ pub fn check() {
         return;
     };
 
-    let mut outdated = Vec::new();
+    let mut outdated_infos = Vec::new();
     for crate_info in CRATES {
         let project_dir = dotfiles.join(crate_info.path);
         if !project_dir.join("Cargo.toml").exists() {
@@ -96,15 +174,70 @@ pub fn check() {
             .and_then(|m| m.modified().ok());
         let src_mtime = newest_mtime(&project_dir);
 
-        match (bin_mtime, src_mtime) {
-            (None, _) => outdated.push(crate_info.bin_name),
-            (Some(b), Some(s)) if s > b => outdated.push(crate_info.bin_name),
-            _ => {}
+        if let (Some(b), Some(s)) = (bin_mtime, src_mtime) {
+            if s > b {
+                if let Some(info) = get_outdated_info(crate_info, &dotfiles, b) {
+                    outdated_infos.push(info);
+                }
+            }
+        } else if bin_mtime.is_none() {
+            // Binary missing
+            let log_output = match Command::new("git")
+                .args(["log", "-1", "--format=%h %s", "--", crate_info.path])
+                .current_dir(&dotfiles)
+                .output()
+            {
+                Ok(output) => String::from_utf8_lossy(&output.stdout).to_string(),
+                _ => String::new(),
+            };
+            if let Some(space_idx) = log_output.find(' ') {
+                let hash = &log_output[..space_idx];
+                let msg = &log_output[space_idx + 1..];
+                let status_output = match Command::new("git")
+                    .args(["status", "--short", crate_info.path])
+                    .current_dir(&dotfiles)
+                    .output()
+                {
+                    Ok(output) => String::from_utf8_lossy(&output.stdout).to_string(),
+                    _ => String::new(),
+                };
+                let prefix = format!("{}/", crate_info.path);
+                let files: Vec<String> = status_output
+                    .lines()
+                    .filter(|f| !f.contains("Cargo.lock"))
+                    .map(|f| {
+                        f.strip_prefix(&prefix)
+                            .unwrap_or(f)
+                            .split_whitespace()
+                            .next()
+                            .unwrap_or(f)
+                            .to_string()
+                    })
+                    .collect();
+                if !files.is_empty() {
+                    outdated_infos.push(OutdatedInfo {
+                        crate_path: crate_info.path,
+                        commits: vec![(format!("{} (not built)", hash), msg.to_string())],
+                        changed_files: files,
+                    });
+                }
+            }
         }
     }
 
-    if !outdated.is_empty() {
-        eprintln!("dotfiles build outdated ({}), run: dotb", outdated.join(", "));
+    if !outdated_infos.is_empty() {
+        eprintln!("dotfiles build outdated");
+        for info in &outdated_infos {
+            eprintln!("{}/", info.crate_path);
+            eprintln!("└─ changed: {}", info.changed_files.join(", "));
+            eprintln!();
+            eprintln!("commits:");
+            for (hash, msg) in &info.commits {
+                eprintln!("    ✦ {} {}", hash, msg);
+            }
+            eprintln!();
+        }
+        eprintln!("run: dotb");
         std::process::exit(1);
     }
 }
