@@ -1,4 +1,4 @@
-use crate::protocol::{ExecCommand, Message, MessageLevel, ShellAction};
+use crate::protocol::{ExecCommand, Message, MessageLevel, ShellAction, CLAUDE_PROVIDER_ENV};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -89,8 +89,11 @@ pub fn run(args: &[String]) {
         env.insert("NODE_EXTRA_CA_CERTS".into(), ca.to_string_lossy().to_string());
     }
 
+    let unset_env = CLAUDE_PROVIDER_ENV.iter().map(|s| s.to_string()).collect();
+
     let action = ShellAction {
         set_env: env,
+        unset_env,
         messages,
         exec: Some(ExecCommand {
             program: "claude".into(),

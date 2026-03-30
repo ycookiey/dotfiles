@@ -137,11 +137,11 @@ pub fn generate(defs: &Definitions, dotfiles_dir: &Path) -> String {
 const APPLY_HELPER: &str = r#"function _dotcli_apply {
     param([Parameter(ValueFromPipeline)][string]$Json)
     $a = $Json | ConvertFrom-Json
-    if ($a.set_env) {
-        $a.set_env.PSObject.Properties | % { Set-Item "env:$($_.Name)" $_.Value }
-    }
     if ($a.unset_env) {
         $a.unset_env | % { Remove-Item "env:$_" -ea 0 }
+    }
+    if ($a.set_env) {
+        $a.set_env.PSObject.Properties | % { Set-Item "env:$($_.Name)" $_.Value }
     }
     if ($a.cd) { Set-Location $a.cd }
     if ($a.messages) {

@@ -1,4 +1,4 @@
-use crate::protocol::{ExecCommand, ShellAction};
+use crate::protocol::{ExecCommand, ShellAction, CLAUDE_PROVIDER_ENV};
 use std::collections::HashMap;
 
 pub fn run(args: &[String]) {
@@ -21,8 +21,11 @@ pub fn run(args: &[String]) {
     }
     claude_args.extend(rest);
 
+    let unset_env = CLAUDE_PROVIDER_ENV.iter().map(|s| s.to_string()).collect();
+
     let action = ShellAction {
         set_env: env,
+        unset_env,
         exec: Some(ExecCommand {
             program: "claude".into(),
             args: claude_args,

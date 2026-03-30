@@ -56,3 +56,15 @@ impl ShellAction {
         );
     }
 }
+
+/// Env vars set by Claude provider commands (c, cb, cg).
+/// Each command unsets all of these, then set_env overrides its own.
+pub const CLAUDE_PROVIDER_ENV: &[&str] = &[
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+    "API_TIMEOUT_MS",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "AWS_REGION",
+    "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+    "ANTHROPIC_MODEL",
+];
