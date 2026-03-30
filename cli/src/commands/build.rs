@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
 
-struct Project {
+struct Crate {
     path: &'static str,
     bin_name: &'static str,
     post: Option<fn(&Path)>,
@@ -16,13 +16,13 @@ fn post_dotcli(dotfiles_dir: &Path) {
         .status();
 }
 
-const PROJECTS: &[Project] = &[
-    Project {
+const CRATES: &[Crate] = &[
+    Crate {
         path: "cli",
         bin_name: "dotcli",
         post: Some(post_dotcli),
     },
-    Project {
+    Crate {
         path: "claude/statusline",
         bin_name: "claude-statusline",
         post: None,
@@ -30,12 +30,20 @@ const PROJECTS: &[Project] = &[
 ];
 
 fn dotfiles_dir() -> Option<std::path::PathBuf> {
+    // Try compile-time DOTFILES_DIR first
     let compiled = env!("DOTFILES_DIR");
-    let p = Path::new(compiled);
-    if p.exists() {
-        return Some(p.to_path_buf());
+    let dotfiles = Path::new(&compiled);
+    if dotfiles.exists() {
+        return Some(dotfiles.to_path_buf());
     }
-    None
+    // Fallback: find dotfiles from current exe
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| {
+            exe.ancestors()
+                .find(|dir| dir.join("definitions.toml").exists())
+                .map(|p| p.to_path_buf())
+        })
 }
 
 fn cargo_bin_dir() -> Option<PathBuf> {
@@ -76,12 +84,12 @@ pub fn check() {
     };
 
     let mut outdated = Vec::new();
-    for project in PROJECTS {
-        let project_dir = dotfiles.join(project.path);
+    for crate_info in CRATES {
+        let project_dir = dotfiles.join(crate_info.path);
         if !project_dir.join("Cargo.toml").exists() {
             continue;
         }
-        let bin = cargo_bin.join(format!("{}.exe", project.bin_name));
+        let bin = cargo_bin.join(format!("{}.exe", crate_info.bin_name));
         let bin_mtime = bin
             .metadata()
             .ok()
@@ -89,8 +97,8 @@ pub fn check() {
         let src_mtime = newest_mtime(&project_dir);
 
         match (bin_mtime, src_mtime) {
-            (None, _) => outdated.push(project.bin_name), // binary missing
-            (Some(b), Some(s)) if s > b => outdated.push(project.bin_name),
+            (None, _) => outdated.push(crate_info.bin_name),
+            (Some(b), Some(s)) if s > b => outdated.push(crate_info.bin_name),
             _ => {}
         }
     }
@@ -111,23 +119,23 @@ pub fn run() {
 
     // On Windows, a running exe can't be overwritten.
     // Build self (cli) last via cargo build, then copy over the locked binary.
-    let self_project = PROJECTS.iter().find(|p| p.path == "cli");
-    let other_projects: Vec<_> = PROJECTS.iter().filter(|p| p.path != "cli").collect();
+    let self_project = CRATES.iter().find(|c| c.path == "cli");
+    let other_projects: Vec<_> = CRATES.iter().filter(|c| c.path != "cli").collect();
 
     let mut failed = Vec::new();
 
     // Build non-self projects normally
-    for project in &other_projects {
-        if !build_project(&cargo, &dotfiles, project) {
-            failed.push(project.path);
+    for crate_info in &other_projects {
+        if !build_project(&cargo, &dotfiles, crate_info) {
+            failed.push(crate_info.path);
         }
     }
 
     // Build self: use `cargo build --release` + manual copy
-    if let Some(project) = self_project {
-        let project_dir = dotfiles.join(project.path);
+    if let Some(crate_info) = self_project {
+        let project_dir = dotfiles.join(crate_info.path);
         if project_dir.join("Cargo.toml").exists() {
-            eprint!("  build {} ... ", project.path);
+            eprint!("  build {} ... ", crate_info.path);
             let status = Command::new(&cargo)
                 .args(["build", "--release"])
                 .current_dir(&project_dir)
@@ -145,7 +153,7 @@ pub fn run() {
                         Ok(_) => {
                             let _ = std::fs::remove_file(&tmp);
                             eprintln!("ok");
-                            if let Some(post) = project.post {
+                            if let Some(post) = crate_info.post {
                                 post(&dotfiles);
                             }
                         }
@@ -153,13 +161,13 @@ pub fn run() {
                             // Restore old binary
                             let _ = std::fs::rename(&tmp, &dst);
                             eprintln!("FAILED (copy: {e})");
-                            failed.push(project.path);
+                            failed.push(crate_info.path);
                         }
                     }
                 }
                 _ => {
                     eprintln!("FAILED");
-                    failed.push(project.path);
+                    failed.push(crate_info.path);
                 }
             }
         }
@@ -174,14 +182,14 @@ pub fn run() {
     }
 }
 
-fn build_project(cargo: &str, dotfiles: &Path, project: &Project) -> bool {
-    let project_dir = dotfiles.join(project.path);
+fn build_project(cargo: &str, dotfiles: &Path, crate_info: &Crate) -> bool {
+    let project_dir = dotfiles.join(crate_info.path);
     if !project_dir.join("Cargo.toml").exists() {
-        eprintln!("  skip {} (not found)", project.path);
+        eprintln!("  skip {} (not found)", crate_info.path);
         return true;
     }
 
-    eprint!("  build {} ... ", project.path);
+    eprint!("  build {} ... ", crate_info.path);
     let status = Command::new(cargo)
         .args(["install", "--path"])
         .arg(&project_dir)
@@ -191,7 +199,7 @@ fn build_project(cargo: &str, dotfiles: &Path, project: &Project) -> bool {
     match status {
         Ok(s) if s.success() => {
             eprintln!("ok");
-            if let Some(post) = project.post {
+            if let Some(post) = crate_info.post {
                 post(dotfiles);
             }
             true

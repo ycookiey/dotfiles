@@ -75,7 +75,8 @@ pub enum Platform {
 
 impl Definitions {
     pub fn load() -> Self {
-        let toml_str = include_str!("../definitions.toml");
-        toml::from_str(toml_str).expect("Failed to parse embedded definitions.toml")
+        let toml_str = std::fs::read_to_string("definitions.toml")
+            .unwrap_or_else(|_| include_str!("../definitions.toml").to_string());
+        toml::from_str(&toml_str).expect("Failed to parse definitions.toml")
     }
 }
