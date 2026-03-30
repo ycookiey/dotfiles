@@ -21,5 +21,18 @@
     "atlassian@claude-plugins-official": true,
     "rust-analyzer-lsp@claude-plugins-official": true
   },
-  "language": "日本語"
+  "language": "日本語",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/check-dirty.sh\""
+          }
+        ]
+      }
+    ]
+  }
 }
