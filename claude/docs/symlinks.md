@@ -23,6 +23,7 @@ setup.ps1 で管理。追加・変更は setup.ps1 の mkl で行う（直接コ
 | ~/.claude/CLAUDE.md | dotfiles/claude/CLAUDE.md |
 | ~/.claude/settings.json | マージ型（dotfiles/claude/settings.json をテンプレートとしてマージ） |
 | ~/.claude/statusline.py | dotfiles/claude/statusline.py |
+| ~/.claude/statusline-rules.toml | dotfiles/claude/statusline/statusline-models.toml |
 | ~/.claude/rules/ | dotfiles/claude/rules/ |
 | ~/.claude/docs/ | dotfiles/claude/docs/ |
 | ~/.claude/skills/ | dotfiles/claude/skills/ |

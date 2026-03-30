@@ -71,6 +71,7 @@ try {
     mkl "$HOME\.claude\CLAUDE.md" "$ScriptDir\claude\CLAUDE.md"
     mkl "$HOME\.claude\rules" "$ScriptDir\claude\rules"
     mkl "$HOME\.claude\docs" "$ScriptDir\claude\docs"
+    mkl "$HOME\.claude\statusline-rules.toml" "$ScriptDir\claude\statusline\statusline-models.toml"
     mkd "$HOME\.claude\skills"
 
     # File association: Neovim (WezTerm)
