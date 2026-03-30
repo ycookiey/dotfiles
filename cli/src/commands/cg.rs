@@ -33,6 +33,9 @@ pub fn run(args: &[String]) {
         "https://api.z.ai/api/anthropic".into(),
     );
     env.insert("API_TIMEOUT_MS".into(), "3000000".into());
+    env.insert("ANTHROPIC_DEFAULT_OPUS_MODEL".into(), "glm-5.1".into());
+    env.insert("ANTHROPIC_DEFAULT_SONNET_MODEL".into(), "glm-4.7".into());
+    env.insert("ANTHROPIC_DEFAULT_HAIKU_MODEL".into(), "glm-4.5-air".into());
 
     let mut claude_args: Vec<String> = Vec::new();
     let rest: Vec<String>;
