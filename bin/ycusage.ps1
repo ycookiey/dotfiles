@@ -1,10 +1,6 @@
 #!/usr/bin/env pwsh
-# ycusage — 全アカウントのClaude Code使用状況一覧
+# ycusage — 全アカウントのClaude Code使用状況一覧（statuslineキャッシュ版）
 . "$PSScriptRoot\..\pwsh\aliases.ps1"
-
-$script:LogFile = "$HOME\.claude\ycusage.log"
-
-function Log($msg) { $msg | ac "$HOME\.claude\ycusage.log" -Enc utf8 }
 
 function Bar([int]$pct, [int]$w = 10) {
     $f = [Math]::Floor($pct * $w / 100)
@@ -20,7 +16,14 @@ function Stat([int]$pct) {
 
 function Get-RemainingSeconds([object]$resetsAt) {
     if (!$resetsAt) { return $null }
-    try { [Math]::Max(0, ([DateTimeOffset]::Parse([string]$resetsAt) - [DateTimeOffset]::UtcNow).TotalSeconds) } catch { $null }
+    try {
+        $v = if ($resetsAt -is [long] -or $resetsAt -is [int] -or $resetsAt -is [double]) {
+            [DateTimeOffset]::FromUnixTimeSeconds([long]$resetsAt)
+        } else {
+            [DateTimeOffset]::Parse([string]$resetsAt)
+        }
+        [Math]::Max(0, ($v - [DateTimeOffset]::UtcNow).TotalSeconds)
+    } catch { $null }
 }
 
 function Format-Elapsed([double]$total, [double]$remaining) {
@@ -92,93 +95,70 @@ function Get-Recommended($accs) {
     $best
 }
 
-function Ensure-FreshToken([string]$credFile) {
-    $accNum = [int]([IO.Path]::GetFileName((Split-Path $credFile).TrimEnd([char[]]"/\")) -replace '^\.claude-', '')
-    try {
-        $cred = gc $credFile -Raw -ea 0 | ConvertFrom-Json -ea 0
-        $oauth = $cred.claudeAiOauth
-        if (!$oauth -or !$oauth.refreshToken) { Log "[Acc $accNum] No refreshToken"; return }
-        $expiresIn = [long]$oauth.expiresAt - [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-        if ($expiresIn -gt 300000) { Log "[Acc $accNum] Token fresh (${expiresIn}ms)"; return }
-        Log "[Acc $accNum] Refreshing (${expiresIn}ms left)"
-        $body = @{ grant_type = "refresh_token"; refresh_token = $oauth.refreshToken; client_id = "9d1c250a-e61b-44d9-88ed-5944d1962f5e" } | ConvertTo-Json
-        $resp = irm "https://console.anthropic.com/v1/oauth/token" -Method Post -Body $body -ContentType "application/json" -TimeoutSec 5 -NoProxy -ea Stop
-        if (!$resp.access_token) { Log "[Acc $accNum] Refresh failed: no access_token"; return }
-        $oauth.accessToken = $resp.access_token
-        if ($resp.refresh_token) { $oauth.refreshToken = $resp.refresh_token }
-        if ($resp.expires_in) { $oauth.expiresAt = [DateTimeOffset]::UtcNow.AddSeconds([long]$resp.expires_in).ToUnixTimeMilliseconds() }
-        $cred | ConvertTo-Json -Depth 10 | Set-Content $credFile -Enc utf8NoBOM
-        Log "[Acc $accNum] Token refreshed"
-    } catch {
-        Log "[Acc $accNum] Refresh error: $($_.Exception.Message)"
-    }
-}
+# statusline キャッシュ (.rate-limits.json) から usage を読み取る
+# resets_at が過去ならウィンドウはリセット済み → utilization = 0
+function Get-UsageFromCache([string]$credDir) {
+    $cacheFile = "$credDir\.rate-limits.json"
+    if (!(tp $cacheFile)) { return @{ Err = $true; Reason = 'no_cache' } }
+    $c = gc $cacheFile -Raw -ea 0 | ConvertFrom-Json -ea 0
+    if (!$c -or !$c.rate_limits) { return @{ Err = $true; Reason = 'no_cache' } }
+    $rl = $c.rate_limits
+    $now = [DateTimeOffset]::UtcNow
 
-function Get-Usage([string]$credFile) {
-    $accNum = [int]([IO.Path]::GetFileName((Split-Path $credFile).TrimEnd([char[]]"/\")) -replace '^\.claude-', '')
-    $oauth = (gc $credFile -Raw -ea 0 | ConvertFrom-Json -ea 0).claudeAiOauth
-    if (!$oauth -or !$oauth.accessToken) { return @{ Err = $true; Reason = 'no_token' } }
-    Ensure-FreshToken $credFile
-    # Re-read after refresh (Ensure-FreshToken updates the file, not $oauth)
-    $oauth = (gc $credFile -Raw -ea 0 | ConvertFrom-Json -ea 0).claudeAiOauth
-    try {
-        $h = @{ Authorization = "Bearer $($oauth.accessToken)"; "anthropic-beta" = "oauth-2025-04-20" }
-        $u = irm "https://api.anthropic.com/api/oauth/usage" -Headers $h -TimeoutSec 8 -NoProxy -ea Stop
-        Log "[Acc $accNum] OK"
-        $r5 = Get-RemainingSeconds $u.five_hour.resets_at
-        $r7 = Get-RemainingSeconds $u.seven_day.resets_at
-        @{
-            Err = $false
-            P5  = [int][Math]::Floor([double]($u.five_hour.utilization ?? 0))
-            E5  = $null -ne $r5 ? (Format-Elapsed 18000 $r5) : 0
-            L5  = Format-5hLeft $r5
-            R5  = $r5
-            P7  = [int][Math]::Floor([double]($u.seven_day.utilization ?? 0))
-            E7  = $null -ne $r7 ? (Format-Elapsed 604800 $r7) : 0
-            L7  = Format-7dLeft $r7
-            R7  = $r7
-        }
-    } catch {
-        $msg = $_.Exception.Message
-        Log "[Acc $accNum] Error: $msg"
-        $reason = if ($msg -match 'subscription.expired|402') { 'no_subscription' }
-                  elseif (!$oauth.subscriptionType) { 'no_subscription' }
-                  else { 'auth' }
-        @{ Err = $true; Reason = $reason }
+    # 5h window
+    $r5 = Get-RemainingSeconds $rl.five_hour.resets_at
+    $p5raw = [double]($rl.five_hour.used_percentage ?? 0)
+    # resets_at が過去 → リセット済み
+    $p5 = ($null -ne $r5 -and $r5 -le 0) ? 0 : [int][Math]::Floor($p5raw)
+
+    # 7d window
+    $r7 = Get-RemainingSeconds $rl.seven_day.resets_at
+    $p7raw = [double]($rl.seven_day.used_percentage ?? 0)
+    $p7 = ($null -ne $r7 -and $r7 -le 0) ? 0 : [int][Math]::Floor($p7raw)
+
+    # resets_at が過去なら remaining = null（表示上 "-"）
+    $r5disp = ($null -ne $r5 -and $r5 -gt 0) ? $r5 : $null
+    $r7disp = ($null -ne $r7 -and $r7 -gt 0) ? $r7 : $null
+
+    @{
+        Err = $false
+        P5  = $p5
+        E5  = $null -ne $r5disp ? (Format-Elapsed 18000 $r5disp) : 0
+        L5  = Format-5hLeft $r5disp
+        R5  = $r5disp
+        P7  = $p7
+        E7  = $null -ne $r7disp ? (Format-Elapsed 604800 $r7disp) : 0
+        L7  = Format-7dLeft $r7disp
+        R7  = $r7disp
+        CachedAt = [long]($c.cached_at ?? 0)
     }
 }
 
 # --- Main ---
-"[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] ycusage start" | Set-Content $script:LogFile -Enc utf8
+$accDirs = gci "$HOME\.claude-*" -Directory -ea 0 |
+    ? { $_.Name -match "^\.claude-(\d+)$" }
 
-$credFiles = gci "$HOME\.claude-*" -Directory -ea 0 |
-    ? { $_.Name -match "^\.claude-(\d+)$" } |
-    % { "$($_.FullName)\.credentials.json" } |
-    ? { tp $_ }
+$accounts = @($accDirs | % {
+    $n = [int]($_.Name -replace '^\.claude-', '')
+    $dir = $_.FullName
 
-# ForEach-Object -Parallel は関数スコープを引き継がないため文字列として渡す
-$fnNames = 'Ensure-FreshToken','Get-RemainingSeconds','Format-Elapsed','Format-5hLeft','Format-7dLeft','Get-Usage','Log'
-$fnStrs = @{}; $fnNames | % { $fnStrs[$_] = (gi "function:$_").ScriptBlock.ToString() }
-
-$accounts = @($credFiles | ForEach-Object -Parallel {
-    $fns = $using:fnStrs
-    $fns.Keys | % { Set-Item "function:$_" ([scriptblock]::Create($fns[$_])) }
-    $n = [int]([IO.Path]::GetFileName((Split-Path $_).TrimEnd([char[]]"/\")) -replace '^\.claude-', '')
-    @{ N = $n; U = Get-Usage $_ }
-} -ThrottleLimit 10 | sort { $_.N })
-
-# --- Re-auth ---
-$authFailed = @($accounts | ? { $_.U.Err -and $_.U.Reason -eq 'auth' })
-if ($authFailed) {
-    $names = ($authFailed | % { "Acc $($_.N)" }) -join ', '
-    wh "Re-auth required: $names" -ForegroundColor DarkYellow
-    foreach ($a in $authFailed) {
-        $n = $a.N
-        if (& "$PSScriptRoot\claude-reauth.ps1" -AccNum $n) {
-            $a.U = Get-Usage "$HOME\.claude-$n\.credentials.json"
-        }
+    # サブスク無し判定
+    if (tp "$dir\.no-subscription") {
+        return @{ N = $n; U = @{ Err = $true; Reason = 'no_subscription' } }
     }
-}
+    $credFile = "$dir\.credentials.json"
+    if (!(tp $credFile)) {
+        return @{ N = $n; U = @{ Err = $true; Reason = 'no_token' } }
+    }
+    $oauth = (gc $credFile -Raw -ea 0 | ConvertFrom-Json -ea 0).claudeAiOauth
+    if (!$oauth -or !$oauth.subscriptionType) {
+        return @{ N = $n; U = @{ Err = $true; Reason = 'no_subscription' } }
+    }
+
+    # キャッシュから読み取り
+    $u = Get-UsageFromCache $dir
+    @{ N = $n; U = $u }
+} | sort { $_.N })
 
 if (!$accounts) { wh "No accounts found."; return }
 
@@ -197,6 +177,8 @@ foreach ($a in $accounts) {
     if ($u.Err) {
         if ($u.Reason -in 'subscription_expired', 'no_subscription') {
             wh "  --  (no subscription)" -ForegroundColor DarkGray
+        } elseif ($u.Reason -eq 'no_cache') {
+            wh "  --  (no data - use this account once to populate)" -ForegroundColor DarkGray
         } else {
             wh "  --  (auth failed - run " -NoNewline -ForegroundColor DarkGray
             wh "c $n" -ForegroundColor Cyan -NoNewline
@@ -205,13 +187,24 @@ foreach ($a in $accounts) {
         continue
     }
 
+    # キャッシュ鮮度表示
+    $stale = ""
+    if ($u.CachedAt) {
+        $ago = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - $u.CachedAt
+        if ($ago -gt 3600) {
+            $hAgo = [int][Math]::Floor($ago / 3600)
+            $stale = " ({0}h ago)" -f $hAgo
+        }
+    }
+
     $l5 = "$($u.L5)"; $l7 = "$($u.L7)"
     $timeW = 7
     $pad = " " * ($l5.PadRight($timeW).Length + 2)
 
     wh "  " -NoNewline; wh "5h " -ForegroundColor $lc -NoNewline
     wh "$(Stat $u.P5)$pad" -NoNewline; wh $sep -NoNewline
-    wh "7d " -ForegroundColor $lc -NoNewline; wh (Stat $u.P7)
+    wh "7d " -ForegroundColor $lc -NoNewline; wh "$(Stat $u.P7)" -NoNewline
+    if ($stale) { wh $stale -ForegroundColor DarkGray } else { wh "" }
 
     wh "  " -NoNewline; wh "5t " -ForegroundColor $lc -NoNewline
     wh "$(Stat $u.E5)  " -NoNewline; wh $l5.PadRight($timeW) -ForegroundColor Cyan -NoNewline
