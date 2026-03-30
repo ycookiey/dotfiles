@@ -46,6 +46,10 @@ pub fn run(args: &[String]) {
 
     let action = ShellAction {
         set_env: env,
+        messages: vec![Message {
+            text: "Claude GLM".into(),
+            level: MessageLevel::Info,
+        }],
         exec: Some(ExecCommand {
             program: "claude".into(),
             args: claude_args,

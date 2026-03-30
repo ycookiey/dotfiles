@@ -60,19 +60,21 @@ pub fn run(args: &[String]) {
         );
         let _ = fs::write(&last_file, n);
 
-        let label = if !shifted {
-            // Show which account was picked
+    }
+
+    let mut messages: Vec<Message> = Vec::new();
+    if let Some(ref n) = account {
+        if !shifted {
             let recommended = is_recommended(&d, n);
-            if recommended {
-                format!("Acc {n} (recommended)")
+            let text = if recommended {
+                format!("Claude Acc {n} (recommended)")
             } else {
-                format!("Acc {n}")
-            }
-        } else {
-            String::new()
-        };
-        if !label.is_empty() {
-            eprint!("{label}\n");
+                format!("Claude Acc {n}")
+            };
+            messages.push(Message {
+                text,
+                level: MessageLevel::Info,
+            });
         }
     }
 
@@ -87,9 +89,9 @@ pub fn run(args: &[String]) {
         env.insert("NODE_EXTRA_CA_CERTS".into(), ca.to_string_lossy().to_string());
     }
 
-    // Output env + args as ShellAction for shell to apply, then shell execs claude
     let action = ShellAction {
         set_env: env,
+        messages,
         exec: Some(ExecCommand {
             program: "claude".into(),
             args: claude_args,
