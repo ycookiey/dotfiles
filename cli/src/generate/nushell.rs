@@ -323,11 +323,11 @@ mod tests {
 
 const APPLY_HELPER: &str = r#"def --env _dotcli_apply [] {
     let action = ($in | from json)
+    if ($action | get -o unset_env | is-not-empty) {
+        for k in $action.unset_env { hide-env -i $k }
+    }
     if ($action | get -o set_env | is-not-empty) {
         load-env $action.set_env
-    }
-    if ($action | get -o unset_env | is-not-empty) {
-        for k in $action.unset_env { hide-env $k }
     }
     if ($action | get -o cd | is-not-empty) { cd $action.cd }
     if ($action | get -o messages | is-not-empty) {
