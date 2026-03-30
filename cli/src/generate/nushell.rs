@@ -331,7 +331,10 @@ const APPLY_HELPER: &str = r#"def --env _dotcli_apply [] {
     }
     if ($action | get -o cd | is-not-empty) { cd $action.cd }
     if ($action | get -o messages | is-not-empty) {
-        $action.messages | each { |m| print $m.text } | ignore
+        $action.messages | each { |m|
+            let color = match $m.level { "warn" => "yellow", "error" => "red", _ => "green" }
+            print $"(ansi $color)($m.text)(ansi reset)"
+        } | ignore
     }
     if ($action | get -o exec | is-not-empty) {
         ^($action.exec.program) ...($action.exec.args)
