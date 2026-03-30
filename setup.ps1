@@ -113,7 +113,7 @@ try {
     }
 
     # Claude マルチアカウント
-    $claudeExclude = '.credentials*', '.statusline_debug.json', 'settings.json'
+    $claudeExclude = '.credentials*', '.statusline_debug.json', 'settings.json', '.rate-limits.json'
     foreach ($dir in gci "$HOME\.claude-*" -Dir -Force) {
         gci "$HOME\.claude" -Force | ? {
             $name = $_.Name
