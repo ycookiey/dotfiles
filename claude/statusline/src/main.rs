@@ -236,6 +236,11 @@ fn fmt_color(rgb: &str) -> String {
     format!("\x1b[38;2;{}m", rgb)
 }
 
+/// Badge (1-glyph icon): trailing space to prevent glyph overlap in terminals
+fn fmt_badge(display: &str, color: &str) -> String {
+    format!("{}{display}{RST} ", fmt_color(color))
+}
+
 fn model_short_with_rules(display_name: &str, rules: &[ModelRule]) -> String {
     if let Some(rule) = match_model_rule(display_name, rules) {
         let color = fmt_color(&rule.color);
@@ -258,10 +263,7 @@ fn detect_provider() -> Option<String> {
 }
 
 fn provider_badge_with_rules(name: &str, rules: &[ProviderRule]) -> Option<String> {
-    match_provider_rule(name, rules).map(|rule| {
-        let color = fmt_color(&rule.color);
-        format!("{color}{}{RST}", rule.display)
-    })
+    match_provider_rule(name, rules).map(|rule| fmt_badge(&rule.display, &rule.color))
 }
 
 // ========================================
