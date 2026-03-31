@@ -6,7 +6,7 @@ $LogFile = "$HOME\.claude\setup.log"
 
 $secrets = @(
     @{ Name = 'GLM API Key'; Dest = "$HOME\.claude\.glm-api-key" }
-    # TODO: 必要に応じてエントリを追加
+    @{ Name = 'Tavily API Key'; Dest = "$HOME\.claude\.tavily-api-key" }
 )
 
 # 取得が必要なシークレットがあるか確認
