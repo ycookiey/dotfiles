@@ -66,8 +66,7 @@ if (Get-Command winget -ea 0) {
 }
 
 # --- MCP servers ---
-$claude = Get-Command claude -ea 0
-if (!$claude) { return }
+if (!(Get-Command node -ea 0)) { return }
 
 $mcpFile = "$Dot\claude\mcp-servers.json"
 if (![IO.File]::Exists($mcpFile)) { return }
@@ -78,19 +77,56 @@ $vars = @{
     '{LOCALAPPDATA}' = $env:LOCALAPPDATA
     '{APPDATA}'      = $env:APPDATA
 }
+$tavilyFile = "$HOME\.claude\.tavily-api-key"
+if ([IO.File]::Exists($tavilyFile)) {
+    $vars['{TAVILY_API_KEY}'] = [IO.File]::ReadAllText($tavilyFile).Trim()
+}
 
 $raw = [IO.File]::ReadAllText($mcpFile)
 foreach ($kv in $vars.GetEnumerator()) { $raw = $raw.Replace($kv.Key, $kv.Value.Replace('\', '/')) }
 $servers = $raw | ConvertFrom-Json
 
+$resolved = [ordered]@{}
 foreach ($name in $servers.PSObject.Properties.Name) {
     $def = $servers.$name
+    $json = $def | ConvertTo-Json -Depth 5 -Compress
+    if ($json -match '\{[A-Z_]+\}') { continue }
     $cmd = $def.command
     if (!(Get-Command $cmd -ea 0) -and ![IO.File]::Exists($cmd)) { continue }
+    $resolved[$name] = $def
+}
+if ($resolved.Count -eq 0) { return }
 
-    $json = $def | ConvertTo-Json -Depth 5 -Compress
-    $null = & $claude mcp remove -s user $name 2>&1
-    $null = & $claude mcp add-json -s user $name $json 2>&1
-    $synced = $true
+$dirs = [System.Collections.Generic.List[string]]::new()
+if ([IO.File]::Exists("$HOME\.claude\.claude.json")) { $dirs.Add("$HOME\.claude") }
+foreach ($d in Get-ChildItem "$HOME\.claude-*" -Dir -Force -ea 0) {
+    if ([IO.File]::Exists("$d\.claude.json")) { $dirs.Add($d.FullName) }
+}
+if ($dirs.Count -eq 0) { return }
+
+$tmpPayload = "$env:TEMP\mcp-sync-$PID.json"
+$tmpScript  = "$env:TEMP\mcp-sync-$PID.js"
+try {
+    $payloadJson = @{ servers = $resolved; dirs = @($dirs) } | ConvertTo-Json -Depth 10
+    [IO.File]::WriteAllText($tmpPayload, $payloadJson)
+    $js = @'
+const fs=require("fs"),path=require("path");
+const p=JSON.parse(fs.readFileSync(process.argv[2],"utf8"));
+for(const dir of p.dirs){
+const file=path.join(dir,".claude.json");
+try{
+const data=JSON.parse(fs.readFileSync(file,"utf8"));
+if(JSON.stringify(data.mcpServers||{})!==JSON.stringify(p.servers)){
+data.mcpServers=p.servers;
+fs.writeFileSync(file,JSON.stringify(data,null,2));
+}
+}catch{}
+}
+'@
+    [IO.File]::WriteAllText($tmpScript, $js)
+    $null = node $tmpScript $tmpPayload 2>&1
+    if ($LASTEXITCODE -eq 0) { $synced = $true }
+} finally {
+    Remove-Item $tmpPayload, $tmpScript -ea 0
 }
 if ($synced) { $true }

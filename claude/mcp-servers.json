@@ -1,4 +1,11 @@
 {
+  "tavily": {
+    "command": "npx",
+    "args": ["-y", "tavily-mcp@latest"],
+    "env": {
+      "TAVILY_API_KEY": "{TAVILY_API_KEY}"
+    }
+  },
   "gtr": {
     "command": "node",
     "args": ["{PROJECTS}/gtr-mcp-server/build/index.js"],
