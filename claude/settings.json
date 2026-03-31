@@ -22,6 +22,7 @@
     "rust-analyzer-lsp@claude-plugins-official": true
   },
   "language": "日本語",
+  "cleanupPeriodDays": 99999,
   "hooks": {
     "PreToolUse": [
       {
