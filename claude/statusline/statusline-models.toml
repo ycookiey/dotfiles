@@ -27,3 +27,13 @@ color = "180,130,100"
 name = ["Haiku 4.5 (1M context)"]
 display = "🅷 4.5⁺"
 color = "120,180,120"
+
+[[model]]
+name = ["glm-5.1", "glm-5.1[1m]"]
+display = "5.1"
+color = "100,150,255"
+
+[[provider]]
+name = ["z.ai"]
+display = "🅶"
+color = "100,150,255"
