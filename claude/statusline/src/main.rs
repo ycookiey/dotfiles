@@ -1,5 +1,6 @@
 // Claude Code statusline: 2-line, 3-column with usage info
 use serde::Deserialize;
+use serde::Serialize;
 use std::io::{self, Read};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{env, fmt::Write};
@@ -61,13 +62,13 @@ struct Cost {
     total_lines_removed: u64,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Serialize, Clone, Default)]
 struct RateLimits {
     five_hour: Option<Window>,
     seven_day: Option<Window>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Serialize, Clone, Default)]
 struct Window {
     used_percentage: Option<f64>,
     resets_at: Option<serde_json::Value>,
@@ -181,6 +182,18 @@ struct ModelRule {
 struct RulesFile {
     #[serde(default)]
     model: Vec<ModelRule>,
+    #[serde(default)]
+    provider: Vec<ProviderRule>,
+}
+
+#[derive(Deserialize, Default, Clone)]
+struct ProviderRule {
+    #[serde(default)]
+    name: Vec<String>,
+    #[serde(default)]
+    display: String,
+    #[serde(default)]
+    color: String,
 }
 
 // ========================================
@@ -193,7 +206,12 @@ fn match_model_rule<'a>(model_name: &'a str, rules: &'a [ModelRule]) -> Option<&
     })
 }
 
-fn load_rules() -> Vec<ModelRule> {
+struct LoadedRules {
+    model: Vec<ModelRule>,
+    provider: Vec<ProviderRule>,
+}
+
+fn load_rules() -> LoadedRules {
     let dir = env::var("CLAUDE_CONFIG_DIR").unwrap_or_else(|_| {
         env::var("USERPROFILE")
             .or_else(|_| env::var("HOME"))
@@ -203,12 +221,15 @@ fn load_rules() -> Vec<ModelRule> {
     let rules_path = format!("{dir}/statusline-rules.toml");
     let content = std::fs::read_to_string(&rules_path)
         .unwrap_or_else(|_| include_str!("../statusline-models.toml").to_string());
-    toml::from_str::<RulesFile>(&content)
+    let parsed = toml::from_str::<RulesFile>(&content)
         .unwrap_or_else(|e| {
             eprintln!("Failed to parse statusline rules: {e}");
             RulesFile::default()
-        })
-        .model
+        });
+    LoadedRules {
+        model: parsed.model,
+        provider: parsed.provider,
+    }
 }
 
 fn fmt_color(rgb: &str) -> String {
@@ -223,6 +244,169 @@ fn model_short_with_rules(display_name: &str, rules: &[ModelRule]) -> String {
         // 未知モデル
         format!("\x1b[38;2;150;150;150m❓ {display_name}\x1b[0m")
     }
+}
+
+fn match_provider_rule<'a>(name: &str, rules: &'a [ProviderRule]) -> Option<&'a ProviderRule> {
+    rules.iter().find(|r| r.name.iter().any(|n| n.eq_ignore_ascii_case(name)))
+}
+
+fn detect_provider() -> Option<String> {
+    env::var("ANTHROPIC_BASE_URL")
+        .ok()
+        .filter(|url| url.to_lowercase().contains("z.ai"))
+        .map(|_| "z.ai".into())
+}
+
+fn provider_badge_with_rules(name: &str, rules: &[ProviderRule]) -> Option<String> {
+    match_provider_rule(name, rules).map(|rule| {
+        let color = fmt_color(&rule.color);
+        format!("{color}{}{RST}", rule.display)
+    })
+}
+
+// ========================================
+// GLM Quota API
+// ========================================
+
+const CACHE_TTL_SECONDS: u64 = 60;
+
+#[derive(Deserialize, Serialize, Default)]
+struct CachedRateLimits {
+    cached_at: u64,
+    provider: Option<String>,
+    rate_limits: RateLimits,
+}
+
+fn get_glm_rate_limits() -> RateLimits {
+    let dir = env::var("CLAUDE_CONFIG_DIR").unwrap_or_else(|_| {
+        env::var("USERPROFILE")
+            .or_else(|_| env::var("HOME"))
+            .map(|h| format!("{h}/.claude"))
+            .unwrap_or_default()
+    });
+    if dir.is_empty() {
+        return RateLimits::default();
+    }
+    let cache_path = format!("{dir}/.rate-limits.json");
+
+    let now = now_unix() as u64;
+
+    // Read cache without provider filter (will check after parsing)
+    let parsed_cache: Option<CachedRateLimits> = std::fs::read_to_string(&cache_path)
+        .ok()
+        .and_then(|c| serde_json::from_str(&c).ok());
+
+    // Check if cache is fresh AND is from z.ai
+    if let Some(ref cached_data) = parsed_cache {
+        let age = now.saturating_sub(cached_data.cached_at);
+        let is_zai = cached_data.provider.as_deref() == Some("z.ai");
+        if age < CACHE_TTL_SECONDS && is_zai {
+            return cached_data.rate_limits.clone();
+        }
+    }
+
+    // Fetch from GLM API
+    let api_key = match env::var("ANTHROPIC_AUTH_TOKEN").ok() {
+        Some(k) => k,
+        None => {
+            // Fallback: read from ~/.claude/.glm-api-key
+            let key_path = format!("{}/.glm-api-key",
+                env::var("HOME").unwrap_or_else(|_| env::var("USERPROFILE").unwrap_or_default()));
+            match std::fs::read_to_string(&key_path) {
+                Ok(k) => k.trim().to_string(),
+                Err(_) => return RateLimits::default(),
+            }
+        }
+    };
+
+    let resp = match ureq::get("https://api.z.ai/api/monitor/usage/quota/limit")
+        .set("Authorization", &api_key)
+        .timeout(std::time::Duration::from_secs(3))
+        .call() {
+        Ok(r) => r,
+        Err(e) => {
+            // API failed: use stale cache if available
+            eprintln!("GLM API request failed: {e}");
+            return parsed_cache.unwrap_or_default().rate_limits;
+        }
+    };
+
+    let body: serde_json::Value = match resp.into_string() {
+        Ok(s) => match serde_json::from_str(&s) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("Failed to parse GLM JSON: {e}, body: {s}");
+                return parsed_cache.unwrap_or_default().rate_limits;
+            }
+        },
+        Err(e) => {
+            eprintln!("Failed to read GLM response body: {e}");
+            return parsed_cache.unwrap_or_default().rate_limits;
+        }
+    };
+
+    let limits_vec: Vec<serde_json::Value> = body.get("data")
+        .and_then(|d| d.get("limits"))
+        .and_then(|l| l.as_array())
+        .map(|v| v.to_vec())
+        .unwrap_or_default();
+    let limits = limits_vec.as_slice();
+
+    let mut five_hour_pct: f64 = 0.0;
+    let mut five_hour_reset: Option<serde_json::Value> = None;
+    let mut seven_day_pct: f64 = 0.0;
+    let mut seven_day_reset: Option<serde_json::Value> = None;
+
+    for limit in limits {
+        let limit_type = limit.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        if limit_type != "TOKENS_LIMIT" {
+            continue;
+        }
+        let unit = limit.get("unit").and_then(|u| u.as_i64()).unwrap_or(0);
+        let number = limit.get("number").and_then(|n| n.as_i64()).unwrap_or(0);
+        let pct = limit.get("percentage").and_then(|p| p.as_f64()).unwrap_or(0.0);
+        let reset_ms = limit.get("nextResetTime").and_then(|r| r.as_u64());
+
+        // unit=3, number=5 → 5h window
+        if unit == 3 && number == 5 {
+            five_hour_pct = pct;
+            if let Some(ms) = reset_ms {
+                five_hour_reset = Some(serde_json::json!(ms / 1000));
+            }
+        }
+        // unit=6, number=1 → weekly window
+        if unit == 6 && number == 1 {
+            seven_day_pct = pct;
+            if let Some(ms) = reset_ms {
+                seven_day_reset = Some(serde_json::json!(ms / 1000));
+            }
+        }
+    }
+
+    eprintln!("GLM parsed: five_hour_pct={}, seven_day_pct={}, five_hour_reset={:?}, seven_day_reset={:?}",
+        five_hour_pct, seven_day_pct, five_hour_reset, seven_day_reset);
+
+    let rl = RateLimits {
+        five_hour: Some(Window {
+            used_percentage: Some(five_hour_pct),
+            resets_at: five_hour_reset,
+        }),
+        seven_day: Some(Window {
+            used_percentage: Some(seven_day_pct),
+            resets_at: seven_day_reset,
+        }),
+    };
+
+    // Write to cache
+    let cache_data = CachedRateLimits {
+        cached_at: now,
+        provider: Some("z.ai".into()),
+        rate_limits: rl.clone(),
+    };
+    let json_str = serde_json::to_string(&cache_data).unwrap_or_default();
+    let _ = std::fs::write(&cache_path, json_str);
+
+    rl
 }
 
 fn acc_from_env() -> u32 {
@@ -333,15 +517,24 @@ fn main() {
     let _ = io::stdin().read_to_string(&mut input_str);
     let j: Input = serde_json::from_str(&input_str).unwrap_or_default();
 
-    let rules = load_rules();
+    let LoadedRules { model: rules, provider: provider_rules } = load_rules();
 
-    cache_rate_limits(&input_str);
+    let provider = detect_provider();
+    let is_glm = provider.is_some();
+    let provider_badge = provider.as_ref().and_then(|p| provider_badge_with_rules(p, &provider_rules))
+        .unwrap_or_default();
 
-    let acc = acc_from_env();
-    let has_rl = j.rate_limits.is_some();
+    // Rate limits: GLM or Anthropic
+    let rate_limits = if is_glm {
+        Some(get_glm_rate_limits())
+    } else {
+        cache_rate_limits(&input_str);
+        j.rate_limits.clone()
+    };
+    let has_rl = rate_limits.is_some();
 
     // Rate limits
-    let (usage5h, elapsed5h, usage7d, elapsed7d) = if let Some(ref rl) = j.rate_limits {
+    let (usage5h, elapsed5h, usage7d, elapsed7d) = if let Some(ref rl) = rate_limits {
         let u5 = rl.five_hour.as_ref().and_then(|w| w.used_percentage).unwrap_or(0.0).floor() as i32;
         let e5 = rl.five_hour.as_ref().map(|w| elapsed_pct(&w.resets_at, FIVE_HOURS)).unwrap_or(0);
         let u7 = rl.seven_day.as_ref().and_then(|w| w.used_percentage).unwrap_or(0.0).floor() as i32;
@@ -362,6 +555,7 @@ fn main() {
             .unwrap_or_else(|| "?".into())
     };
     let model = model_short_with_rules(&model_raw, &rules);
+    let acc = acc_from_env();
     let acc_str = if acc > 0 && (acc as usize) <= ACC_ICONS.len() {
         ACC_ICONS[(acc - 1) as usize].to_string()
     } else {
@@ -398,7 +592,7 @@ fn main() {
     // Line 1: model {gap} $cost | +add | -sub
     // Line 2: cx_stat           | ▼in  | ▲out
     // Gap fills so that $cost right edge = cx_stat right edge
-    let model_part = format!("{model}{acc_str}");
+    let model_part = format!("{provider_badge}{model}{acc_str}");
     let cost_part = format!("{YELLOW}${usd:.1}{RST}");
     let model_w = display_width(&model_part);
     let cost_w = display_width(&cost_part);
