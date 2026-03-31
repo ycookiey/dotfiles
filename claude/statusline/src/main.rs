@@ -289,7 +289,7 @@ fn get_glm_rate_limits() -> RateLimits {
     if dir.is_empty() {
         return RateLimits::default();
     }
-    let cache_path = format!("{dir}/.rate-limits.json");
+    let cache_path = format!("{dir}/.glm-rate-limits.json");
 
     let now = now_unix() as u64;
 
@@ -311,9 +311,8 @@ fn get_glm_rate_limits() -> RateLimits {
     let api_key = match env::var("ANTHROPIC_AUTH_TOKEN").ok() {
         Some(k) => k,
         None => {
-            // Fallback: read from ~/.claude/.glm-api-key
-            let key_path = format!("{}/.glm-api-key",
-                env::var("HOME").unwrap_or_else(|_| env::var("USERPROFILE").unwrap_or_default()));
+            // Fallback: read from ~/.claude/.glm-api-key (same resolved dir as cache)
+            let key_path = format!("{dir}/.glm-api-key");
             match std::fs::read_to_string(&key_path) {
                 Ok(k) => k.trim().to_string(),
                 Err(_) => return RateLimits::default(),
