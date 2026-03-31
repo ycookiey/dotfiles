@@ -97,8 +97,8 @@ function Get-Recommended($accs) {
 
 # statusline キャッシュ (.rate-limits.json) から usage を読み取る
 # resets_at が過去ならウィンドウはリセット済み → utilization = 0
-function Get-UsageFromCache([string]$credDir) {
-    $cacheFile = "$credDir\.rate-limits.json"
+function Get-UsageFromCache([string]$credDir, [string]$filePath) {
+    $cacheFile = $filePath ? $filePath : "$credDir\.rate-limits.json"
     if (!(tp $cacheFile)) { return @{ Err = $true; Reason = 'no_cache' } }
     $c = gc $cacheFile -Raw -ea 0 | ConvertFrom-Json -ea 0
     if (!$c -or !$c.rate_limits) { return @{ Err = $true; Reason = 'no_cache' } }
@@ -210,6 +210,38 @@ foreach ($a in $accounts) {
     wh "$(Stat $u.E5)  " -NoNewline; wh $l5.PadRight($timeW) -ForegroundColor Cyan -NoNewline
     wh $sep -NoNewline; wh "7t " -ForegroundColor $lc -NoNewline
     wh "$(Stat $u.E7)  " -NoNewline; wh $l7 -ForegroundColor Cyan
+}
+
+# --- GLM (Z.ai) ---
+$glmCache = "$HOME\.claude\.glm-rate-limits.json"
+if (tp $glmCache) {
+    $gu = Get-UsageFromCache -filePath $glmCache
+    if (!$gu.Err) {
+        wh ""
+        wh "GLM (Z.ai)" -ForegroundColor Magenta
+
+        $stale = ""
+        if ($gu.CachedAt) {
+            $ago = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - $gu.CachedAt
+            if ($ago -gt 3600) {
+                $stale = " ({0}h ago)" -f [int][Math]::Floor($ago / 3600)
+            }
+        }
+
+        $l5 = "$($gu.L5)"; $l7 = "$($gu.L7)"
+        $timeW = 7
+        $pad = " " * ($l5.PadRight($timeW).Length + 2)
+
+        wh "  " -No; wh "5h " -Fo $lc -No
+        wh "$(Stat $gu.P5)$pad" -No; wh $sep -No
+        wh "7d " -Fo $lc -No; wh "$(Stat $gu.P7)" -No
+        if ($stale) { wh $stale -Fo DarkGray } else { wh "" }
+
+        wh "  " -No; wh "5t " -Fo $lc -No
+        wh "$(Stat $gu.E5)  " -No; wh $l5.PadRight($timeW) -Fo Cyan -No
+        wh $sep -No; wh "7t " -Fo $lc -No
+        wh "$(Stat $gu.E7)  " -No; wh $l7 -Fo Cyan
+    }
 }
 
 # --- Recommend ---
