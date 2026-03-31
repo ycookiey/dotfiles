@@ -113,6 +113,7 @@ try {
     }
 
     # Claude マルチアカウント
+    # settings.json: Claude Code が symlink を上書き破壊するため除外（マージ型で sync.ps1 が管理）
     $claudeExclude = '.credentials*', '.statusline_debug.json', 'settings.json', '.rate-limits.json'
     foreach ($dir in gci "$HOME\.claude-*" -Dir -Force) {
         gci "$HOME\.claude" -Force | ? {
@@ -155,6 +156,10 @@ try {
     # Startup manager (TaskScheduler)
     & "$ScriptDir\startup\register.ps1" -Action Register
     "$(Get-Date) - Startup registered" >> $LogFile
+
+    # 同期（settings.json マージ等）
+    & "$ScriptDir\pwsh\sync.ps1" -Dot $ScriptDir
+    "$(Get-Date) - Sync completed" >> $LogFile
 
     "$(Get-Date) - Done" >> $LogFile
 } catch {
