@@ -33,6 +33,11 @@ name = ["glm-5.1", "glm-5.1[1m]"]
 display = "5.1"
 color = "100,150,255"
 
+[[model]]
+name = ["glm-4.7", "glm-4.7[1m]"]
+display = "4.7"
+color = "80,120,220"
+
 [[provider]]
 name = ["z.ai"]
 display = "🅶"
