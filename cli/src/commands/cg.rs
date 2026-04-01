@@ -38,6 +38,8 @@ pub fn run(args: &[String]) {
     env.insert("ANTHROPIC_DEFAULT_HAIKU_MODEL".into(), "glm-4.5-air".into());
 
     let mut claude_args: Vec<String> = Vec::new();
+    claude_args.push("--model".into());
+    claude_args.push("claude-opus-4-6".into());
     let rest: Vec<String>;
     if args.first().map(|s| s.as_str()) == Some("r") {
         claude_args.push("/resume".into());
