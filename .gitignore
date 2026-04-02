@@ -35,3 +35,12 @@ claude/statusline/target/
 claude/skills/life
 claude/skills/browser-fetch/scratchpad/
 /nushell/history.txt
+
+# Node modules
+node_modules/
+
+# GCC (GLM Claude Code) agent temp files
+.gcc-summary.md
+.gcc-prompt.md
+.gcc-agent.log
+.gcc-result.json
