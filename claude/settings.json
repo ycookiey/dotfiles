@@ -34,6 +34,16 @@
             "command": "bash \"$HOME/.claude/hooks/check-dirty.sh\""
           }
         ]
+      },
+      {
+        "matcher": "Write",
+        "if": "Write(.claude/commands/*)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/enforce-skill-format.sh\""
+          }
+        ]
       }
     ]
   }
