@@ -23,6 +23,7 @@
   },
   "language": "日本語",
   "cleanupPeriodDays": 99999,
+  "autoMemoryEnabled": false,
   "hooks": {
     "PreToolUse": [
       {
