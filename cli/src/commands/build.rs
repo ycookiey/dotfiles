@@ -38,24 +38,26 @@ fn dotfiles_dir() -> Option<std::path::PathBuf> {
         return Some(dotfiles.to_path_buf());
     }
     // Fallback: find dotfiles from current exe
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| {
-            exe.ancestors()
-                .find(|dir| dir.join("definitions.toml").exists())
-                .map(|p| p.to_path_buf())
-        })
+    std::env::current_exe().ok().and_then(|exe| {
+        exe.ancestors()
+            .find(|dir| dir.join("definitions.toml").exists())
+            .map(|p| p.to_path_buf())
+    })
 }
 
 fn cargo_bin_dir() -> Option<PathBuf> {
     // Derive from current exe (dotcli itself is in cargo bin)
-    std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf()))
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
 }
 
 fn newest_mtime(dir: &Path) -> Option<SystemTime> {
     let mut newest: Option<SystemTime> = None;
     fn walk(dir: &Path, newest: &mut Option<SystemTime>) {
-        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
@@ -78,11 +80,15 @@ fn newest_mtime(dir: &Path) -> Option<SystemTime> {
 
 struct OutdatedInfo {
     crate_path: &'static str,
-    commits: Vec<(String, String)>,  // (hash, msg)
+    commits: Vec<(String, String)>, // (hash, msg)
     changed_files: Vec<String>,
 }
 
-fn get_outdated_info(crate_info: &Crate, dotfiles: &Path, bin_mtime: SystemTime) -> Option<OutdatedInfo> {
+fn get_outdated_info(
+    crate_info: &Crate,
+    dotfiles: &Path,
+    bin_mtime: SystemTime,
+) -> Option<OutdatedInfo> {
     let bin_timestamp = bin_mtime
         .duration_since(SystemTime::UNIX_EPOCH)
         .ok()?
@@ -91,7 +97,14 @@ fn get_outdated_info(crate_info: &Crate, dotfiles: &Path, bin_mtime: SystemTime)
     // Get commits after binary build time
     let after = format!("{}-01-01", 1970 + (bin_timestamp / 31536000));
     let log_output = match Command::new("git")
-        .args(["log", "--after", &after, "--format=%H %s", "--", crate_info.path])
+        .args([
+            "log",
+            "--after",
+            &after,
+            "--format=%H %s",
+            "--",
+            crate_info.path,
+        ])
         .current_dir(&dotfiles)
         .output()
     {
@@ -121,7 +134,13 @@ fn get_outdated_info(crate_info: &Crate, dotfiles: &Path, bin_mtime: SystemTime)
                     commits.push((hash.to_string(), msg.to_string()));
                     // Get changed files for this commit
                     let diff_output = match Command::new("git")
-                        .args(["diff", "--name-only", &format!("{}^..{}", hash, hash), "--", crate_info.path])
+                        .args([
+                            "diff",
+                            "--name-only",
+                            &format!("{}^..{}", hash, hash),
+                            "--",
+                            crate_info.path,
+                        ])
                         .current_dir(&dotfiles)
                         .output()
                     {
@@ -168,10 +187,7 @@ pub fn check() {
             continue;
         }
         let bin = cargo_bin.join(format!("{}.exe", crate_info.bin_name));
-        let bin_mtime = bin
-            .metadata()
-            .ok()
-            .and_then(|m| m.modified().ok());
+        let bin_mtime = bin.metadata().ok().and_then(|m| m.modified().ok());
         let src_mtime = newest_mtime(&project_dir);
 
         if let (Some(b), Some(s)) = (bin_mtime, src_mtime) {

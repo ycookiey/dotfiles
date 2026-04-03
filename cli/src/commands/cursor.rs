@@ -68,11 +68,7 @@ pub fn run(force: bool, skip_mdc: bool, agent_args: &[String]) {
             return;
         }
 
-        let content = format!(
-            "{}@{}\n",
-            MDC_BODY,
-            home_claude.to_string_lossy()
-        );
+        let content = format!("{}@{}\n", MDC_BODY, home_claude.to_string_lossy());
 
         if mdc_path.is_file() && !force {
             messages.push(Message {

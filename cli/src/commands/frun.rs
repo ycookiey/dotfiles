@@ -99,9 +99,7 @@ pub fn run() {
 
     // Wait for device if new emulator started
     if count_emulators(&adb) > before {
-        let _ = Command::new(&adb)
-            .args(["wait-for-device"])
-            .status();
+        let _ = Command::new(&adb).args(["wait-for-device"]).status();
         let _ = Command::new(&adb)
             .args([
                 "shell",
@@ -132,11 +130,7 @@ fn fzf_select(items: &[String], prompt: &str, default: Option<&str>) -> Option<S
     };
 
     let mut fzf = Command::new("fzf")
-        .args([
-            &format!("--prompt={prompt}"),
-            "--no-sort",
-            "--pointer=▶",
-        ])
+        .args([&format!("--prompt={prompt}"), "--no-sort", "--pointer=▶"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()

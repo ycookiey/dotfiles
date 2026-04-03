@@ -16,7 +16,5 @@ pub fn run(path: &str) {
     // Trim trailing backslash
     let resolved = resolved.trim_end_matches('\\');
 
-    let _ = Command::new("sudo")
-        .args(["handle", resolved])
-        .status();
+    let _ = Command::new("sudo").args(["handle", resolved]).status();
 }

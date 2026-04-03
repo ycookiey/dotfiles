@@ -4,14 +4,15 @@ use std::process::{Command, Stdio};
 /// gh repo list + fzf → URL を返す
 pub fn run(args: &[String]) -> Option<String> {
     let gh = Command::new("gh")
-        .args([
-            "repo", "list",
-        ])
+        .args(["repo", "list"])
         .args(args)
         .args([
-            "-L", "1000",
-            "--json", "nameWithOwner,description,url",
-            "-q", ".[]|[.nameWithOwner,.description,.url]|@tsv",
+            "-L",
+            "1000",
+            "--json",
+            "nameWithOwner,description,url",
+            "-q",
+            ".[]|[.nameWithOwner,.description,.url]|@tsv",
         ])
         .output();
 
@@ -49,11 +50,7 @@ pub fn run(args: &[String]) -> Option<String> {
 
     let selected = String::from_utf8_lossy(&output.stdout);
     let url = selected.trim().split('\t').last().unwrap_or("").to_string();
-    if url.is_empty() {
-        None
-    } else {
-        Some(url)
-    }
+    if url.is_empty() { None } else { Some(url) }
 }
 
 /// grf 結果を stdout に出力
@@ -76,8 +73,6 @@ pub fn run_open(args: &[String]) {
 /// grf 選択をクローン
 pub fn run_clone(args: &[String]) {
     if let Some(url) = run(args) {
-        let _ = Command::new("gh")
-            .args(["repo", "clone", &url])
-            .status();
+        let _ = Command::new("gh").args(["repo", "clone", &url]).status();
     }
 }

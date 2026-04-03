@@ -1,4 +1,4 @@
-use crate::protocol::{ExecCommand, Message, MessageLevel, ShellAction, CLAUDE_PROVIDER_ENV};
+use crate::protocol::{CLAUDE_PROVIDER_ENV, ExecCommand, Message, MessageLevel, ShellAction};
 use std::collections::HashMap;
 
 pub fn run(args: &[String]) {

@@ -59,9 +59,7 @@ pub fn generate(defs: &Definitions, dotfiles_dir: &Path) -> String {
     let win_launchers: Vec<_> = defs
         .launcher
         .iter()
-        .filter(|l| {
-            l.platform.as_ref() != Some(&Platform::Macos) && l.nushell
-        })
+        .filter(|l| l.platform.as_ref() != Some(&Platform::Macos) && l.nushell)
         .collect();
     if !win_launchers.is_empty() {
         writeln!(out, "# --- Launchers ---").unwrap();
@@ -103,8 +101,7 @@ pub fn generate(defs: &Definitions, dotfiles_dir: &Path) -> String {
                         // `start` which expects a file/URI. Use `^` to invoke via PATH.
                         raw_path.to_string()
                     };
-                    let is_bare = !raw_path.contains('\\')
-                        && !raw_path.contains("{PROGRAM_FILES}");
+                    let is_bare = !raw_path.contains('\\') && !raw_path.contains("{PROGRAM_FILES}");
                     if l.args.is_empty() {
                         if is_bare {
                             writeln!(
@@ -124,10 +121,15 @@ pub fn generate(defs: &Definitions, dotfiles_dir: &Path) -> String {
                             .unwrap();
                         }
                     } else {
-                        let args_str = l.args.iter().map(|a| {
-                            let escaped = a.replace('"', r#"\""#);
-                            format!("\"{escaped}\"")
-                        }).collect::<Vec<_>>().join(" ");
+                        let args_str = l
+                            .args
+                            .iter()
+                            .map(|a| {
+                                let escaped = a.replace('"', r#"\""#);
+                                format!("\"{escaped}\"")
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" ");
                         writeln!(
                             out,
                             "def {name} [] {{ ^{path} {args} }}",
