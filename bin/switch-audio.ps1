@@ -23,23 +23,89 @@ function Resolve-DisplayNames([object[]]$Devices) {
 
 function Select-Device([string]$Label, [object[]]$Devices) {
     Resolve-DisplayNames $Devices
-    wh "`n$Label"
+    if ($Devices.Count -eq 0) { return $null }
+
+    $idx = 0
     for ($i = 0; $i -lt $Devices.Count; $i++) {
-        $d = $Devices[$i]
-        $mark = if ($d.Default) { '*' } else { ' ' }
-        wh "$mark $($i + 1)) $($d.ShortName)"
+        if ($Devices[$i].Default) { $idx = $i; break }
     }
 
-    $sel = Read-Host "Select [1-$($Devices.Count)] (Enter to skip)"
-    if (!$sel) { return $null }
-    if ($sel -notmatch '^\d+$') { wh "  Invalid" -ForegroundColor Red; return $null }
+    $raw = $Host.UI.RawUI
 
-    $idx = [int]$sel - 1
-    if ($idx -lt 0 -or $idx -ge $Devices.Count) {
-        wh "  Invalid" -ForegroundColor Red
-        return $null
+    wh "`n$Label"
+    # メニュー行分のバッファを確保してからスタート位置を逆算（スクロール対策）
+    for ($i = 0; $i -lt $Devices.Count; $i++) { wh "" }
+    $menuStartLine = $raw.CursorPosition.Y - $Devices.Count
+
+    $drawDeviceLines = {
+        param([int]$selectedIdx)
+        $w = $raw.WindowSize.Width
+        if ($w -lt 2) { $w = 80 }
+        $maxCh = $w - 1
+        for ($i = 0; $i -lt $Devices.Count; $i++) {
+            $d = $Devices[$i]
+            $mark = if ($d.Default) { '*' } else { ' ' }
+            $line = "$mark $($i + 1)) $($d.ShortName)"
+            if ($line.Length -gt $maxCh) {
+                $take = [Math]::Max(0, $maxCh - 3)
+                $line = $line.Substring(0, $take) + '...'
+            }
+            $padding = $line.PadRight($maxCh)
+            [Console]::SetCursorPosition(0, $menuStartLine + $i)
+            $body = if ($i -eq $selectedIdx) { "`e[7m$padding`e[0m" } else { $padding }
+            wh $body -NoNewline
+        }
     }
-    return $Devices[$idx]
+
+    & $drawDeviceLines $idx
+
+    function Move-BelowMenu {
+        [Console]::SetCursorPosition(0, $menuStartLine + $Devices.Count)
+        wh ""
+    }
+
+    Move-BelowMenu
+
+    while ($true) {
+        $k = [Console]::ReadKey($true)
+        $handled = $false
+        $noMod = $k.Modifiers -eq [ConsoleModifiers]0
+        if ($k.Key -eq [ConsoleKey]::DownArrow -or ($noMod -and $k.KeyChar -eq 'j')) {
+            if ($idx -lt $Devices.Count - 1) { $idx++ }
+            $handled = $true
+        }
+        elseif ($k.Key -eq [ConsoleKey]::UpArrow -or ($noMod -and $k.KeyChar -eq 'k')) {
+            if ($idx -gt 0) { $idx-- }
+            $handled = $true
+        }
+        elseif ($k.Key -eq [ConsoleKey]::Enter) {
+            Move-BelowMenu
+            return $Devices[$idx]
+        }
+        elseif ($k.Key -eq [ConsoleKey]::Escape) {
+            Move-BelowMenu
+            return $null
+        }
+        elseif ($noMod -and ($k.KeyChar -eq 'q' -or $k.KeyChar -eq 'Q')) {
+            Move-BelowMenu
+            return $null
+        }
+        elseif ($k.Key -ge [ConsoleKey]::D1 -and $k.Key -le [ConsoleKey]::D9) {
+            $num = [int]$k.Key - [int][ConsoleKey]::D1 + 1
+            if ($num -le $Devices.Count) {
+                Move-BelowMenu
+                return $Devices[$num - 1]
+            }
+        }
+        elseif ($k.Key -ge [ConsoleKey]::NumPad1 -and $k.Key -le [ConsoleKey]::NumPad9) {
+            $num = [int]$k.Key - [int][ConsoleKey]::NumPad1 + 1
+            if ($num -le $Devices.Count) {
+                Move-BelowMenu
+                return $Devices[$num - 1]
+            }
+        }
+        if ($handled) { & $drawDeviceLines $idx }
+    }
 }
 
 $outPrev = $playback | ? Default | select -f 1
