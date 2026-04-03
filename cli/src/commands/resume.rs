@@ -179,7 +179,7 @@ fn parse_session(path: &Path) -> Option<SessionInfo> {
     let mut timestamp: Option<String> = None;
     let mut first_message: Option<String> = None;
 
-    for line in lines.iter().take(5) {
+    for line in lines.iter().take(10) {
         let v: Value = serde_json::from_str(line).ok()?;
         if session_id.is_none()
             && let Some(sid) = v.get("sessionId").and_then(|x| x.as_str())
@@ -210,8 +210,11 @@ fn parse_session(path: &Path) -> Option<SessionInfo> {
             }
         }
         if let Some(fc) = extract_user_content(msg) {
-            first_message = Some(truncate_message(fc, 80));
-            break;
+            let cleaned = strip_xml_tags(&fc);
+            if !cleaned.is_empty() {
+                first_message = Some(truncate_message(cleaned, 80));
+                break;
+            }
         }
     }
 
@@ -304,6 +307,23 @@ fn format_timestamp(ts: &str) -> String {
         return format!("{mm:2}/{dd:2} {hh:2}:{mn}");
     }
     ts.to_string()
+}
+
+/// Strip XML/HTML tags and collapse whitespace
+fn strip_xml_tags(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut inside = false;
+    for c in s.chars() {
+        match c {
+            '<' => inside = true,
+            '>' => inside = false,
+            _ if !inside => out.push(c),
+            _ => {}
+        }
+    }
+    // collapse whitespace
+    let trimmed = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    trimmed
 }
 
 fn truncate_message(s: String, max: usize) -> String {
