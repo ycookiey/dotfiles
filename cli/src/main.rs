@@ -88,7 +88,10 @@ fn main() {
     // Set DOTFILES_DIR if not already set
     if std::env::var("DOTFILES_DIR").is_err() {
         let exe = std::env::current_exe().expect("Failed to get current exe");
-        if let Some(dotfiles) = exe.ancestors().find(|p| p.join("definitions.toml").exists()) {
+        if let Some(dotfiles) = exe
+            .ancestors()
+            .find(|p| p.join("definitions.toml").exists())
+        {
             unsafe {
                 std::env::set_var("DOTFILES_DIR", dotfiles.display().to_string());
             }
