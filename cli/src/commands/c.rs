@@ -1,4 +1,5 @@
-use crate::protocol::{ExecCommand, Message, MessageLevel, ShellAction, CLAUDE_PROVIDER_ENV};
+use super::resume;
+use crate::protocol::{CLAUDE_PROVIDER_ENV, ExecCommand, Message, MessageLevel, ShellAction};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -59,7 +60,6 @@ pub fn run(args: &[String]) {
             acc_dir.to_string_lossy().to_string(),
         );
         let _ = fs::write(&last_file, n);
-
     }
 
     let mut messages: Vec<Message> = Vec::new();
@@ -78,18 +78,27 @@ pub fn run(args: &[String]) {
         }
     }
 
-    // r → /resume
-    if claude_args.first().map(|s| s.as_str()) == Some("r") {
-        claude_args[0] = "/resume".into();
-    }
-
     // Proxy CA cert
     let ca = PathBuf::from(r"C:\Main\Project\en-hancer-proxy\certs\ca.crt");
     if ca.exists() {
-        env.insert("NODE_EXTRA_CA_CERTS".into(), ca.to_string_lossy().to_string());
+        env.insert(
+            "NODE_EXTRA_CA_CERTS".into(),
+            ca.to_string_lossy().to_string(),
+        );
     }
 
-    let unset_env = CLAUDE_PROVIDER_ENV.iter().map(|s| s.to_string()).collect();
+    let unset_env: Vec<String> = CLAUDE_PROVIDER_ENV.iter().map(|s| s.to_string()).collect();
+
+    // r → fzf session picker + cd + claude --resume
+    if claude_args.first().map(|s| s.as_str()) == Some("r") {
+        let query: Vec<String> = claude_args[1..].to_vec();
+        let mut action = resume::select(&query);
+        action.set_env.extend(env);
+        action.unset_env = unset_env;
+        action.messages.extend(messages);
+        action.print();
+        return;
+    }
 
     let action = ShellAction {
         set_env: env,
@@ -106,7 +115,10 @@ pub fn run(args: &[String]) {
 
 /// Parse "save <name>" or "<name> save" from args
 fn parse_save_args(args: &[String]) -> Option<String> {
-    let (a, b) = (args.first().map(|s| s.as_str()), args.get(1).map(|s| s.as_str()));
+    let (a, b) = (
+        args.first().map(|s| s.as_str()),
+        args.get(1).map(|s| s.as_str()),
+    );
     match (a, b) {
         (Some("save"), Some(name)) => Some(name.to_string()),
         (Some(name), Some("save")) if name.chars().all(|c| c.is_ascii_digit()) => {
