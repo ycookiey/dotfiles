@@ -5,6 +5,11 @@
 | (チーム共有) | `wrangler whoami` で確認 | UC プロジェクト |
 | ycookiey | 0ae949d229d9cc0aacd580a49bcc15ca | 個人プロジェクト |
 
+## ドメイン
+- analyzers.app — 分析ツール群（複数プロジェクト共用）
+- omega-analyzer.com
+- ycookiey.com
+
 ## 使い方
 
 wrangler で複数アカウントがある場合:
