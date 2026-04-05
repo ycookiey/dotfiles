@@ -267,9 +267,6 @@ return {
 
     -- Enter: Win32 Input Mode のエスケープシーケンス漏れ対策
     { key = "Enter", mods = "NONE", action = act.SendString("\r") },
-    -- フルスクリーン
-    { key = "Enter", mods = "ALT", action = act.ToggleFullScreen },
-
     -- コピーモード
     { key = "v", mods = "ALT", action = act.ActivateCopyMode },
     -- コピー（選択範囲がある場合）またはターミナル停止（選択範囲がない場合）
