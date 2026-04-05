@@ -21,8 +21,14 @@ struct SessionInfo {
     project: String,
 }
 
+struct ScanResult {
+    sessions: Vec<SessionInfo>,
+    no_last_ts: usize,
+}
+
 pub fn select(query: &[String]) -> ShellAction {
-    let sessions = scan_sessions();
+    let scan = scan_sessions();
+    let sessions = scan.sessions;
     if sessions.is_empty() {
         return ShellAction {
             messages: vec![Message {
@@ -75,6 +81,10 @@ pub fn select(query: &[String]) -> ShellAction {
     let q = query.join(" ");
     let mut cmd = Command::new("fzf");
     cmd.args(["-d", "\t", "--with-nth", "2..", "--no-sort", "--ansi"]);
+    if scan.no_last_ts > 0 {
+        let header = format!("⚠ {} sessions skipped (no last timestamp)", scan.no_last_ts);
+        cmd.args(["--header", &header]);
+    }
     if !q.is_empty() {
         cmd.args(["--query", &q]);
     }
@@ -148,21 +158,30 @@ pub fn select(query: &[String]) -> ShellAction {
     }
 }
 
-fn scan_sessions() -> Vec<SessionInfo> {
+fn scan_sessions() -> ScanResult {
     let projects_dir = match dirs::home_dir() {
         Some(h) => h.join(".claude").join("projects"),
-        None => return Vec::new(),
+        None => return ScanResult { sessions: Vec::new(), no_last_ts: 0 },
     };
     if !projects_dir.is_dir() {
-        return Vec::new();
+        return ScanResult { sessions: Vec::new(), no_last_ts: 0 };
     }
 
     let paths: Vec<PathBuf> = collect_session_jsonl(&projects_dir);
-    let mut sessions: Vec<SessionInfo> =
-        paths.par_iter().filter_map(|p| parse_session(p)).collect();
+    let results: Vec<Result<SessionInfo, bool>> =
+        paths.par_iter().map(|p| parse_session(p)).collect();
+    let mut no_last_ts: usize = 0;
+    let mut sessions: Vec<SessionInfo> = Vec::with_capacity(results.len());
+    for r in results {
+        match r {
+            Ok(s) => sessions.push(s),
+            Err(true) => no_last_ts += 1,
+            Err(false) => {}
+        }
+    }
 
     sessions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-    sessions
+    ScanResult { sessions, no_last_ts }
 }
 
 fn collect_session_jsonl(projects_dir: &Path) -> Vec<PathBuf> {
@@ -190,20 +209,21 @@ fn collect_session_jsonl(projects_dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-fn parse_session(path: &Path) -> Option<SessionInfo> {
-    let data = fs::read_to_string(path).ok()?;
+/// Returns Ok(session) on success, Err(true) if only last_timestamp was missing,
+/// Err(false) for other parse failures.
+fn parse_session(path: &Path) -> Result<SessionInfo, bool> {
+    let data = fs::read_to_string(path).map_err(|_| false)?;
     let lines: Vec<&str> = data.lines().collect();
     if lines.is_empty() {
-        return None;
+        return Err(false);
     }
 
     let mut session_id: Option<String> = None;
     let mut cwd: Option<String> = None;
-    let mut timestamp: Option<String> = None;
     let mut first_message: Option<String> = None;
 
     for line in lines.iter().take(10) {
-        let v: Value = serde_json::from_str(line).ok()?;
+        let v: Value = serde_json::from_str(line).map_err(|_| false)?;
         if session_id.is_none()
             && let Some(sid) = v.get("sessionId").and_then(|x| x.as_str())
         {
@@ -224,10 +244,6 @@ fn parse_session(path: &Path) -> Option<SessionInfo> {
         }
         if cwd.is_none() {
             cwd = v.get("cwd").and_then(|c| c.as_str()).map(|s| s.to_string());
-            timestamp = v
-                .get("timestamp")
-                .and_then(|t| t.as_str())
-                .map(|s| s.to_string());
             if let Some(sid) = v.get("sessionId").and_then(|x| x.as_str()) {
                 session_id = Some(sid.to_string());
             }
@@ -241,26 +257,40 @@ fn parse_session(path: &Path) -> Option<SessionInfo> {
         }
     }
 
-    let session_id = session_id?;
-    let cwd = cwd?;
-    let timestamp = timestamp.unwrap_or_default();
+    let session_id = session_id.ok_or(false)?;
+    let cwd = cwd.ok_or(false)?;
 
-    let title = lines.iter().rev().find_map(|line| {
-        let v: Value = serde_json::from_str(line).ok()?;
-        if v.get("type").and_then(|t| t.as_str()) == Some("custom-title") {
-            return v
+    let mut title: Option<String> = None;
+    let mut last_timestamp: Option<String> = None;
+    for line in lines.iter().rev() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if last_timestamp.is_none() {
+            last_timestamp = v
+                .get("timestamp")
+                .and_then(|t| t.as_str())
+                .map(|s| s.to_string());
+        }
+        if title.is_none()
+            && v.get("type").and_then(|t| t.as_str()) == Some("custom-title")
+        {
+            title = v
                 .get("customTitle")
                 .and_then(|t| t.as_str())
                 .map(|s| s.to_string());
         }
-        None
-    });
+        if title.is_some() && last_timestamp.is_some() {
+            break;
+        }
+    }
 
     let first_message = first_message.unwrap_or_else(|| "(no user message)".into());
+    let timestamp = last_timestamp.ok_or(true)?;
 
     let project = project_label(&cwd);
 
-    Some(SessionInfo {
+    Ok(SessionInfo {
         session_id,
         cwd,
         timestamp,
