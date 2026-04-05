@@ -17,7 +17,7 @@ struct SessionInfo {
     cwd: String,
     timestamp: String,
     title: Option<String>,
-    first_message: String,
+    latest_message: String,
     project: String,
 }
 
@@ -220,7 +220,6 @@ fn parse_session(path: &Path) -> Result<SessionInfo, bool> {
 
     let mut session_id: Option<String> = None;
     let mut cwd: Option<String> = None;
-    let mut first_message: Option<String> = None;
 
     for line in lines.iter().take(10) {
         let v: Value = serde_json::from_str(line).map_err(|_| false)?;
@@ -248,12 +247,8 @@ fn parse_session(path: &Path) -> Result<SessionInfo, bool> {
                 session_id = Some(sid.to_string());
             }
         }
-        if let Some(fc) = extract_user_content(msg) {
-            let cleaned = strip_xml_tags(&fc);
-            if !cleaned.is_empty() {
-                first_message = Some(truncate_message(cleaned, 80));
-                break;
-            }
+        if cwd.is_some() && session_id.is_some() {
+            break;
         }
     }
 
@@ -262,6 +257,7 @@ fn parse_session(path: &Path) -> Result<SessionInfo, bool> {
 
     let mut title: Option<String> = None;
     let mut last_timestamp: Option<String> = None;
+    let mut latest_message: Option<String> = None;
     for line in lines.iter().rev() {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             continue;
@@ -280,12 +276,27 @@ fn parse_session(path: &Path) -> Result<SessionInfo, bool> {
                 .and_then(|t| t.as_str())
                 .map(|s| s.to_string());
         }
-        if title.is_some() && last_timestamp.is_some() {
+        if latest_message.is_none()
+            && v.get("type").and_then(|t| t.as_str()) == Some("user")
+            && v.get("isMeta").and_then(|m| m.as_bool()) != Some(true)
+        {
+            if let Some(msg) = v.get("message") {
+                if msg.get("role").and_then(|r| r.as_str()) == Some("user") {
+                    if let Some(text) = extract_user_content(msg) {
+                        let cleaned = strip_xml_tags(&text);
+                        if !cleaned.is_empty() {
+                            latest_message = Some(truncate_message(cleaned, 120));
+                        }
+                    }
+                }
+            }
+        }
+        if title.is_some() && last_timestamp.is_some() && latest_message.is_some() {
             break;
         }
     }
 
-    let first_message = first_message.unwrap_or_else(|| "(no user message)".into());
+    let latest_message = latest_message.unwrap_or_else(|| "(no user message)".into());
     let timestamp = last_timestamp.ok_or(true)?;
 
     let project = project_label(&cwd);
@@ -295,7 +306,7 @@ fn parse_session(path: &Path) -> Result<SessionInfo, bool> {
         cwd,
         timestamp,
         title,
-        first_message,
+        latest_message,
         project,
     })
 }
@@ -304,7 +315,7 @@ fn format_line(i: usize, s: &SessionInfo, proj_width: usize, color: &str) -> Str
     let display = s
         .title
         .as_deref()
-        .unwrap_or(&s.first_message)
+        .unwrap_or(&s.latest_message)
         .replace('\t', " ")
         .replace('\n', " ");
     let ts = format_timestamp(&s.timestamp);
