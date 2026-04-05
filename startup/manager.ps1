@@ -18,12 +18,23 @@ function Write-Log {
     if ($script:LogFile) { ac $script:LogFile $line -Enc UTF8 }
 }
 
+function Start-Unelevated([scriptblock]$Launch) {
+    $aliasDir = "$PSScriptRoot\..\pwsh"
+    $inner = ". '$aliasDir\aliases.ps1'; . '$aliasDir\generated-aliases.ps1'; " + $Launch.ToString().Trim()
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($inner))
+    & runas /trustlevel:0x20000 "pwsh -NoProfile -W Hidden -NonInteractive -EncodedCommand $encoded"
+}
+
 function Start-App-Logged {
-    param([string]$Name, [scriptblock]$Launch)
+    param([string]$Name, [scriptblock]$Launch, [switch]$Elevated)
     Write-Log "Starting: $Name"
     Show-AppStatus -AppName $Name -Status "Starting"
     try {
-        & $Launch
+        if (!$Elevated -and (isadmin)) {
+            Start-Unelevated $Launch
+        } else {
+            & $Launch
+        }
         Write-Log "  Started: $Name"
         Show-AppStatus -AppName $Name -Status "Success"
     } catch {
@@ -37,7 +48,7 @@ Show-PopupNotification "Startup" "Starting apps" 2000
 
 # --- High priority ---
 Start-App-Logged "WezTerm" { wezterm-gui }
-Start-App-Logged "AutoHotkey" {
+Start-App-Logged "AutoHotkey" -Elevated {
     start "$HOME\scoop\shims\autohotkey.exe" -Arg "C:\Main\Project\dotfiles\autohotkey\shortcuts.ahk"
 }
 sleep -Seconds 1

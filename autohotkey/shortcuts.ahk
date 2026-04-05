@@ -17,6 +17,15 @@ DirModHash() {
     return hash
 }
 
+; UACダイアログ（consent.exe）を検知して自動フォーカス
+; AHKが管理者権限で動作している前提（startup managerで昇格起動）
+SetTimer(FocusUAC, 200)
+FocusUAC() {
+    ; ahk_exe では検知不可のため、タイトルとクラスで検知
+    if WinExist("ユーザー アカウント制御 ahk_class Credential Dialog Xaml Host")
+        WinActivate
+}
+
 ; Ctrl+R をNVIDIA Broadcastより先にインターセプトしてアプリに送る
 $^r::Send "{Ctrl down}r{Ctrl up}"
 
