@@ -21,6 +21,11 @@ local function is_nvim(pane)
   return title:find("nvim") ~= nil
 end
 
+local function is_claude_code(pane)
+  local name = fg_name(pane)
+  return name == "claude.exe" or name == "claude"
+end
+
 -- nvimからのペイン移動要求を処理（user-var経由）
 wezterm.on("user-var-changed", function(window, pane, name, value)
   if name == "pane_right" then
@@ -324,7 +329,16 @@ return {
     { key = "k", mods = "ALT", action = act.ActivatePaneDirection("Up") },
     { key = "j", mods = "ALT", action = act.ActivatePaneDirection("Down") },
     -- ペインズーム
-    { key = "z", mods = "ALT", action = act.TogglePaneZoomState },
+    {
+      key = "z",
+      mods = "ALT",
+      action = wezterm.action_callback(function(window, pane)
+        window:perform_action(act.TogglePaneZoomState, pane)
+        if is_claude_code(pane) then
+          window:perform_action(act.SendKey({ key = "l", mods = "CTRL" }), pane)
+        end
+      end),
+    },
     -- ペイン幅均等化
     { key = "S", mods = "ALT|SHIFT", action = equalize_panes },
 
