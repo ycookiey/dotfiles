@@ -21,5 +21,9 @@
   "pencil": {
     "command": "{LOCALAPPDATA}/Programs/Pencil/resources/app.asar.unpacked/out/mcp-server-windows-x64.exe",
     "args": ["--app", "desktop"]
+  },
+  "git-polite": {
+    "command": "uvx",
+    "args": ["git-polite@git+https://github.com/uneco/mcp-git-polite.git", "mcp"]
   }
 }
