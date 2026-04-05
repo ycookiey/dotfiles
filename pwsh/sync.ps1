@@ -37,6 +37,13 @@ if (Get-Command scoop -ea 0) {
 
 # --- Wingetfile ---
 $wingetfile = "$Dot\install\wingetfile.json"
+# mise 等で管理するパッケージは wingetfile から除外
+$wingetExclude = @(
+    'Amazon.AWSCLI'
+    'Oracle.JDK.17'
+    'Python.Python.3.12'
+    'Python.Python.3.14'
+)
 if (Get-Command winget -ea 0) {
     $tmp = "$env:TEMP\winget-export-$PID.json"
     try {
@@ -44,12 +51,13 @@ if (Get-Command winget -ea 0) {
         $exitCode = $LASTEXITCODE
         if ($exitCode -eq 0 -and [IO.File]::Exists($tmp) -and (Get-Item $tmp).Length -gt 0) {
             $export = Get-Content $tmp -Raw | ConvertFrom-Json
-            # winget ソースのパッケージのみ抽出（msstore・システムは除外）
+            # winget ソースのパッケージのみ抽出（msstore・システム・除外リストは除外）
             $apps = $export.Sources |
                 Where-Object { $_.SourceDetails.Name -eq 'winget' } |
                 ForEach-Object {
                     $_.Packages | ForEach-Object { @{ Id = $_.PackageIdentifier } }
                 } |
+                Where-Object { $_.Id -notin $wingetExclude } |
                 Sort-Object { $_.Id }
             $new = @{ apps = $apps } | ConvertTo-Json -Depth 3
             $old = if ([IO.File]::Exists($wingetfile)) { [IO.File]::ReadAllText($wingetfile).TrimEnd() } else { '' }
