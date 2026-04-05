@@ -1,10 +1,16 @@
 use crate::protocol::{ExecCommand, Message, MessageLevel, ShellAction};
 use rayon::prelude::*;
 use serde_json::Value;
+use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+const HIGHLIGHT_TOP_N: usize = 5;
+const GREEN: &str = "\x1b[32m";
+const DIM: &str = "\x1b[2m";
+const RESET: &str = "\x1b[0m";
 
 struct SessionInfo {
     session_id: String,
@@ -28,30 +34,42 @@ pub fn select(query: &[String]) -> ShellAction {
         };
     }
 
+    let cwd_now = env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    // Partition: pwd-match (up to N) first, then the rest
+    let mut pwd_group: Vec<(usize, &SessionInfo)> = Vec::new();
+    let mut rest: Vec<(usize, &SessionInfo)> = Vec::new();
+    for (i, s) in sessions.iter().enumerate() {
+        if pwd_group.len() < HIGHLIGHT_TOP_N && paths_equal(&s.cwd, &cwd_now) {
+            pwd_group.push((i, s));
+        } else {
+            rest.push((i, s));
+        }
+    }
+
     let proj_width = sessions.iter().map(|s| s.project.len()).max().unwrap_or(10);
 
     let mut lines: Vec<String> = Vec::with_capacity(sessions.len());
-    for (i, s) in sessions.iter().enumerate() {
-        let display = s
-            .title
-            .as_deref()
-            .unwrap_or(&s.first_message)
-            .replace('\t', " ")
-            .replace('\n', " ");
-        let ts = format_timestamp(&s.timestamp);
-        let line = format!(
-            "{i}\t{:<pw$}  {}  {}",
-            s.project,
-            ts,
-            display,
-            pw = proj_width,
+    for &(i, s) in &pwd_group {
+        lines.push(format_line(i, s, proj_width, GREEN));
+    }
+    if !pwd_group.is_empty() && !rest.is_empty() {
+        let label = project_label(&cwd_now);
+        let sep = format!(
+            "{}\t{}── {} recent ({}) ──{}",
+            usize::MAX, DIM, pwd_group.len(), label, RESET
         );
-        lines.push(line);
+        lines.push(sep);
+    }
+    for &(i, s) in &rest {
+        lines.push(format_line(i, s, proj_width, ""));
     }
 
     let q = query.join(" ");
     let mut cmd = Command::new("fzf");
-    cmd.args(["-d", "\t", "--with-nth", "2..", "--no-sort"]);
+    cmd.args(["-d", "\t", "--with-nth", "2..", "--no-sort", "--ansi"]);
     if !q.is_empty() {
         cmd.args(["--query", &q]);
     }
@@ -245,6 +263,39 @@ fn parse_session(path: &Path) -> Option<SessionInfo> {
         first_message,
         project,
     })
+}
+
+fn format_line(i: usize, s: &SessionInfo, proj_width: usize, color: &str) -> String {
+    let display = s
+        .title
+        .as_deref()
+        .unwrap_or(&s.first_message)
+        .replace('\t', " ")
+        .replace('\n', " ");
+    let ts = format_timestamp(&s.timestamp);
+    if color.is_empty() {
+        format!(
+            "{i}\t{:<pw$}  {}  {}",
+            s.project,
+            ts,
+            display,
+            pw = proj_width,
+        )
+    } else {
+        format!(
+            "{i}\t{color}{:<pw$}  {}  {}{RESET}",
+            s.project,
+            ts,
+            display,
+            pw = proj_width,
+        )
+    }
+}
+
+/// Compare paths ignoring slash direction (Windows vs Unix)
+fn paths_equal(a: &str, b: &str) -> bool {
+    let normalize = |s: &str| s.replace('\\', "/").to_lowercase();
+    normalize(a) == normalize(b)
 }
 
 fn project_label(cwd: &str) -> String {
