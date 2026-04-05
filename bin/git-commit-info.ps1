@@ -21,3 +21,15 @@ if ($diff) {
         }
     }
 }
+
+# Show pre-commit hook (code lines only)
+$hookDir = git config --get core.hooksPath 2>$null
+if (-not $hookDir) { $hookDir = "$(git rev-parse --git-dir)/hooks" }
+$hookFile = "$hookDir/pre-commit"
+if (Test-Path $hookFile) {
+    $lines = Get-Content $hookFile | ? { $_.Trim() -and $_ -notmatch '^\s*#' }
+    if ($lines) {
+        echo "--- pre-commit hook ---"
+        $lines
+    }
+}
