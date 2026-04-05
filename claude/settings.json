@@ -24,6 +24,8 @@
   "language": "日本語",
   "cleanupPeriodDays": 99999,
   "autoMemoryEnabled": false,
+  "skipDangerousModePermissionPrompt": true,
+  "showClearContextOnPlanAccept": true,
   "hooks": {
     "PreToolUse": [
       {
