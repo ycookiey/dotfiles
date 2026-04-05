@@ -49,7 +49,12 @@ pub fn select(query: &[String]) -> ShellAction {
         }
     }
 
-    let proj_width = sessions.iter().map(|s| s.project.len()).max().unwrap_or(10);
+    let proj_width = sessions
+        .iter()
+        .map(|s| s.project.len())
+        .max()
+        .unwrap_or(10)
+        .min(MAX_PROJECT_WIDTH);
 
     let mut lines: Vec<String> = Vec::with_capacity(sessions.len());
     for &(i, s) in &pwd_group {
@@ -298,12 +303,25 @@ fn paths_equal(a: &str, b: &str) -> bool {
     normalize(a) == normalize(b)
 }
 
+const MAX_PROJECT_WIDTH: usize = 15;
+
 fn project_label(cwd: &str) -> String {
-    let path = Path::new(cwd.trim());
-    path.file_name()
+    let name = Path::new(cwd.trim())
+        .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| cwd.to_string())
+        .unwrap_or_else(|| cwd.to_string());
+    truncate_str(&name, MAX_PROJECT_WIDTH)
+}
+
+fn truncate_str(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(max - 1).collect();
+        out.push('…');
+        out
+    }
 }
 
 fn extract_user_content(msg: &Value) -> Option<String> {
