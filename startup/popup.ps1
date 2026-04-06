@@ -38,14 +38,21 @@ function Show-PopupNotification {
             $lm.SetBounds(10, 40, 330, 50); $f.Controls.Add($lm)
             $tmr = [Windows.Forms.Timer]::new()
             $tmr.Interval = $d
-            $tmr.Add_Tick({ $f.Close() })
+            $cl = { $tmr.Stop(); try { $f.Close() } catch {} }
+            $tmr.Add_Tick($cl)
             $tmr.Start()
-            $cl = { $f.Close() }
             $f.Add_Click($cl); $lt.Add_Click($cl); $lm.Add_Click($cl)
             [void]$f.ShowDialog()
             $tmr.Dispose(); $f.Dispose()
         }).AddArgument($Title).AddArgument($Message).AddArgument($Duration).AddArgument($offset)
-        [void]$ps.BeginInvoke()
+        $handle = $ps.BeginInvoke()
+        Register-ObjectEvent $ps -EventName InvocationStateChanged -MessageData $rs -Action {
+            if ($Sender.InvocationStateInfo.State -in 'Completed','Stopped','Failed') {
+                $Sender.Dispose()
+                $Event.MessageData.Dispose()
+                Unregister-Event $EventSubscriber.SourceIdentifier
+            }
+        } | Out-Null
     } catch {}
 }
 
