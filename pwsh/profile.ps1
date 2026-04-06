@@ -109,7 +109,18 @@ if ($script:IsInteractive) {
         if ($global:j -and $global:j.Handle.IsCompleted) {
             try {
                 $r = $global:j.PowerShell.EndInvoke($global:j.Handle)
-                if ($r -and $r.Count -gt 0) { wh "`n✨ Dotfiles Updated!" -ForegroundColor Green }
+                if ($r -and $r.Count -gt 0) {
+                    $v = [string]$r[0]
+                    if ($v.StartsWith('updated:')) {
+                        $p = $v.Substring(8) -split ':', 2
+                        $label = $p[0] -eq '1' ? 'commit' : 'commits'
+                        wh "`n✨ Dotfiles Updated! ($($p[0]) ${label}: $($p[1]))" -Fo Green
+                    } elseif ($v -eq 'dirty') {
+                        wh "`n⚠ Dotfiles: dirty (behind remote)" -Fo Yellow
+                    } elseif ($v -eq 'error') {
+                        wh "`n✗ Dotfiles: pull failed" -Fo Red
+                    }
+                }
             } finally { $global:j.PowerShell.Dispose(); $global:j = $null }
         }
         if ($global:syncJob -and $global:syncJob.Handle.IsCompleted) {
@@ -130,11 +141,23 @@ if ($script:IsInteractive) {
             # Dotfiles auto-update (初回プロンプトで遅延起動)
             $_ps = [PowerShell]::Create()
             [void]$_ps.AddScript(@"
+                `$g = '$HOME\scoop\apps\git\current\cmd\git.exe'
                 Set-Location '$Dot'
-                & '$HOME\scoop\apps\git\current\cmd\git.exe' status --porcelain | ForEach-Object { return }
-                & '$HOME\scoop\apps\git\current\cmd\git.exe' fetch -q
-                & '$HOME\scoop\apps\git\current\cmd\git.exe' diff --quiet HEAD '@{u}'
-                if (-not `$?) { & '$HOME\scoop\apps\git\current\cmd\git.exe' pull -q -r; `$true }
+                `$dirty = & `$g status --porcelain
+                & `$g fetch -q
+                if (`$LASTEXITCODE -ne 0) { return }
+                & `$g diff --quiet HEAD '@{u}'
+                if (`$?) { return }
+                if (`$dirty) { return 'dirty' }
+                `$before = (& `$g rev-parse HEAD).Trim()
+                & `$g pull -q -r
+                if (!`$?) { return 'error' }
+                `$after = (& `$g rev-parse HEAD).Trim()
+                if (`$before -ne `$after) {
+                    `$n = (& `$g rev-list --count `$before..`$after)
+                    `$areas = (& `$g diff --name-only `$before `$after | % { (`$_ -split '/')[0] } | select -Unique | sort) -join ', '
+                    "updated:`$n" + ":`$areas"
+                }
 "@)
             $global:j = @{ PowerShell = $_ps; Handle = $_ps.BeginInvoke() }
             # Build outdated check
