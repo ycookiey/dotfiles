@@ -103,6 +103,7 @@ try {
         [Environment]::SetEnvironmentVariable('Path', "$userPath;$claudeBin", 'User')
         "$(Get-Date) - Added $claudeBin to User PATH" >> $LogFile
     }
+    mkl "$claudeBin" "$ScriptDir\bin"
 
     # Claude Code: WSL セットアップ + bash 切り替え
     try {
