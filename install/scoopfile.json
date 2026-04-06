@@ -259,6 +259,10 @@
       "Source": "extras"
     },
     {
+      "Name": "uv",
+      "Source": "main"
+    },
+    {
       "Name": "vcpkg",
       "Source": "main"
     },
