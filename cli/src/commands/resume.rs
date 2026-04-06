@@ -665,7 +665,7 @@ pub(crate) fn push_rest_with_groups(
         let group = time_group_label(&s.timestamp, now_epoch);
         if group != current_group {
             if !current_group.is_empty() {
-                lines.push(format!("{}\t{}── {} ──{}", usize::MAX, DIM, current_group, RESET));
+                lines.push(format!("{}\t{}{}── {} ──{}", usize::MAX, GREEN, DIM, current_group, RESET));
             }
             current_group = group;
         }
@@ -678,7 +678,7 @@ pub(crate) fn push_rest_with_groups(
         ));
     }
     if !current_group.is_empty() {
-        lines.push(format!("{}\t{}── {} ──{}", usize::MAX, DIM, current_group, RESET));
+        lines.push(format!("{}\t{}{}── {} ──{}", usize::MAX, GREEN, DIM, current_group, RESET));
     }
 }
 
