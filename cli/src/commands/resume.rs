@@ -161,6 +161,19 @@ pub fn select(query: &[String]) -> ShellAction {
         let _ = stdin.write_all(lines.join("\n").as_bytes());
     }
 
+    // Prevent child processes (e.g. MistralServer) from inheriting the stdout
+    // pipe handle. Without this, PowerShell's pipeline never sees EOF because
+    // the inherited handle keeps the pipe open after dotcli exits.
+    #[cfg(windows)]
+    unsafe {
+        use std::os::windows::io::AsRawHandle;
+        unsafe extern "system" {
+            fn SetHandleInformation(hObject: isize, dwMask: u32, dwFlags: u32) -> i32;
+        }
+        let handle = std::io::stdout().as_raw_handle() as isize;
+        SetHandleInformation(handle, 1 /* HANDLE_FLAG_INHERIT */, 0);
+    }
+
     // Spawn background title generation thread
     let bg_tmp = tmp_path.clone();
     let bg_sessions: Vec<SessionInfo> = sessions

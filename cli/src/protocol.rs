@@ -50,10 +50,12 @@ fn is_zero(v: &i32) -> bool {
 
 impl ShellAction {
     pub fn print(&self) {
+        use std::io::Write;
         println!(
             "{}",
             serde_json::to_string(self).expect("Failed to serialize ShellAction")
         );
+        let _ = std::io::stdout().flush();
     }
 }
 
