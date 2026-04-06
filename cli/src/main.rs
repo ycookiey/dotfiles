@@ -82,6 +82,17 @@ enum Commands {
         #[arg(default_value = ".")]
         path: String,
     },
+    /// AI title generation
+    Titles {
+        #[command(subcommand)]
+        action: TitlesAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum TitlesAction {
+    /// Generate titles for all uncached sessions
+    Build,
 }
 
 fn main() {
@@ -136,5 +147,8 @@ fn main() {
         }
         Commands::Frun => commands::frun::run(),
         Commands::Locked { path } => commands::locked::run(&path),
+        Commands::Titles { action } => match action {
+            TitlesAction::Build => commands::titles::build(),
+        },
     }
 }
