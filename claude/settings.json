@@ -50,6 +50,17 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "dotcli token-audit-hook"
+          }
+        ]
+      }
     ]
   }
 }
