@@ -664,8 +664,10 @@ pub(crate) fn push_rest_with_groups(
     for &(i, s) in rest {
         let group = time_group_label(&s.timestamp, now_epoch);
         if group != current_group {
+            if !current_group.is_empty() {
+                lines.push(format!("{}\t{}── {} ──{}", usize::MAX, DIM, current_group, RESET));
+            }
             current_group = group;
-            lines.push(format!("{}\t{}── {} ──{}", usize::MAX, DIM, group, RESET));
         }
         lines.push(format_line(
             i,
@@ -674,6 +676,9 @@ pub(crate) fn push_rest_with_groups(
             "",
             cached_titles.get(&s.session_id).map(|t| t.as_str()),
         ));
+    }
+    if !current_group.is_empty() {
+        lines.push(format!("{}\t{}── {} ──{}", usize::MAX, DIM, current_group, RESET));
     }
 }
 
