@@ -34,6 +34,9 @@ foreach ($b in $json.buckets) {
     }
 }
 
+# Scoop 設定
+scoop config update_nightly true
+
 # アプリインストール（大きいアプリを後回し）
 $orderFile = "$ScriptDir\install-order.json"
 if (Test-Path $orderFile) {
