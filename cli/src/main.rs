@@ -87,6 +87,8 @@ enum Commands {
         #[command(subcommand)]
         action: TitlesAction,
     },
+    /// PostToolUse hook: log tool calls for token audit
+    TokenAuditHook,
 }
 
 #[derive(Subcommand)]
@@ -150,5 +152,6 @@ fn main() {
         Commands::Titles { action } => match action {
             TitlesAction::Build => commands::titles::build(),
         },
+        Commands::TokenAuditHook => commands::token_audit_hook::run(),
     }
 }

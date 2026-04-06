@@ -1,0 +1,278 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CLAUDE_DIRS=("$HOME/.claude" "$HOME/.claude-"*)
+
+# --- 共通jqフィルタ ---
+
+JQ_DEDUP='
+  select(.message.role == "assistant" and .message.usage != null and .requestId != null) |
+  {
+    reqId: .requestId,
+    tools: [.message.content[]? | select(.type == "tool_use") | {name: .name, input: .input}],
+    input: (.message.usage.input_tokens // 0),
+    output: (.message.usage.output_tokens // 0),
+    cache_read: (.message.usage.cache_read_input_tokens // 0),
+    cache_create: (.message.usage.cache_creation_input_tokens // 0)
+  }
+'
+JQ_DEDUP_GROUP='group_by(.reqId) | map(last)'
+
+# --- 共通関数 ---
+
+find_jsonl_files() {
+  for dir in "${CLAUDE_DIRS[@]}"; do
+    [[ -d "$dir/projects" ]] && find "$dir/projects" -name "*.jsonl" -type f
+  done
+}
+
+# --- サブコマンド ---
+
+cmd_static() {
+  local project_claude_md=""
+  local dir="$PWD"
+  while [[ "$dir" != "/" && "$dir" != "$(dirname "$dir")" ]]; do
+    [[ -f "$dir/CLAUDE.md" ]] && { project_claude_md="$dir/CLAUDE.md"; break; }
+    dir="$(dirname "$dir")"
+  done
+
+  # CLAUDE.md分析
+  local claude_mds="[]"
+  for f in "$HOME/.claude/CLAUDE.md" "$project_claude_md"; do
+    [[ -z "$f" || ! -f "$f" ]] && continue
+    local b=$(wc -c < "$f")
+    local t=$(( b / 2 ))
+    claude_mds=$(echo "$claude_mds" | jq --arg p "$f" --argjson b "$b" --argjson t "$t" '. + [{"path":$p,"bytes":$b,"est_tokens":$t}]')
+  done
+
+  # SKILL.md description分析
+  local skills="[]"
+  local skills_total=0
+  for dir in "${CLAUDE_DIRS[@]}"; do
+    [[ -d "$dir/skills" ]] || continue
+    for sm in "$dir"/skills/*/SKILL.md; do
+      [[ -f "$sm" ]] || continue
+      local name=$(basename "$(dirname "$sm")")
+      local desc=$(sed -n '/^---$/,/^---$/{ /^description:/{ s/^description: *//; p; } }' "$sm")
+      local db=${#desc}
+      local dt=$(( db / 2 ))
+      skills_total=$(( skills_total + dt ))
+      skills=$(echo "$skills" | jq --arg n "$name" --argjson db "$db" --argjson dt "$dt" '. + [{"name":$n,"desc_bytes":$db,"est_tokens":$dt}]')
+    done
+    break
+  done
+
+  # settings.json分析
+  local settings="$HOME/.claude/settings.json"
+  local plugins="[]" plugin_count=0 mcp_count=0 hook_active=false
+  if [[ -f "$settings" ]]; then
+    plugins=$(jq -r '.enabledPlugins // {} | to_entries | map(select(.value == true)) | map(.key)' "$settings" 2>/dev/null || echo "[]")
+    plugin_count=$(echo "$plugins" | jq 'length')
+    local claude_json="$HOME/.claude/.claude.json"
+    if [[ -f "$claude_json" ]]; then
+      mcp_count=$(jq '.mcpServers // {} | length' "$claude_json" 2>/dev/null || echo 0)
+    fi
+    hook_active=$(jq '.hooks.PostToolUse // [] | any(.hooks[]?.command | test("token-audit-log"))' "$settings" 2>/dev/null || echo false)
+  fi
+
+  # .claudeignore確認
+  local claudeignore=false
+  [[ -f "$PWD/.claudeignore" ]] && claudeignore=true
+
+  jq -n \
+    --argjson cm "$claude_mds" \
+    --argjson sk "$skills" \
+    --argjson st "$skills_total" \
+    --argjson pl "$plugins" \
+    --argjson pc "$plugin_count" \
+    --argjson mc "$mcp_count" \
+    --argjson ci "$claudeignore" \
+    --argjson ha "$hook_active" \
+    '{
+      claude_md: $cm,
+      skills: $sk,
+      skills_total_est_tokens: $st,
+      plugins: $pl,
+      plugin_count: $pc,
+      mcp_server_count: $mc,
+      claudeignore_exists: $ci,
+      token_audit_hook_active: $ha
+    }'
+}
+
+cmd_session() {
+  local mode="all" value=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --all)     mode="all"; shift ;;
+      --last)    mode="last"; value="$2"; shift 2 ;;
+      --session) mode="session"; value="$2"; shift 2 ;;
+      *)         echo "Unknown option: $1" >&2; exit 1 ;;
+    esac
+  done
+
+  local files
+  case "$mode" in
+    all)     files=$(find_jsonl_files) ;;
+    last)    files=$(find_jsonl_files | while IFS= read -r f; do printf '%s\t%s\n' "$(stat -c '%Y' "$f" 2>/dev/null || echo 0)" "$f"; done | sort -rn | cut -f2- | head -"$value") ;;
+    session) files=$(find_jsonl_files | grep "$value" || true) ;;
+  esac
+
+  [[ -z "$files" ]] && { echo '{"error":"no sessions found"}'; exit 1; }
+
+  local deduped
+  deduped=$(echo "$files" | xargs jq -c "$JQ_DEDUP" 2>/dev/null | jq -s "$JQ_DEDUP_GROUP")
+
+  local total_requests session_count
+  total_requests=$(echo "$deduped" | jq 'length')
+  session_count=$(echo "$files" | wc -l)
+
+  local by_tool
+  by_tool=$(echo "$deduped" | jq '
+    (map(.cache_create) | add) as $total |
+    reduce .[] as $r ({};
+      if ($r.tools | length) == 0 then .["(response)"] += $r.cache_create
+      else .[([$r.tools[].name] | sort | join("+"))] += $r.cache_create end
+    ) | to_entries | sort_by(-.value) |
+    map({tool: .key, cache_create: .value, pct: (.value / $total * 100 | . * 10 | round / 10)})
+  ')
+
+  local top_reads
+  top_reads=$(echo "$deduped" | jq '
+    [.[] | select(.tools | any(.name == "Read")) |
+      (.tools | map(select(.name == "Read")) | length) as $rc |
+      (.cache_create / $rc) as $cc |
+      .tools[] | select(.name == "Read") |
+      {file: (.input.file_path // "unknown"), cache_create: $cc}] |
+    group_by(.file) | map({
+      file: .[0].file,
+      count: length,
+      total_cache_create: (map(.cache_create) | add)
+    }) | sort_by(-.total_cache_create) | .[:10]
+  ')
+
+  local large_ops
+  large_ops=$(echo "$deduped" | jq '
+    [.[] | select(.cache_create > 5000) |
+     {
+       tool: (if (.tools | length) == 0 then "(response)" else [.tools[].name] | sort | join("+") end),
+       file: ([.tools[] | .input.file_path // empty] | first // null | if . then .[0:100] else null end),
+       cache_create
+     }] | sort_by(-.cache_create) | .[:20]
+  ')
+
+  local dup_reads
+  dup_reads=$(echo "$deduped" | jq '
+    [.[] | select(.tools | any(.name == "Read")) |
+      (.tools | map(select(.name == "Read")) | length) as $rc |
+      (.cache_create / $rc) as $cc |
+      .tools[] | select(.name == "Read") |
+      {file: (.input.file_path // "unknown"), cache_create: $cc}] |
+    group_by(.file) | map(select(length > 1)) |
+    map({file: .[0].file, count: length, total_cache_create: (map(.cache_create) | add)}) |
+    sort_by(-.total_cache_create)
+  ')
+
+  local growth="[]" compactions="[]" per_session_max
+  if [[ "$mode" == "session" ]]; then
+    growth=$(echo "$deduped" | jq '
+      [range(length) as $i | {i: $i, ctx: (.[$i].input + .[$i].cache_read + .[$i].cache_create)}] |
+      [.[] | select(.i < 5 or .i % 50 == 0)] |
+      map({request_idx: .i, total_ctx: .ctx})
+    ')
+    compactions=$(echo "$deduped" | jq '
+      [range(length) as $i | {i: $i, ctx: (.[$i].input + .[$i].cache_read + .[$i].cache_create), cc: .[$i].cache_create}] |
+      [range(1; length) as $i | {i: .[$i].i, before: .[$i-1].ctx, after: .[$i].ctx, cc: .[$i].cc} |
+       select(.before - .after > 10000)] |
+      map({request_idx: .i, before, after, ratio: (.after / .before * 100 | round / 100), compaction_cache_create: .cc})
+    ')
+  fi
+  local session_tsv=""
+  while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
+    local sid=$(basename "$f" .jsonl)
+    local first_ctx="" max_ctx=""
+    read -r first_ctx max_ctx < <(jq -c "$JQ_DEDUP" "$f" 2>/dev/null | jq -sr "${JQ_DEDUP_GROUP} |
+      if length > 0 then
+        "\(.[0].input + .[0].cache_read + .[0].cache_create)\t\(map(.input + .cache_read + .cache_create) | max)"
+      else empty end" 2>/dev/null)
+    [[ -n "$first_ctx" ]] && session_tsv+="${sid}	${first_ctx}	${max_ctx}
+"
+  done <<< "$files"
+  local startup_costs per_session_max
+  startup_costs=$(printf '%s' "$session_tsv" | jq -Rsn '[inputs | select(length > 0) | split("\t") | {session: .[0], first_total_ctx: (.[1] | tonumber)}]')
+  per_session_max=$(printf '%s' "$session_tsv" | jq -Rsn '[inputs | select(length > 0) | split("\t") | {session: .[0], max_ctx: (.[2] | tonumber)}]')
+
+  jq -n \
+    --argjson sc "$session_count" \
+    --argjson tr "$total_requests" \
+    --argjson bt "$by_tool" \
+    --argjson trd "$top_reads" \
+    --argjson lo "$large_ops" \
+    --argjson dr "$dup_reads" \
+    --argjson gr "$growth" \
+    --argjson co "$compactions" \
+    --argjson pm "$per_session_max" \
+    --argjson su "$startup_costs" \
+    '{
+      sessions_analyzed: $sc,
+      total_requests: $tr,
+      by_tool: $bt,
+      top_reads: $trd,
+      large_operations: $lo,
+      duplicate_reads: $dr,
+      context_growth: $gr,
+      compactions: $co,
+      per_session_max_ctx: $pm,
+      startup_costs: $su
+    }'
+}
+
+cmd_compare() {
+  [[ $# -lt 2 ]] && { echo "Usage: token-audit compare <session_id1> <session_id2>" >&2; exit 1; }
+  local id1="$1" id2="$2"
+  local f1 f2
+  f1=$(find_jsonl_files | grep "$id1" | head -1)
+  f2=$(find_jsonl_files | grep "$id2" | head -1)
+  [[ -z "$f1" || -z "$f2" ]] && { echo '{"error":"session not found"}'; exit 1; }
+
+  get_first_ctx() {
+    jq -c "$JQ_DEDUP" "$1" 2>/dev/null | jq -s "${JQ_DEDUP_GROUP} | .[0] | .input + .cache_read + .cache_create" 2>/dev/null
+  }
+
+  local ctx1 ctx2
+  ctx1=$(get_first_ctx "$f1")
+  ctx2=$(get_first_ctx "$f2")
+
+  tool_breakdown() {
+    jq -c "$JQ_DEDUP" "$1" 2>/dev/null | jq -s "
+      ${JQ_DEDUP_GROUP} |
+      reduce .[] as \$r ({};
+        if (\$r.tools | length) == 0 then .[\"(response)\"] += \$r.cache_create
+        else .[([\$r.tools[].name] | sort | join(\"+\"))] += \$r.cache_create end
+      )
+    " 2>/dev/null
+  }
+
+  local tools1 tools2
+  tools1=$(tool_breakdown "$f1")
+  tools2=$(tool_breakdown "$f2")
+
+  jq -n \
+    --arg s1 "$id1" --arg s2 "$id2" \
+    --argjson c1 "$ctx1" --argjson c2 "$ctx2" \
+    --argjson t1 "$tools1" --argjson t2 "$tools2" \
+    '{
+      session1: {id: $s1, first_ctx: $c1, by_tool: $t1},
+      session2: {id: $s2, first_ctx: $c2, by_tool: $t2},
+      diff_first_ctx: ($c2 - $c1)
+    }'
+}
+
+# --- メイン ---
+case "${1:-}" in
+  static)  shift; cmd_static "$@" ;;
+  session) shift; cmd_session "$@" ;;
+  compare) shift; cmd_compare "$@" ;;
+  *)       echo "Usage: token-audit <static|session|compare>" >&2; exit 1 ;;
+esac
