@@ -1,6 +1,6 @@
 #!/usr/bin/env pwsh
 git status --short
-git diff -U1 --no-prefix --no-color | ? { $_ -notmatch '^index ' }
+git-lines diff
 git diff --cached -U1 --no-prefix --no-color | ? { $_ -notmatch '^index ' }
 git log --oneline -5
 
