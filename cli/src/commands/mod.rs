@@ -8,4 +8,5 @@ pub mod grf;
 pub mod locked;
 pub mod proxy;
 pub mod resume;
+pub mod titles;
 pub mod y;
