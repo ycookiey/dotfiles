@@ -81,6 +81,7 @@ pub fn select(query: &[String]) -> ShellAction {
             proj_width,
             GREEN,
             cached_titles.get(&s.session_id).map(|t| t.as_str()),
+            false,
         ));
     }
     // 現在時刻（epoch秒）
@@ -97,7 +98,7 @@ pub fn select(query: &[String]) -> ShellAction {
         );
         lines.push(sep);
     }
-    push_rest_with_groups(&mut lines, &rest, proj_width, &cached_titles, now_epoch);
+    push_rest_with_groups(&mut lines, &rest, proj_width, &cached_titles, now_epoch, None);
 
     // Collect uncached sessions for background generation
     let home = dirs::home_dir().expect("no home dir");
@@ -411,15 +412,25 @@ pub(crate) fn format_line(
     proj_width: usize,
     color: &str,
     ai_title: Option<&str>,
+    generating: bool,
 ) -> String {
-    let display = s
-        .title
-        .as_deref()
-        .or(ai_title)
-        .unwrap_or(&s.latest_message)
-        .replace('\t', " ")
-        .replace('\n', " ");
+    let title = s.title.as_deref().or(ai_title);
+    let msg = s.latest_message.replace('\t', " ").replace('\n', " ");
     let ts = format_timestamp(&s.timestamp);
+
+    const TITLE_WIDTH: usize = 25;
+    let display = if let Some(t) = title {
+        let t = t.replace('\t', " ").replace('\n', " ");
+        let t = truncate_str(&t, TITLE_WIDTH);
+        let pad = TITLE_WIDTH.saturating_sub(t.chars().count());
+        format!("{t}{:pad$}  {DIM}{msg}{RESET}", "")
+    } else if generating {
+        let pad = TITLE_WIDTH.saturating_sub(1);
+        format!("…{:pad$}  {DIM}{msg}{RESET}", "")
+    } else {
+        msg
+    };
+
     if color.is_empty() {
         format!(
             "{i}\t{:<pw$}  {}  {}",
@@ -672,6 +683,7 @@ pub(crate) fn push_rest_with_groups(
     proj_width: usize,
     cached_titles: &std::collections::HashMap<String, String>,
     now_epoch: i64,
+    generating_sid: Option<&str>,
 ) {
     let mut current_group = "";
     for &(i, s) in rest {
@@ -682,12 +694,16 @@ pub(crate) fn push_rest_with_groups(
             }
             current_group = group;
         }
+        let generating = generating_sid == Some(s.session_id.as_str())
+            && s.title.is_none()
+            && !cached_titles.contains_key(&s.session_id);
         lines.push(format_line(
             i,
             s,
             proj_width,
             "",
             cached_titles.get(&s.session_id).map(|t| t.as_str()),
+            generating,
         ));
     }
     if !current_group.is_empty() {

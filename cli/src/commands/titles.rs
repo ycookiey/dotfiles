@@ -294,20 +294,24 @@ pub(crate) fn background_generate(params: BgGenParams) {
         return;
     }
 
-    for (path, sid) in &params.needs_gen {
+    for (idx, (path, sid)) in params.needs_gen.iter().enumerate() {
+        // Notify fzf that this session is now generating
+        reload_fzf(&params, Some(sid));
         let Some(input) = resume::extract_title_input(path) else {
             continue;
         };
         if let Some(title) = generate_title(&server, &input) {
             write_cached_title(sid, &title);
-            reload_fzf(&params);
+            // Show completed title; mark next as generating if any
+            let next_sid = params.needs_gen.get(idx + 1).map(|(_, s)| s.as_str());
+            reload_fzf(&params, next_sid);
         }
     }
 
     release_lock();
 }
 
-fn reload_fzf(params: &BgGenParams) {
+fn reload_fzf(params: &BgGenParams, generating_sid: Option<&str>) {
     // Rebuild all lines with current cache state
     let mut titles: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for s in &params.sessions {
@@ -330,12 +334,16 @@ fn reload_fzf(params: &BgGenParams) {
 
     let mut lines: Vec<String> = Vec::with_capacity(params.sessions.len());
     for &(i, s) in &pwd_group {
+        let generating = generating_sid == Some(s.session_id.as_str())
+            && s.title.is_none()
+            && !titles.contains_key(&s.session_id);
         lines.push(resume::format_line(
             i,
             s,
             params.proj_width,
             resume::GREEN,
             titles.get(&s.session_id).map(|s| s.as_str()),
+            generating,
         ));
     }
     let now_epoch = std::time::SystemTime::now()
@@ -355,7 +363,7 @@ fn reload_fzf(params: &BgGenParams) {
         );
         lines.push(sep);
     }
-    resume::push_rest_with_groups(&mut lines, &rest, params.proj_width, &titles, now_epoch);
+    resume::push_rest_with_groups(&mut lines, &rest, params.proj_width, &titles, now_epoch, generating_sid);
 
     // Write to tmp file and send reload to fzf
     let content = lines.join("\n");
