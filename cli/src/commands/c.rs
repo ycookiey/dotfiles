@@ -96,8 +96,10 @@ pub fn run(args: &[String]) {
         action.set_env.extend(env);
         action.unset_env = unset_env;
         action.messages.extend(messages);
+        let code = action.exit_code;
         action.print();
-        return;
+        // Background title generation thread may still be running; force exit
+        std::process::exit(code);
     }
 
     let action = ShellAction {
