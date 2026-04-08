@@ -202,13 +202,24 @@ fn format_session(v: &Value) -> String {
         out.push('\n');
     }
 
-    out.push_str("By Tool (cache_create)\n");
+    // Check if total_output/efficiency fields exist for header
+    let has_extra = v.get("by_tool")
+        .and_then(|x| x.as_array())
+        .map_or(false, |arr| arr.iter().any(|o| o.get("total_output").is_some()));
+    if has_extra {
+        out.push_str("By Tool (cc=cache_create, out=output, eff=out/cc)\n");
+    } else {
+        out.push_str("By Tool (cache_create)\n");
+    }
     if let Some(arr) = v.get("by_tool").and_then(|x| x.as_array()) {
         let max_cc = arr
             .iter()
             .map(|o| as_f64(o.get("cache_create").unwrap_or(&Value::Null)))
             .fold(0.0_f64, f64::max)
             .max(1.0);
+
+        // Check if total_output/efficiency fields exist
+        let has_extra = arr.iter().any(|o| o.get("total_output").is_some());
 
         for o in arr {
             let tool = o
@@ -219,14 +230,30 @@ fn format_session(v: &Value) -> String {
             let pct = as_f64(o.get("pct").unwrap_or(&Value::Null));
             let warn = if cc > THRESH_CACHE_CREATE { " ⚠" } else { "" };
             let cc_u = cc.round() as u64;
-            out.push_str(&format!(
-                "  {:<12} {:>10} tok  {:>6}  {}{}\n",
-                tool,
-                fmt_u64_commas(cc_u),
-                fmt_f64_pct(pct),
-                bar(cc, max_cc, BAR_WIDTH),
-                warn
-            ));
+
+            if has_extra {
+                let total_output = as_f64(o.get("total_output").unwrap_or(&Value::Null));
+                let efficiency = as_f64(o.get("efficiency").unwrap_or(&Value::Null));
+                out.push_str(&format!(
+                    "  {:<12} {:>10} cc  {:>6}  out:{:>9}  eff:{:>4.1}  {}{}\n",
+                    tool,
+                    fmt_u64_commas(cc_u),
+                    fmt_f64_pct(pct),
+                    fmt_u64_commas(total_output.round() as u64),
+                    efficiency,
+                    bar(cc, max_cc, BAR_WIDTH),
+                    warn
+                ));
+            } else {
+                out.push_str(&format!(
+                    "  {:<12} {:>10} tok  {:>6}  {}{}\n",
+                    tool,
+                    fmt_u64_commas(cc_u),
+                    fmt_f64_pct(pct),
+                    bar(cc, max_cc, BAR_WIDTH),
+                    warn
+                ));
+            }
         }
     }
 
@@ -289,6 +316,50 @@ fn format_session(v: &Value) -> String {
                     bar(cc, max_cc, BAR_WIDTH),
                     tail
                 ));
+            }
+        }
+    }
+
+    if let Some(arr) = v.get("large_responses").and_then(|x| x.as_array()) {
+        if !arr.is_empty() {
+            out.push_str("\nLarge responses (output > 10000)\n");
+            let max_output = arr
+                .iter()
+                .map(|o| as_f64(o.get("output").unwrap_or(&Value::Null)))
+                .fold(0.0_f64, f64::max)
+                .max(1.0);
+            for o in arr.iter().take(20) {
+                let tool = o
+                    .get("tool")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("?");
+                let file = o
+                    .get("file")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("");
+                let output = as_f64(o.get("output").unwrap_or(&Value::Null));
+                let cc = as_f64(o.get("cache_create").unwrap_or(&Value::Null));
+                let efficiency = as_f64(o.get("efficiency").unwrap_or(&Value::Null));
+                let output_u = output.round() as u64;
+                let cc_u = cc.round() as u64;
+                let idx = as_i64(o.get("request_idx").unwrap_or(&Value::Null));
+                let eff_str = format!("{:>7.1}", efficiency);
+                let tail = if file.is_empty() {
+                    String::new()
+                } else {
+                    format!("  {}", file)
+                };
+                let line = format!(
+                    "  req {:>6}  {:<24} out:{:>8} cc:{:>8} eff:{}  {}{}\n",
+                    idx,
+                    tool,
+                    fmt_u64_commas(output_u),
+                    fmt_u64_commas(cc_u),
+                    eff_str,
+                    bar(output, max_output, BAR_WIDTH),
+                    tail
+                );
+                out.push_str(&line);
             }
         }
     }
