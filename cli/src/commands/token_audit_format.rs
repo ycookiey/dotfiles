@@ -367,6 +367,11 @@ fn format_session(v: &Value) -> String {
     if let Some(arr) = v.get("duplicate_reads").and_then(|x| x.as_array()) {
         if !arr.is_empty() {
             out.push_str("\nDuplicate reads\n");
+            let max_total = arr
+                .iter()
+                .map(|o| as_f64(o.get("total_cache_create").unwrap_or(&Value::Null)))
+                .fold(0.0_f64, f64::max)
+                .max(1.0);
             for o in arr.iter().take(20) {
                 let file = o
                     .get("file")
@@ -376,10 +381,11 @@ fn format_session(v: &Value) -> String {
                 let total = as_f64(o.get("total_cache_create").unwrap_or(&Value::Null));
                 let total_u = total.round() as u64;
                 out.push_str(&format!(
-                    "  {:<40} {:>3}×  {:>10} tok\n",
+                    "  {:<40} {:>3}×  {:>10} tok  {}\n",
                     file,
                     count,
-                    fmt_u64_commas(total_u)
+                    fmt_u64_commas(total_u),
+                    bar(total, max_total, BAR_WIDTH)
                 ));
             }
         }
