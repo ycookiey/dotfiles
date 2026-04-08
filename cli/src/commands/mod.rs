@@ -9,5 +9,6 @@ pub mod locked;
 pub mod proxy;
 pub mod resume;
 pub mod titles;
+pub mod token_audit_format;
 pub mod token_audit_hook;
 pub mod y;
