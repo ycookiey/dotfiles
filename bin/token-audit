@@ -21,8 +21,16 @@ JQ_DEDUP_GROUP='group_by(.reqId) | map(last)'
 # --- 共通関数 ---
 
 find_jsonl_files() {
+  local seen=()
   for dir in "${CLAUDE_DIRS[@]}"; do
-    [[ -d "$dir/projects" ]] && find "$dir/projects" -name "*.jsonl" -type f
+    [[ -d "$dir/projects" ]] || continue
+    while IFS= read -r f; do
+      local base=$(basename "$f")
+      if [[ ! " ${seen[*]} " =~ " $base " ]]; then
+        seen+=("$base")
+        echo "$f"
+      fi
+    done < <(find "$dir/projects" -name "*.jsonl" -type f)
   done
 }
 
@@ -114,7 +122,7 @@ cmd_session() {
   local files
   case "$mode" in
     all)     files=$(find_jsonl_files) ;;
-    last)    files=$(find_jsonl_files | while IFS= read -r f; do printf '%s\t%s\n' "$(stat -c '%Y' "$f" 2>/dev/null || echo 0)" "$f"; done | sort -rn | cut -f2- | head -"$value") ;;
+    last)    files=$(find_jsonl_files | xargs stat -c '%Y %n' 2>/dev/null | sort -rn | cut -d' ' -f2- | head -"$value") ;;
     session) files=$(find_jsonl_files | grep "$value" || true) ;;
   esac
 
@@ -194,7 +202,7 @@ cmd_session() {
     [[ -z "$f" ]] && continue
     local sid=$(basename "$f" .jsonl)
     local first_ctx="" max_ctx=""
-    read -r first_ctx max_ctx < <(jq -c "$JQ_DEDUP" "$f" 2>/dev/null | jq -sr "$session_jq" 2>/dev/null)
+    read -r first_ctx max_ctx < <(jq -c "$JQ_DEDUP" "$f" 2>/dev/null | jq -sr "$session_jq" 2>/dev/null | tr -d '\r')
     [[ -n "$first_ctx" ]] && session_tsv+="${sid}	${first_ctx}	${max_ctx}
 "
   done <<< "$files"
@@ -236,7 +244,7 @@ cmd_compare() {
   [[ -z "$f1" || -z "$f2" ]] && { echo '{"error":"session not found"}'; exit 1; }
 
   get_first_ctx() {
-    jq -c "$JQ_DEDUP" "$1" 2>/dev/null | jq -s "${JQ_DEDUP_GROUP} | .[0] | .input + .cache_read + .cache_create" 2>/dev/null
+    jq -c "$JQ_DEDUP" "$1" 2>/dev/null | jq -s "${JQ_DEDUP_GROUP} | .[0] | .input + .cache_read + .cache_create" 2>/dev/null | tr -d '\r'
   }
 
   local ctx1 ctx2
