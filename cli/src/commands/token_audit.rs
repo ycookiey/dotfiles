@@ -13,7 +13,6 @@ struct Request {
     req_id: String,
     tools: Vec<ToolUse>,
     input: i64,
-    #[allow(dead_code)]
     output: i64,
     cache_read: i64,
     cache_create: i64,
@@ -155,9 +154,11 @@ fn find_session_files(files: &[PathBuf], id: &str) -> Vec<PathBuf> {
 // ============================================================================
 
 /// Parse JSONL files, extract assistant messages, dedup by requestId.
+/// Preserves first-appearance order; last entry wins for duplicate IDs.
 /// Equivalent to: jq -c "$JQ_DEDUP" | jq -s "$JQ_DEDUP_GROUP"
 fn parse_requests(files: &[PathBuf]) -> Vec<Request> {
-    let mut requests_by_id: HashMap<String, Request> = HashMap::new();
+    let mut requests: Vec<Request> = Vec::new();
+    let mut id_index: HashMap<String, usize> = HashMap::new();
 
     for file_path in files {
         if let Ok(f) = fs::File::open(file_path) {
@@ -166,7 +167,12 @@ fn parse_requests(files: &[PathBuf]) -> Vec<Request> {
                 if let Ok(val) = serde_json::from_str::<Value>(&line) {
                     if is_assistant_message(&val) {
                         if let Some(req) = extract_request(&val) {
-                            requests_by_id.insert(req.req_id.clone(), req); // last wins
+                            if let Some(&idx) = id_index.get(&req.req_id) {
+                                requests[idx] = req; // last wins, same position
+                            } else {
+                                id_index.insert(req.req_id.clone(), requests.len());
+                                requests.push(req);
+                            }
                         }
                     }
                 }
@@ -174,7 +180,7 @@ fn parse_requests(files: &[PathBuf]) -> Vec<Request> {
         }
     }
 
-    requests_by_id.into_values().collect()
+    requests
 }
 
 fn is_assistant_message(v: &Value) -> bool {
@@ -438,6 +444,7 @@ fn cmd_session(mode: &str, value: &str) -> Value {
         "by_tool": aggregate_by_tool(&requests),
         "top_reads": aggregate_top_reads(&requests),
         "large_operations": detect_large_ops(&requests),
+        "large_responses": detect_large_responses(&requests),
         "duplicate_reads": detect_dup_reads(&requests),
         "context_growth": growth,
         "compactions": compactions,
@@ -446,29 +453,38 @@ fn cmd_session(mode: &str, value: &str) -> Value {
     })
 }
 
-/// Aggregate cache_create by tool combination key.
+/// Aggregate cache_create and output by tool combination key.
 fn aggregate_by_tool(requests: &[Request]) -> Value {
-    let mut by_tool: HashMap<String, i64> = HashMap::new();
+    let mut by_tool: HashMap<String, (i64, i64)> = HashMap::new(); // tool -> (cache_create, total_output)
     let mut total: i64 = 0;
 
     for r in requests {
         let key = r.tool_key();
-        *by_tool.entry(key).or_default() += r.cache_create;
+        let entry = by_tool.entry(key).or_default();
+        entry.0 += r.cache_create;
+        entry.1 += r.output;
         total += r.cache_create;
     }
 
     let mut items: Vec<_> = by_tool
         .into_iter()
-        .map(|(tool, cache_create)| {
+        .map(|(tool, (cache_create, total_output))| {
             let pct = if total > 0 {
                 (cache_create as f64 / total as f64) * 100.0
+            } else {
+                0.0
+            };
+            let efficiency = if cache_create > 0 {
+                (total_output as f64 / cache_create as f64 * 10.0).round() / 10.0
             } else {
                 0.0
             };
             json!({
                 "tool": tool,
                 "cache_create": cache_create,
-                "pct": (pct * 10.0).round() / 10.0 // 1 decimal
+                "total_output": total_output,
+                "pct": (pct * 10.0).round() / 10.0, // 1 decimal
+                "efficiency": efficiency
             })
         })
         .collect();
@@ -524,6 +540,48 @@ fn aggregate_top_reads(requests: &[Request]) -> Value {
     });
 
     items.truncate(10);
+    json!(items)
+}
+
+/// Detect large responses (output > 10000).
+fn detect_large_responses(requests: &[Request]) -> Value {
+    let mut items = Vec::new();
+
+    for (idx, r) in requests.iter().enumerate() {
+        if r.output > 10000 {
+            let tool_key = r.tool_key();
+            let file = r.tools.first().and_then(|t| {
+                t.input.get("file_path").and_then(|x| {
+                    let s = x.as_str().unwrap_or("");
+                    let trimmed = if s.len() > 100 { &s[..100] } else { s };
+                    Some(trimmed.to_string())
+                })
+            });
+
+            let efficiency = if r.cache_create > 0 {
+                (r.output as f64 / r.cache_create as f64 * 10.0).round() / 10.0
+            } else {
+                0.0
+            };
+
+            items.push(json!({
+                "request_idx": idx,
+                "tool": tool_key,
+                "file": file,
+                "output": r.output,
+                "cache_create": r.cache_create,
+                "efficiency": efficiency
+            }));
+        }
+    }
+
+    items.sort_by(|a, b| {
+        let a_output = b["output"].as_i64().unwrap_or(0);
+        let b_output = a["output"].as_i64().unwrap_or(0);
+        a_output.cmp(&b_output)
+    });
+
+    items.truncate(20);
     json!(items)
 }
 
