@@ -10,9 +10,9 @@ allowed-tools: Bash, Read, Glob, Grep
 
 ## 実行手順
 
-1. `token-audit static` を実行 → 設定ファイルの静的分析結果（JSON）
-2. `token-audit session` を実行 → JSONLログのセッション分析結果（JSON）
-3. 人間向け表形式: `token-audit static | dotcli token-audit-format` または `token-audit session --last 3 | dotcli token-audit-format`
+1. `dotcli token-audit static` を実行 → 設定ファイルの静的分析結果（JSON）
+2. `dotcli token-audit session` を実行 → JSONLログのセッション分析結果（JSON）
+3. 人間向け表形式: `dotcli token-audit static | dotcli token-audit-format` または `dotcli token-audit session --last 3 | dotcli token-audit-format`
 4. 結果を解釈し、以下の観点で改善点を提示:
 
 ### 静的分析の観点

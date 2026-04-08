@@ -91,6 +91,11 @@ enum Commands {
     TokenAuditHook,
     /// Format token-audit JSON output with bar charts
     TokenAuditFormat,
+    /// Token consumption audit (static/session/compare)
+    TokenAudit {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -156,5 +161,6 @@ fn main() {
         },
         Commands::TokenAuditHook => commands::token_audit_hook::run(),
         Commands::TokenAuditFormat => commands::token_audit_format::run(),
+        Commands::TokenAudit { args } => commands::token_audit::run(&args),
     }
 }
