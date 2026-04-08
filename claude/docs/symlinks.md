@@ -26,6 +26,7 @@ setup.ps1 で管理。追加・変更は setup.ps1 の mkl で行う（直接コ
 | ~/.claude/statusline-rules.toml | dotfiles/claude/statusline/statusline-models.toml |
 | ~/.claude/rules/ | dotfiles/claude/rules/ |
 | ~/.claude/docs/ | dotfiles/claude/docs/ |
+| ~/.claude/agents/ | dotfiles/claude/agents/ |
 | ~/.claude/skills/ | dotfiles/claude/skills/ |
 | dotfiles/claude/skills/life | C:/Main/Project/life/skills/life |
 
