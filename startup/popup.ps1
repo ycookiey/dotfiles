@@ -45,11 +45,13 @@ function Show-PopupNotification {
             [void]$f.ShowDialog()
             $tmr.Dispose(); $f.Dispose()
         }).AddArgument($Title).AddArgument($Message).AddArgument($Duration).AddArgument($offset)
-        $handle = $ps.BeginInvoke()
-        Register-ObjectEvent $ps -EventName InvocationStateChanged -MessageData $rs -Action {
+        $msgData = @{ Runspace = $rs; Handle = $null }
+        $msgData.Handle = $ps.BeginInvoke()
+        Register-ObjectEvent $ps -EventName InvocationStateChanged -MessageData $msgData -Action {
             if ($Sender.InvocationStateInfo.State -in 'Completed','Stopped','Failed') {
+                try { $Sender.EndInvoke($Event.MessageData.Handle) } catch {}
                 $Sender.Dispose()
-                $Event.MessageData.Dispose()
+                $Event.MessageData.Runspace.Dispose()
                 Unregister-Event $EventSubscriber.SourceIdentifier
             }
         } | Out-Null
