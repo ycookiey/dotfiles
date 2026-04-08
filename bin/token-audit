@@ -187,15 +187,14 @@ cmd_session() {
       map({request_idx: .i, before, after, ratio: (.after / .before * 100 | round / 100), compaction_cache_create: .cc})
     ')
   fi
+  local session_jq
+  session_jq="${JQ_DEDUP_GROUP} | if length > 0 then \"\(.[0].input + .[0].cache_read + .[0].cache_create)\t\(map(.input + .cache_read + .cache_create) | max)\" else empty end"
   local session_tsv=""
   while IFS= read -r f; do
     [[ -z "$f" ]] && continue
     local sid=$(basename "$f" .jsonl)
     local first_ctx="" max_ctx=""
-    read -r first_ctx max_ctx < <(jq -c "$JQ_DEDUP" "$f" 2>/dev/null | jq -sr "${JQ_DEDUP_GROUP} |
-      if length > 0 then
-        "\(.[0].input + .[0].cache_read + .[0].cache_create)\t\(map(.input + .cache_read + .cache_create) | max)"
-      else empty end" 2>/dev/null)
+    read -r first_ctx max_ctx < <(jq -c "$JQ_DEDUP" "$f" 2>/dev/null | jq -sr "$session_jq" 2>/dev/null)
     [[ -n "$first_ctx" ]] && session_tsv+="${sid}	${first_ctx}	${max_ctx}
 "
   done <<< "$files"
