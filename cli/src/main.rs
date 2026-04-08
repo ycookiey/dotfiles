@@ -89,6 +89,8 @@ enum Commands {
     },
     /// PostToolUse hook: log tool calls for token audit
     TokenAuditHook,
+    /// Format token-audit JSON output with bar charts
+    TokenAuditFormat,
 }
 
 #[derive(Subcommand)]
@@ -153,5 +155,6 @@ fn main() {
             TitlesAction::Build => commands::titles::build(),
         },
         Commands::TokenAuditHook => commands::token_audit_hook::run(),
+        Commands::TokenAuditFormat => commands::token_audit_format::run(),
     }
 }

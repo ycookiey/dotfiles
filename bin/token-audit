@@ -72,7 +72,7 @@ cmd_static() {
     if [[ -f "$claude_json" ]]; then
       mcp_count=$(jq '.mcpServers // {} | length' "$claude_json" 2>/dev/null || echo 0)
     fi
-    hook_active=$(jq '.hooks.PostToolUse // [] | any(.hooks[]?.command | test("token-audit-log"))' "$settings" 2>/dev/null || echo false)
+    hook_active=$(jq '.hooks.PostToolUse // [] | any(.hooks[]?.command | test("token-audit"))' "$settings" 2>/dev/null || echo false)
   fi
 
   # .claudeignore確認
