@@ -12,7 +12,7 @@
 
 1. `TeamCreate` → `TaskCreate`（依存: `blockedBy`。同一ファイル編集も依存に含める）
 2. `Agent`でspawn（`team_name`, `name`, `subagent_type`指定）→ `TaskUpdate`で`owner`設定
-3. memberの`SendMessage`を受けて統合・次指示。`blockedBy`解消済みの未着手タスクがないか確認
+3. memberの`SendMessage`を受けて統合・次指示。`blockedBy`解消済みの未着手タスクがあれば即spawn（ユーザ確認不要）
 4. 完了後 `SendMessage`で`{type: "shutdown_request"}`
 
 ## フロー
@@ -25,7 +25,12 @@ researcher → planner → implementer → reviewer（並列可）
   - plannerあり（仕様明確）→ TDD: tester → implementer
   - plannerなし（小規模・バグ修正）→ 後追い: implementer → tester
 
+## 成果物ファイル
+
+planner/researcherは詳細を `.agent-output/<task-id>/` にファイル出力し、SendMessageでは概要+ファイルパスのみ送る。Leadのcontext肥大化を防止。
+- 例: `.agent-output/T-7.1/plan.md`, `.agent-output/T-7.1/research-api.md`
+- implementerへはspawn時にファイルパスを渡す
 ## Spawn
 
-- 絶対パス（相対不可）、前memberの出力サマリー、期待出力形式、「やらないこと」の明示
+- 絶対パス（相対不可）、前memberの出力サマリー（またはファイルパス）、期待出力形式、「やらないこと」の明示
 - ブロック時: memberがSendMessageで報告 → Leadが追加情報or別member
