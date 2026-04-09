@@ -141,7 +141,14 @@ pub fn generate(defs: &Definitions, dotfiles_dir: &Path) -> String {
                     }
                 }
                 LauncherType::StartApp => {
-                    // start_app is PowerShell-specific, skip for nushell
+                    let app = l.app_name.as_ref().unwrap();
+                    writeln!(
+                        out,
+                        "def {name} [] {{ ^pwsh -Command \"Start-App '{app}'\" }}",
+                        name = l.name,
+                        app = app,
+                    )
+                    .unwrap();
                 }
             }
         }

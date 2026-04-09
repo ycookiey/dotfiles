@@ -110,11 +110,10 @@ platform = "windows"
 
 # --- Start-App (Windows shell:AppsFolder) ---
 [[launcher]]
-name = "cal"
+name = "ncal"
 type = "start_app"
 app_name = "Notion Calendar"
 platform = "windows"
-nushell = false
 
 # --- Direct exe ---
 [[launcher]]
