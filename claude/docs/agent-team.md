@@ -10,9 +10,9 @@
 
 ## 手順
 
-1. `TeamCreate` → `TaskCreate`（依存: `blockedBy`）
+1. `TeamCreate` → `TaskCreate`（依存: `blockedBy`。同一ファイル編集も依存に含める）
 2. `Agent`でspawn（`team_name`, `name`, `subagent_type`指定）→ `TaskUpdate`で`owner`設定
-3. memberの`SendMessage`を受けて統合・次指示
+3. memberの`SendMessage`を受けて統合・次指示。`blockedBy`解消済みの未着手タスクがないか確認
 4. 完了後 `SendMessage`で`{type: "shutdown_request"}`
 
 ## フロー
