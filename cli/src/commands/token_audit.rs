@@ -866,10 +866,24 @@ pub fn run(args: &[String]) {
             let result = cmd_compare(&args[1], &args[2]);
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
+        Some("all") => {
+            let (mode, value) = if args.len() > 1 {
+                parse_session_args(&args[1..])
+            } else {
+                ("last".to_string(), "10".to_string())
+            };
+            let static_result = cmd_static();
+            let session_result = cmd_session(&mode, &value);
+            print!("{}", super::token_audit_format::format_static(&static_result));
+            println!();
+            print!("{}", super::token_audit_format::format_session(&session_result));
+        }
         _ => {
             eprintln!("Usage: dotcli token-audit <static|session|compare>");
+            eprintln!("Usage: dotcli token-audit <static|session|all|compare>");
             eprintln!("  dotcli token-audit static");
             eprintln!("  dotcli token-audit session [--all|--last N|--session ID]");
+            eprintln!("  dotcli token-audit all [--last N|--session ID]  (default: --last 10)");
             eprintln!("  dotcli token-audit compare <id1> <id2>");
             std::process::exit(1);
         }
