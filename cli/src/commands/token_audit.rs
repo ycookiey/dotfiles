@@ -16,6 +16,10 @@ struct Request {
     output: i64,
     cache_read: i64,
     cache_create: i64,
+    /// Delta from previous request's cache_create (populated after parse).
+    delta_cc: i64,
+    /// Index of the source file (for per-session delta computation).
+    file_idx: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -160,13 +164,14 @@ fn parse_requests(files: &[PathBuf]) -> Vec<Request> {
     let mut requests: Vec<Request> = Vec::new();
     let mut id_index: HashMap<String, usize> = HashMap::new();
 
-    for file_path in files {
+    for (file_idx, file_path) in files.iter().enumerate() {
         if let Ok(f) = fs::File::open(file_path) {
             let reader = BufReader::new(f);
             for line in reader.lines().flatten() {
                 if let Ok(val) = serde_json::from_str::<Value>(&line) {
                     if is_assistant_message(&val) {
-                        if let Some(req) = extract_request(&val) {
+                        if let Some(mut req) = extract_request(&val) {
+                            req.file_idx = file_idx;
                             if let Some(&idx) = id_index.get(&req.req_id) {
                                 requests[idx] = req; // last wins, same position
                             } else {
@@ -211,6 +216,8 @@ fn extract_request(v: &Value) -> Option<Request> {
         output,
         cache_read,
         cache_create,
+        delta_cc: 0, // populated later by compute_deltas()
+        file_idx: 0, // populated later by parse_requests()
     })
 }
 
@@ -229,6 +236,23 @@ fn extract_tools(content: &Value) -> Vec<ToolUse> {
         }
     }
     tools
+}
+
+/// Compute delta_cc: total_ctx growth from previous request.
+/// Resets at session (file) boundaries. Captures how much context each request added.
+fn compute_deltas(requests: &mut [Request]) {
+    let mut prev_ctx: i64 = 0;
+    let mut prev_file_idx: usize = usize::MAX;
+    for r in requests.iter_mut() {
+        if r.file_idx != prev_file_idx {
+            prev_ctx = 0;
+            prev_file_idx = r.file_idx;
+        }
+        let ctx = r.total_ctx();
+        let delta = ctx - prev_ctx;
+        r.delta_cc = delta.max(0); // clamp negative (compaction) to 0
+        prev_ctx = ctx;
+    }
 }
 
 // ============================================================================
@@ -427,7 +451,8 @@ fn cmd_session(mode: &str, value: &str) -> Value {
     }
 
     let session_count = files.len();
-    let requests = parse_requests(&files);
+    let mut requests = parse_requests(&files);
+    compute_deltas(&mut requests);
     let is_single_session = mode == "session";
 
     let (growth, compactions) = if is_single_session {
@@ -454,35 +479,35 @@ fn cmd_session(mode: &str, value: &str) -> Value {
     })
 }
 
-/// Aggregate cache_create and output by tool combination key.
+/// Aggregate delta_cc and output by tool combination key.
 fn aggregate_by_tool(requests: &[Request]) -> Value {
-    let mut by_tool: HashMap<String, (i64, i64)> = HashMap::new(); // tool -> (cache_create, total_output)
+    let mut by_tool: HashMap<String, (i64, i64)> = HashMap::new(); // tool -> (delta_cc, total_output)
     let mut total: i64 = 0;
 
     for r in requests {
         let key = r.tool_key();
         let entry = by_tool.entry(key).or_default();
-        entry.0 += r.cache_create;
+        entry.0 += r.delta_cc;
         entry.1 += r.output;
-        total += r.cache_create;
+        total += r.delta_cc;
     }
 
     let mut items: Vec<_> = by_tool
         .into_iter()
-        .map(|(tool, (cache_create, total_output))| {
+        .map(|(tool, (delta_cc, total_output))| {
             let pct = if total > 0 {
-                (cache_create as f64 / total as f64) * 100.0
+                (delta_cc as f64 / total as f64) * 100.0
             } else {
                 0.0
             };
-            let efficiency = if cache_create > 0 {
-                (total_output as f64 / cache_create as f64 * 10.0).round() / 10.0
+            let efficiency = if delta_cc > 0 {
+                (total_output as f64 / delta_cc as f64 * 10.0).round() / 10.0
             } else {
                 0.0
             };
             json!({
                 "tool": tool,
-                "cache_create": cache_create,
+                "cache_create": delta_cc,
                 "total_output": total_output,
                 "pct": (pct * 10.0).round() / 10.0, // 1 decimal
                 "efficiency": efficiency
@@ -500,9 +525,9 @@ fn aggregate_by_tool(requests: &[Request]) -> Value {
     json!(items)
 }
 
-/// Breakdown of ToolSearch queries by cache_create cost.
+/// Breakdown of ToolSearch queries by delta_cc cost.
 fn aggregate_toolsearch(requests: &[Request]) -> Value {
-    let mut by_query: HashMap<String, (i64, i64)> = HashMap::new(); // query -> (cache_create, count)
+    let mut by_query: HashMap<String, (i64, i64)> = HashMap::new(); // query -> (delta_cc, count)
 
     for r in requests {
         for t in &r.tools {
@@ -514,7 +539,7 @@ fn aggregate_toolsearch(requests: &[Request]) -> Value {
                     .unwrap_or("?")
                     .to_string();
                 let entry = by_query.entry(query).or_default();
-                entry.0 += r.cache_create;
+                entry.0 += r.delta_cc;
                 entry.1 += 1;
             }
         }
@@ -539,7 +564,8 @@ fn aggregate_toolsearch(requests: &[Request]) -> Value {
 
     json!(items)
 }
-/// Top 10 files by Read consumption. Distribute cache_create across reads.
+
+/// Top 10 files by Read consumption. Distribute delta_cc across reads.
 fn aggregate_top_reads(requests: &[Request]) -> Value {
     let mut by_file: HashMap<String, (i64, i64)> = HashMap::new(); // file -> (count, total_cache_create)
 
@@ -549,7 +575,7 @@ fn aggregate_top_reads(requests: &[Request]) -> Value {
             continue;
         }
 
-        let cc_per_read = r.cache_create as f64 / read_count as f64;
+        let cc_per_read = r.delta_cc as f64 / read_count as f64;
 
         for tool in &r.tools {
             if tool.name == "Read" {
@@ -598,8 +624,8 @@ fn detect_large_responses(requests: &[Request]) -> Value {
                 })
             });
 
-            let efficiency = if r.cache_create > 0 {
-                (r.output as f64 / r.cache_create as f64 * 10.0).round() / 10.0
+            let efficiency = if r.delta_cc > 0 {
+                (r.output as f64 / r.delta_cc as f64 * 10.0).round() / 10.0
             } else {
                 0.0
             };
@@ -609,7 +635,7 @@ fn detect_large_responses(requests: &[Request]) -> Value {
                 "tool": tool_key,
                 "file": file,
                 "output": r.output,
-                "cache_create": r.cache_create,
+                "cache_create": r.delta_cc,
                 "efficiency": efficiency
             }));
         }
@@ -625,11 +651,11 @@ fn detect_large_responses(requests: &[Request]) -> Value {
     json!(items)
 }
 
-/// Detect large operations (cache_create > 5000).
+/// Detect large operations (delta_cc > 5000).
 fn detect_large_ops(requests: &[Request]) -> Value {
     let mut items = Vec::new();
 
-    for r in requests.iter().filter(|r| r.cache_create > 5000) {
+    for r in requests.iter().filter(|r| r.delta_cc > 5000) {
         let tool_key = r.tool_key();
         let file = r.tools.first().and_then(|t| {
             t.input.get("file_path").and_then(|x| {
@@ -642,7 +668,7 @@ fn detect_large_ops(requests: &[Request]) -> Value {
         items.push(json!({
             "tool": tool_key,
             "file": file,
-            "cache_create": r.cache_create
+            "cache_create": r.delta_cc
         }));
     }
 
@@ -666,7 +692,7 @@ fn detect_dup_reads(requests: &[Request]) -> Value {
             continue;
         }
 
-        let cc_per_read = r.cache_create as f64 / read_count as f64;
+        let cc_per_read = r.delta_cc as f64 / read_count as f64;
 
         for tool in &r.tools {
             if tool.name == "Read" {
@@ -837,7 +863,7 @@ fn cmd_compare(id1: &str, id2: &str) -> Value {
 fn tool_breakdown(requests: &[Request]) -> Value {
     let mut map: HashMap<String, i64> = HashMap::new();
     for r in requests {
-        *map.entry(r.tool_key()).or_default() += r.cache_create;
+        *map.entry(r.tool_key()).or_default() += r.delta_cc;
     }
     json!(map)
 }
@@ -879,7 +905,6 @@ pub fn run(args: &[String]) {
             print!("{}", super::token_audit_format::format_session(&session_result));
         }
         _ => {
-            eprintln!("Usage: dotcli token-audit <static|session|compare>");
             eprintln!("Usage: dotcli token-audit <static|session|all|compare>");
             eprintln!("  dotcli token-audit static");
             eprintln!("  dotcli token-audit session [--all|--last N|--session ID]");

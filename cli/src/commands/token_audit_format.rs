@@ -62,7 +62,6 @@ fn as_f64(v: &Value) -> f64 {
     v.as_f64().or_else(|| v.as_i64().map(|i| i as f64)).unwrap_or(0.0)
 }
 
-fn format_static(v: &Value) -> String {
 pub fn format_static(v: &Value) -> String {
     let mut out = String::new();
 
@@ -190,7 +189,6 @@ pub fn format_static(v: &Value) -> String {
     out
 }
 
-fn format_session(v: &Value) -> String {
 pub fn format_session(v: &Value) -> String {
     let mut out = String::new();
 
@@ -209,9 +207,9 @@ pub fn format_session(v: &Value) -> String {
         .and_then(|x| x.as_array())
         .map_or(false, |arr| arr.iter().any(|o| o.get("total_output").is_some()));
     if has_extra {
-        out.push_str("By Tool (cc=cache_create, out=output, eff=out/cc)\n");
+        out.push_str("By Tool (Δctx=context growth, out=output, eff=out/Δctx)\n");
     } else {
-        out.push_str("By Tool (cache_create)\n");
+        out.push_str("By Tool (Δctx)\n");
     }
     if let Some(arr) = v.get("by_tool").and_then(|x| x.as_array()) {
         let max_cc = arr
@@ -237,7 +235,7 @@ pub fn format_session(v: &Value) -> String {
                 let total_output = as_f64(o.get("total_output").unwrap_or(&Value::Null));
                 let efficiency = as_f64(o.get("efficiency").unwrap_or(&Value::Null));
                 out.push_str(&format!(
-                    "  {:<12} {:>10} cc  {:>6}  out:{:>9}  eff:{:>4.1}  {}{}\n",
+                    "  {:<12} {:>10} Δ   {:>6}  out:{:>9}  eff:{:>4.1}  {}{}\n",
                     tool,
                     fmt_u64_commas(cc_u),
                     fmt_f64_pct(pct),
