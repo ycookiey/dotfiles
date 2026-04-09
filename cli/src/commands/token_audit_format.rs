@@ -63,6 +63,7 @@ fn as_f64(v: &Value) -> f64 {
 }
 
 fn format_static(v: &Value) -> String {
+pub fn format_static(v: &Value) -> String {
     let mut out = String::new();
 
     out.push_str("CLAUDE.md\n");
@@ -190,6 +191,7 @@ fn format_static(v: &Value) -> String {
 }
 
 fn format_session(v: &Value) -> String {
+pub fn format_session(v: &Value) -> String {
     let mut out = String::new();
 
     if let Some(n) = v.get("sessions_analyzed").and_then(|x| x.as_i64()) {
