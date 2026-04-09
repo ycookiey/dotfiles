@@ -257,6 +257,33 @@ fn format_session(v: &Value) -> String {
         }
     }
 
+    if let Some(arr) = v.get("toolsearch_breakdown").and_then(|x| x.as_array()) {
+        if !arr.is_empty() {
+            out.push_str("\nToolSearch breakdown\n");
+            let max_cc = arr
+                .iter()
+                .map(|o| as_f64(o.get("cache_create").unwrap_or(&Value::Null)))
+                .fold(0.0_f64, f64::max)
+                .max(1.0);
+            for o in arr.iter().take(15) {
+                let query = o
+                    .get("query")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("?");
+                let cc = as_f64(o.get("cache_create").unwrap_or(&Value::Null));
+                let count = as_i64(o.get("count").unwrap_or(&Value::Null));
+                let cc_u = cc.round() as u64;
+                out.push_str(&format!(
+                    "  {:<50} {:>2}×  {:>10} tok  {}\n",
+                    query,
+                    count,
+                    fmt_u64_commas(cc_u),
+                    bar(cc, max_cc, BAR_WIDTH)
+                ));
+            }
+        }
+    }
+
     out.push_str("\nTop Reads\n");
     if let Some(arr) = v.get("top_reads").and_then(|x| x.as_array()) {
         let max_tok = arr

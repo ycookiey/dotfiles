@@ -450,6 +450,7 @@ fn cmd_session(mode: &str, value: &str) -> Value {
         "compactions": compactions,
         "per_session_max_ctx": per_session_max,
         "startup_costs": startup_costs,
+        "toolsearch_breakdown": aggregate_toolsearch(&requests),
     })
 }
 
@@ -499,6 +500,45 @@ fn aggregate_by_tool(requests: &[Request]) -> Value {
     json!(items)
 }
 
+/// Breakdown of ToolSearch queries by cache_create cost.
+fn aggregate_toolsearch(requests: &[Request]) -> Value {
+    let mut by_query: HashMap<String, (i64, i64)> = HashMap::new(); // query -> (cache_create, count)
+
+    for r in requests {
+        for t in &r.tools {
+            if t.name == "ToolSearch" {
+                let query = t
+                    .input
+                    .get("query")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("?")
+                    .to_string();
+                let entry = by_query.entry(query).or_default();
+                entry.0 += r.cache_create;
+                entry.1 += 1;
+            }
+        }
+    }
+
+    let mut items: Vec<_> = by_query
+        .into_iter()
+        .map(|(query, (cache_create, count))| {
+            json!({
+                "query": query,
+                "cache_create": cache_create,
+                "count": count,
+            })
+        })
+        .collect();
+
+    items.sort_by(|a, b| {
+        let a_cc = b["cache_create"].as_i64().unwrap_or(0);
+        let b_cc = a["cache_create"].as_i64().unwrap_or(0);
+        a_cc.cmp(&b_cc)
+    });
+
+    json!(items)
+}
 /// Top 10 files by Read consumption. Distribute cache_create across reads.
 fn aggregate_top_reads(requests: &[Request]) -> Value {
     let mut by_file: HashMap<String, (i64, i64)> = HashMap::new(); // file -> (count, total_cache_create)
