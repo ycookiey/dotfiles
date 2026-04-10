@@ -579,9 +579,10 @@ fn main() {
     let in_str = format!("{CYAN}\u{25bc}{}{RST}", fmt_num(in_tok));
     let sub_str = format!("{RED}-{}{RST}", fmt_num(removed));
     let out_str = format!("{MAGENTA}\u{25b2}{}{RST}", fmt_num(out_tok));
-    // Context window
+    // Context window (normalize so auto-compact threshold ≈ 100%)
+    const COMPACT_THRESHOLD: f64 = 0.835;
     let cx_stat = match j.context_window.as_ref().and_then(|c| c.used_percentage) {
-        Some(p) => stat("Cx", p as i32),
+        Some(p) => stat("Cx", (p / 100.0 / COMPACT_THRESHOLD * 100.0).min(100.0) as i32),
         None if has_rl => stat("Cx", 0),
         None => format!("Cx{LOADING}"),
     };
