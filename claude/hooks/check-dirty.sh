@@ -1,6 +1,6 @@
 #!/bin/bash
 # Edit/Write pre-hook: warn Claude if file has uncommitted git changes
-# Warns once per file per session to avoid repeated noise.
+# 当セッションで既に編集済みのファイルは Claude 自身の変更なので警告しない。
 INPUT=$(cat)
 FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
@@ -12,11 +12,9 @@ if [[ "$FILE_PATH" =~ ^[A-Za-z]:\\ ]]; then
   FILE_PATH=$(cygpath -u "$FILE_PATH")
 fi
 
-# Skip if already warned in this session
-WARNED_DIR="${TMPDIR:-/tmp}/claude-dirty-check"
-WARNED_FILE="$WARNED_DIR/${SESSION_ID:-default}"
-mkdir -p "$WARNED_DIR"
-if [ -f "$WARNED_FILE" ] && grep -qxF "$FILE_PATH" "$WARNED_FILE" 2>/dev/null; then
+# 当セッションで既に編集済みなら dirty は Claude 自身の編集 → 警告不要
+EDITS_FILE="${TMPDIR:-/tmp}/claude-session-edits/${SESSION_ID:-default}"
+if [ -f "$EDITS_FILE" ] && grep -qxF "$FILE_PATH" "$EDITS_FILE" 2>/dev/null; then
   exit 0
 fi
 
@@ -34,9 +32,6 @@ UNSTAGED=$(git -C "$REPO_DIR" diff --stat -- "$REL_PATH" 2>/dev/null)
 STAGED=$(git -C "$REPO_DIR" diff --cached --stat -- "$REL_PATH" 2>/dev/null)
 
 [ -z "$UNSTAGED" ] && [ -z "$STAGED" ] && exit 0
-
-# Record this file as warned
-echo "$FILE_PATH" >> "$WARNED_FILE"
 
 # Build warning message
 MSG="This file has uncommitted changes"
