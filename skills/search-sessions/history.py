@@ -19,6 +19,37 @@ CLAUDE_DIR = Path.home() / ".claude"
 PROJECTS_DIR = CLAUDE_DIR / "projects"
 
 
+def _derive_project_dir_name(cwd):
+    """Convert a filesystem path to Claude Code's project directory name.
+
+    Claude Code names project dirs by replacing every non-alphanumeric
+    (except hyphen) character with '-'. e.g. 'C:\\Main\\Project\\dotfiles'
+    -> 'C--Main-Project-dotfiles'.
+    """
+    return re.sub(r"[^A-Za-z0-9-]", "-", cwd)
+
+
+def _current_session_id():
+    """Best-effort detection of the currently active session ID.
+
+    The current session is assumed to be the most recently modified
+    .jsonl file in the project directory derived from os.getcwd().
+    Returns None if detection fails.
+    """
+    try:
+        cwd = os.getcwd()
+    except OSError:
+        return None
+    project_path = PROJECTS_DIR / _derive_project_dir_name(cwd)
+    if not project_path.is_dir():
+        return None
+    sessions = list(project_path.glob("*.jsonl"))
+    if not sessions:
+        return None
+    latest = max(sessions, key=lambda p: p.stat().st_mtime)
+    return latest.stem
+
+
 def _parse_timestamp(ts):
     """Parse ISO 8601 timestamp string to datetime."""
     if isinstance(ts, (int, float)):
@@ -87,9 +118,13 @@ def cmd_list(args):
     if args.days:
         cutoff = datetime.now(timezone.utc) - timedelta(days=args.days)
 
+    current_id = None if args.include_current else _current_session_id()
+
     sessions = []
     for proj_name, proj_path in _project_dirs(args.project):
         for sf in _session_files(proj_path):
+            if current_id and sf.stem == current_id:
+                continue
             mtime = datetime.fromtimestamp(sf.stat().st_mtime, tz=timezone.utc)
             if cutoff and mtime < cutoff:
                 continue
@@ -127,8 +162,12 @@ def cmd_search(args):
         pattern = re.compile(re.escape(args.query), re.IGNORECASE)
     results = []
 
+    current_id = None if args.include_current else _current_session_id()
+
     for proj_name, proj_path in _project_dirs(args.project):
         for sf in _session_files(proj_path):
+            if current_id and sf.stem == current_id:
+                continue
             mtime = datetime.fromtimestamp(sf.stat().st_mtime, tz=timezone.utc)
             if cutoff and mtime < cutoff:
                 continue
@@ -327,6 +366,11 @@ def main():
     p_list = sub.add_parser("list", help="List sessions")
     p_list.add_argument("--project", help="Filter by project name (substring match)")
     p_list.add_argument("--days", type=int, default=30, help="Look back N days (default: 30)")
+    p_list.add_argument(
+        "--include-current",
+        action="store_true",
+        help="Include the current session (excluded by default)",
+    )
 
     # search
     p_search = sub.add_parser("search", help="Search messages")
@@ -335,6 +379,11 @@ def main():
     p_search.add_argument("--days", type=int, help="Look back N days")
     p_search.add_argument("--limit", type=int, default=20, help="Max results (default: 20)")
     p_search.add_argument("--regex", action="store_true", help="Treat query as regex pattern")
+    p_search.add_argument(
+        "--include-current",
+        action="store_true",
+        help="Include the current session (excluded by default)",
+    )
 
     # read
     p_read = sub.add_parser("read", help="Read a session")
