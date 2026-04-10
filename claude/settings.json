@@ -60,6 +60,15 @@
             "command": "dotcli token-audit-hook"
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/session-edits-log.sh\""
+          }
+        ]
       }
     ]
   }
