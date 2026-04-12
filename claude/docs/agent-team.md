@@ -28,7 +28,7 @@ researcher → planner → implementer → reviewer（並列可）
 
 ## 成果物ファイル
 
-planner/researcherは詳細を `.agent-output/<task-id>/` にファイル出力し、SendMessageでは概要+ファイルパスのみ送る。Leadのcontext肥大化を防止。
+詳細が多い場合は `.agent-output/<task-id>/` にファイル出力し、SendMessageでは概要+ファイルパスのみ送る。Leadのcontext肥大化を防止。
 - 例: `.agent-output/T-7.1/plan.md`, `.agent-output/T-7.1/research-api.md`
 - implementerへはspawn時にファイルパスを渡す
 
