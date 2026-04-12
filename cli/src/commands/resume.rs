@@ -26,7 +26,7 @@ struct ScanResult {
     no_last_ts: usize,
 }
 
-pub fn select(query: &[String]) -> ShellAction {
+pub fn select(query: &[String], dangerously_skip_permissions: bool) -> ShellAction {
     use crate::commands::titles;
     use std::collections::HashMap;
 
@@ -247,7 +247,13 @@ pub fn select(query: &[String]) -> ShellAction {
         cd: Some(cwd),
         exec: Some(ExecCommand {
             program: "claude".into(),
-            args: vec!["--resume".into(), session_id.into()],
+            args: {
+                let mut a = vec!["--resume".into(), session_id.into()];
+                if dangerously_skip_permissions {
+                    a.push("--dangerously-skip-permissions".into());
+                }
+                a
+            },
         }),
         ..Default::default()
     }

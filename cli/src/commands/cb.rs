@@ -13,7 +13,10 @@ pub fn run(args: &[String]) {
 
     let mut claude_args: Vec<String> = Vec::new();
     let rest: Vec<String>;
-    if args.first().map(|s| s.as_str()) == Some("r") {
+    if matches!(args.first().map(|s| s.as_str()), Some("r" | "rd")) {
+        if args[0] == "rd" {
+            claude_args.push("--dangerously-skip-permissions".into());
+        }
         claude_args.push("/resume".into());
         rest = args[1..].to_vec();
     } else {
