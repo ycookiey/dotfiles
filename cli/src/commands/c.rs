@@ -89,10 +89,11 @@ pub fn run(args: &[String]) {
 
     let unset_env: Vec<String> = CLAUDE_PROVIDER_ENV.iter().map(|s| s.to_string()).collect();
 
-    // r → fzf session picker + cd + claude --resume
-    if claude_args.first().map(|s| s.as_str()) == Some("r") {
+    // r / rd → fzf session picker + cd + claude --resume
+    if matches!(claude_args.first().map(|s| s.as_str()), Some("r" | "rd")) {
+        let skip_perms = claude_args[0] == "rd";
         let query: Vec<String> = claude_args[1..].to_vec();
-        let mut action = resume::select(&query);
+        let mut action = resume::select(&query, skip_perms);
         action.set_env.extend(env);
         action.unset_env = unset_env;
         action.messages.extend(messages);
