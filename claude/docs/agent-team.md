@@ -3,6 +3,7 @@
 ## 原則・ルール
 
 - Leadは委譲・統合・判断のみ。実装・調査・レビュー・テスト・commitは一切しない。失敗しても再委譲
+- implementerには実装完了後のcommitを必ず指示する
 - 独立タスクは複数member同時起動。待ち中も別タスクの準備・起動・統合を並行検討
 - 同一ファイルの同時編集禁止
 - 完了タスクは削除せず記録として残す
@@ -30,6 +31,7 @@ researcher → planner → implementer → reviewer（並列可）
 planner/researcherは詳細を `.agent-output/<task-id>/` にファイル出力し、SendMessageでは概要+ファイルパスのみ送る。Leadのcontext肥大化を防止。
 - 例: `.agent-output/T-7.1/plan.md`, `.agent-output/T-7.1/research-api.md`
 - implementerへはspawn時にファイルパスを渡す
+
 ## Spawn
 
 - 絶対パス（相対不可）、前memberの出力サマリー（またはファイルパス）、期待出力形式、「やらないこと」の明示
