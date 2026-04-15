@@ -101,6 +101,11 @@ enum Commands {
         /// Path to git repository
         path: String,
     },
+    /// PreToolUse hook: warn if file has uncommitted git changes
+    CheckDirty {
+        /// Absolute file path to check
+        file_path: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -168,5 +173,6 @@ fn main() {
         Commands::TokenAuditFormat => commands::token_audit_format::run(),
         Commands::TokenAudit { args } => commands::token_audit::run(&args),
         Commands::GitPrompt { path } => commands::git_prompt::run(&path),
+        Commands::CheckDirty { file_path } => commands::check_dirty::run(&file_path),
     }
 }
