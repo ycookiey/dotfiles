@@ -140,25 +140,29 @@ if ($script:IsInteractive) {
             $global:_starshipDeferred = $true
             # Dotfiles auto-update (初回プロンプトで遅延起動)
             $_ps = [PowerShell]::Create()
-            [void]$_ps.AddScript(@"
-                `$g = '$HOME\scoop\apps\git\current\cmd\git.exe'
-                Set-Location '$Dot'
-                `$dirty = & `$g status --porcelain
-                & `$g fetch -q
-                if (`$LASTEXITCODE -ne 0) { return }
-                & `$g diff --quiet HEAD '@{u}'
-                if (`$?) { return }
-                if (`$dirty) { return 'dirty' }
-                `$before = (& `$g rev-parse HEAD).Trim()
-                & `$g pull -q -r
-                if (!`$?) { return 'error' }
-                `$after = (& `$g rev-parse HEAD).Trim()
-                if (`$before -ne `$after) {
-                    `$n = (& `$g rev-list --count `$before..`$after)
-                    `$areas = (& `$g diff --name-only `$before `$after | % { (`$_ -split '/')[0] } | select -Unique | sort) -join ', '
-                    "updated:`$n" + ":`$areas"
-                }
+            if (gcm dotcli -ea 0) {
+                [void]$_ps.AddScript("dotcli git-prompt '$Dot'")
+            } else {
+                [void]$_ps.AddScript(@"
+                    `$g = '$HOME\scoop\apps\git\current\cmd\git.exe'
+                    Set-Location '$Dot'
+                    `$dirty = & `$g status --porcelain
+                    & `$g fetch -q
+                    if (`$LASTEXITCODE -ne 0) { return }
+                    & `$g diff --quiet HEAD '@{u}'
+                    if (`$?) { return }
+                    if (`$dirty) { return 'dirty' }
+                    `$before = (& `$g rev-parse HEAD).Trim()
+                    & `$g pull -q -r
+                    if (!`$?) { return 'error' }
+                    `$after = (& `$g rev-parse HEAD).Trim()
+                    if (`$before -ne `$after) {
+                        `$n = (& `$g rev-list --count `$before..`$after)
+                        `$areas = (& `$g diff --name-only `$before `$after | % { (`$_ -split '/')[0] } | select -Unique | sort) -join ', '
+                        "updated:`$n" + ":`$areas"
+                    }
 "@)
+            }
             $global:j = @{ PowerShell = $_ps; Handle = $_ps.BeginInvoke() }
             # Build outdated check
             if (gcm dotcli -ea 0) { dotcli build --check }

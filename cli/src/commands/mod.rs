@@ -1,4 +1,5 @@
 pub mod build;
+pub mod git_prompt;
 pub mod c;
 pub mod cb;
 pub mod cg;
