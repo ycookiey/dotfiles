@@ -4,6 +4,14 @@ local config = wezterm.config_builder()
 local appearance = wezterm.gui.get_appearance()
 local is_dark = appearance:find("Dark") ~= nil
 
+-- nvim連携: テーマをファイルに書き出す（config reload = OSテーマ変更時に更新）
+local home = os.getenv("USERPROFILE") or os.getenv("HOME") or ""
+local f = io.open(home .. "\\.wezterm_appearance", "w")
+if f then
+  f:write(is_dark and "dark" or "light")
+  f:close()
+end
+
 ----------------------------------------------------
 -- 基本設定
 ----------------------------------------------------
