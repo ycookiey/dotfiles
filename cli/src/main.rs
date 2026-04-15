@@ -96,6 +96,11 @@ enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Git prompt info: dirty/updated check for background job
+    GitPrompt {
+        /// Path to git repository
+        path: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -162,5 +167,6 @@ fn main() {
         Commands::TokenAuditHook => commands::token_audit_hook::run(),
         Commands::TokenAuditFormat => commands::token_audit_format::run(),
         Commands::TokenAudit { args } => commands::token_audit::run(&args),
+        Commands::GitPrompt { path } => commands::git_prompt::run(&path),
     }
 }
