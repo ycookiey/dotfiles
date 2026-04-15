@@ -1,3 +1,6 @@
+-- Luaモジュールキャッシュ（起動高速化、最優先で有効化）
+if vim.loader then vim.loader.enable() end
+
 -- シェル設定（Windows - PowerShell）
 vim.opt.shell = "pwsh"
 vim.opt.shellcmdflag = "-NoLogo -NoProfile -ExecutionPolicy RemoteSigned -Command"
