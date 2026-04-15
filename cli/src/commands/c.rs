@@ -89,6 +89,11 @@ pub fn run(args: &[String]) {
 
     let unset_env: Vec<String> = CLAUDE_PROVIDER_ENV.iter().map(|s| s.to_string()).collect();
 
+    // d → claude --dangerously-skip-permissions
+    if claude_args.first().map(|s| s.as_str()) == Some("d") {
+        claude_args[0] = "--dangerously-skip-permissions".into();
+    }
+
     // r / rd → fzf session picker + cd + claude --resume
     if matches!(claude_args.first().map(|s| s.as_str()), Some("r" | "rd")) {
         let skip_perms = claude_args[0] == "rd";
