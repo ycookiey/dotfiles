@@ -7,15 +7,21 @@ SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
 
 [ -z "$FILE_PATH" ] && exit 0
 
-# Convert Windows path (C:\...) to Unix path for git
-if [[ "$FILE_PATH" =~ ^[A-Za-z]:\\ ]]; then
-  FILE_PATH=$(cygpath -u "$FILE_PATH")
-fi
-
 # 当セッションで既に編集済みなら dirty は Claude 自身の編集 → 警告不要
 EDITS_FILE="${TMPDIR:-/tmp}/claude-session-edits/${SESSION_ID:-default}"
 if [ -f "$EDITS_FILE" ] && grep -qxF "$FILE_PATH" "$EDITS_FILE" 2>/dev/null; then
   exit 0
+fi
+
+# Prefer dotcli (single-process). Fallback to git+jq pipeline.
+if command -v dotcli >/dev/null 2>&1; then
+  dotcli check-dirty "$FILE_PATH"
+  exit 0
+fi
+
+# Convert Windows path (C:\...) to Unix path for git
+if [[ "$FILE_PATH" =~ ^[A-Za-z]:\\ ]]; then
+  FILE_PATH=$(cygpath -u "$FILE_PATH")
 fi
 
 # Check if file is in a git repo
