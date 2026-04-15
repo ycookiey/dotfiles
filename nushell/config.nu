@@ -30,3 +30,35 @@ def y [...args: string] {
     if $cwd != "" and $cwd != $env.PWD { cd $cwd }
     rm -p $tmp
 }
+
+# --- Dotfiles auto-update (background git-prompt) ---
+$env.DOTCLI_JOB_ID = null
+
+$env.config = ($env.config | upsert hooks.pre_prompt {|cfg|
+    let existing = try { $cfg.hooks.pre_prompt } catch { [] }
+    $existing | append { ||
+        # ① 前回 job の結果を回収して表示（1回のみ）
+        if ($env.DOTCLI_JOB_ID != null and $env.DOTCLI_JOB_ID != -1) {
+            let msg = try { job recv --timeout 0sec } catch { null }
+            if ($msg != null) {
+                let trimmed = ($msg | str trim)
+                if ($trimmed | is-not-empty) {
+                    print $trimmed
+                }
+                $env.DOTCLI_JOB_ID = -1
+            } else {
+                # job が既に終了していたら完了扱い
+                let running = (job list | where id == $env.DOTCLI_JOB_ID | length)
+                if $running == 0 { $env.DOTCLI_JOB_ID = -1 }
+            }
+        }
+        # ② 初回のみ job spawn（dotcli が PATH にある場合のみ）
+        if ($env.DOTCLI_JOB_ID == null and (which dotcli | is-not-empty)) {
+            let dot = $env.DOT
+            $env.DOTCLI_JOB_ID = (job spawn {
+                let r = (^dotcli git-prompt $dot | complete)
+                if $r.exit_code == 0 { $r.stdout | job send 0 }
+            })
+        }
+    }
+})
