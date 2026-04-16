@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+git status --short
+git-lines diff
+git diff --cached -U1 --no-prefix --no-color | grep -v '^index '
+# Log with body first line + style stats (single git log + awk)
+git log -5 --format='%x01%h %s%x02%b' | awk '
+BEGIN { RS="\001"; FS="\002"; bc=0; total=0 }
+{
+  gsub(/^[\r\n]+|[\r\n]+$/, "", $1)
+  if ($1 == "") next
+  total++
+  print $1
+  if (NF >= 2) {
+    gsub(/^[\r\n]+/, "", $2)
+    split($2, lines, /\n/)
+    if (lines[1] != "") { print "        " lines[1]; bc++ }
+  }
+}
+END {
+  if (bc * 2 >= total) printf "recent-style: body (%d/%d)\n", bc, total
+  else printf "recent-style: no-body (%d/%d)\n", total - bc, total
+}'
+
+# Safety check: scan added lines only
+keywords='TODO|FIXME|console\.log|debugger|api_key|secret|token|password|credential|sk-|ghp_|AKIA|ycook'
+git diff HEAD -U0 --no-color 2>/dev/null | while IFS= read -r line; do
+  case "$line" in
+    +*)
+      [[ "$line" == +++* ]] && continue
+      matched=$(echo "$line" | grep -oE "$keywords" | head -1)
+      if [[ -n "$matched" ]]; then
+        clean="${line:1}"
+        clean="${clean#"${clean%%[![:space:]]*}"}"
+        echo "WARNING: Found '$matched' -> $clean"
+      fi
+      ;;
+  esac
+done
+
+# Show pre-commit hook (code lines only)
+hook_dir=$(git config --get core.hooksPath 2>/dev/null)
+: "${hook_dir:=$(git rev-parse --git-dir)/hooks}"
+hook_file="$hook_dir/pre-commit"
+if [[ -f "$hook_file" ]]; then
+  code_lines=$(grep -v '^\s*#' "$hook_file" | grep -v '^\s*$')
+  if [[ -n "$code_lines" ]]; then
+    echo "--- pre-commit hook ---"
+    echo "$code_lines"
+  fi
+fi
