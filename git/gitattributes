@@ -1,0 +1,9 @@
+# グローバル gitattributes（~/.gitattributes は dotfiles から symlink）
+# .gitattributes を持たないリポジトリで適用される
+
+# テキスト/バイナリを自動検出し、リポジトリ内は LF で統一
+* text=auto
+
+# シェルスクリプトは実行時に LF 必須
+*.sh   text eol=lf
+*.bash text eol=lf
