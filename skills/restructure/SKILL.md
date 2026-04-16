@@ -19,7 +19,7 @@ allowed-tools: Bash, Read, Grep, Glob, Edit, Write, AskUserQuestion
 
 ```bash
 git ls-files | xargs wc -l 2>/dev/null | grep -v ' total$' | sort -rn | head -20
-dotcli token-audit session --last 5 2>/dev/null
+dotcli token-audit session --project "$PWD" --last 5 2>/dev/null
 ```
 
 スコアリング（token-audit失敗/空なら行数のみ）:

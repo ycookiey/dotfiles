@@ -153,6 +153,72 @@ fn find_session_files(files: &[PathBuf], id: &str) -> Vec<PathBuf> {
         .collect()
 }
 
+/// Encode a project path into project directory name prefixes (both conventions).
+/// e.g. C:\Main\Project\Foo -> ["C--Main-Project-Foo", "C--Main--Project--Foo"]
+fn encode_project_prefixes(project_path: &str) -> Vec<String> {
+    // Normalize to forward slashes, strip trailing slash
+    let normalized = project_path.replace('\\', "/");
+    let normalized = normalized.trim_end_matches('/');
+
+    // Extract drive letter and components
+    // Handle: /c/Main/Project/Foo, C:/Main/Project/Foo, C:\Main\Project\Foo
+    let (drive, components) = if normalized.starts_with('/') && normalized.len() >= 2 {
+        // Unix-style: /c/Main/Project/Foo
+        let drive = normalized[1..2].to_uppercase();
+        let rest = &normalized[3..]; // skip /c/
+        let comps: Vec<&str> = rest.split('/').filter(|s| !s.is_empty()).collect();
+        (drive, comps)
+    } else if normalized.len() >= 2 && normalized.as_bytes()[1] == b':' {
+        // Windows-style: C:/Main/Project/Foo
+        let drive = normalized[..1].to_uppercase();
+        let rest = &normalized[3..]; // skip C:/
+        let comps: Vec<&str> = rest.split('/').filter(|s| !s.is_empty()).collect();
+        (drive, comps)
+    } else {
+        return Vec::new();
+    };
+
+    if components.is_empty() {
+        return Vec::new();
+    }
+
+    // New convention: C--Main-Project-Foo (single dash separator)
+    let new_conv = format!("{}--{}", drive, components.join("-"));
+    // Old convention: C--Main--Project--Foo (double dash separator)
+    let old_conv = format!("{}--{}", drive, components.join("--"));
+
+    if new_conv == old_conv {
+        vec![new_conv]
+    } else {
+        vec![new_conv, old_conv]
+    }
+}
+
+/// Filter JSONL files to those belonging to a project (prefix match on parent dir name).
+/// Includes worktree sessions (e.g. C--Main-Project-Foo--claude-worktrees-*).
+fn filter_by_project(files: &[PathBuf], project_path: &str) -> Vec<PathBuf> {
+    let prefixes = encode_project_prefixes(project_path);
+    if prefixes.is_empty() {
+        return files.to_vec();
+    }
+
+    files
+        .iter()
+        .filter(|f| {
+            // Walk up to find the project directory (parent of the JSONL or subagents/ dir)
+            for ancestor in f.ancestors().skip(1) {
+                if let Some(name) = ancestor.file_name().and_then(|n| n.to_str()) {
+                    if prefixes.iter().any(|prefix| name.starts_with(prefix)) {
+                        return true;
+                    }
+                }
+            }
+            false
+        })
+        .cloned()
+        .collect()
+}
+
 // ============================================================================
 // JSONL parsing
 // ============================================================================
@@ -431,8 +497,12 @@ fn extract_frontmatter_description(content: &str) -> usize {
 }
 
 /// cmd_session: analyze session logs.
-fn cmd_session(mode: &str, value: &str) -> Value {
+fn cmd_session(mode: &str, value: &str, project: Option<&str>) -> Value {
     let all_files = find_jsonl_files();
+    let all_files = match project {
+        Some(path) => filter_by_project(&all_files, path),
+        None => all_files,
+    };
     let files = match mode {
         "all" => all_files,
         "last" => {
@@ -880,8 +950,8 @@ pub fn run(args: &[String]) {
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         Some("session") => {
-            let (mode, value) = parse_session_args(&args[1..]);
-            let result = cmd_session(&mode, &value);
+            let sa = parse_session_args(&args[1..]);
+            let result = cmd_session(&sa.mode, &sa.value, sa.project.as_deref());
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         Some("compare") => {
@@ -893,13 +963,13 @@ pub fn run(args: &[String]) {
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         Some("all") => {
-            let (mode, value) = if args.len() > 1 {
+            let sa = if args.len() > 1 {
                 parse_session_args(&args[1..])
             } else {
-                ("last".to_string(), "10".to_string())
+                SessionArgs { mode: "last".to_string(), value: "10".to_string(), project: None }
             };
             let static_result = cmd_static();
-            let session_result = cmd_session(&mode, &value);
+            let session_result = cmd_session(&sa.mode, &sa.value, sa.project.as_deref());
             print!("{}", super::token_audit_format::format_static(&static_result));
             println!();
             print!("{}", super::token_audit_format::format_session(&session_result));
@@ -907,17 +977,24 @@ pub fn run(args: &[String]) {
         _ => {
             eprintln!("Usage: dotcli token-audit <static|session|all|compare>");
             eprintln!("  dotcli token-audit static");
-            eprintln!("  dotcli token-audit session [--all|--last N|--session ID]");
-            eprintln!("  dotcli token-audit all [--last N|--session ID]  (default: --last 10)");
+            eprintln!("  dotcli token-audit session [--all|--last N|--session ID] [--project PATH]");
+            eprintln!("  dotcli token-audit all [--last N|--session ID] [--project PATH]  (default: --last 10)");
             eprintln!("  dotcli token-audit compare <id1> <id2>");
             std::process::exit(1);
         }
     }
 }
 
-fn parse_session_args(args: &[String]) -> (String, String) {
+struct SessionArgs {
+    mode: String,
+    value: String,
+    project: Option<String>,
+}
+
+fn parse_session_args(args: &[String]) -> SessionArgs {
     let mut mode = "all".to_string();
     let mut value = String::new();
+    let mut project = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -935,11 +1012,15 @@ fn parse_session_args(args: &[String]) -> (String, String) {
                 value = args.get(i + 1).cloned().unwrap_or_default();
                 i += 2;
             }
+            "--project" => {
+                project = Some(args.get(i + 1).cloned().unwrap_or_default());
+                i += 2;
+            }
             _ => {
                 eprintln!("Unknown session option: {}", args[i]);
                 std::process::exit(1);
             }
         }
     }
-    (mode, value)
+    SessionArgs { mode, value, project }
 }
