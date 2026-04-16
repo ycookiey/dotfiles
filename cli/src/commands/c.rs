@@ -89,14 +89,15 @@ pub fn run(args: &[String]) {
 
     let unset_env: Vec<String> = CLAUDE_PROVIDER_ENV.iter().map(|s| s.to_string()).collect();
 
-    // d → claude --dangerously-skip-permissions
-    if claude_args.first().map(|s| s.as_str()) == Some("d") {
-        claude_args[0] = "--dangerously-skip-permissions".into();
+    // s → safe mode (no --dangerously-skip-permissions)
+    let safe_mode = claude_args.first().map(|s| s.as_str()) == Some("s");
+    if safe_mode {
+        claude_args.remove(0);
     }
 
-    // r / rd → fzf session picker + cd + claude --resume
-    if matches!(claude_args.first().map(|s| s.as_str()), Some("r" | "rd")) {
-        let skip_perms = claude_args[0] == "rd";
+    // r / rs → fzf session picker + cd + claude --resume
+    if matches!(claude_args.first().map(|s| s.as_str()), Some("r" | "rs")) {
+        let skip_perms = claude_args[0] != "rs";
         let query: Vec<String> = claude_args[1..].to_vec();
         let mut action = resume::select(&query, skip_perms);
         action.set_env.extend(env);
@@ -106,6 +107,11 @@ pub fn run(args: &[String]) {
         action.print();
         // Background title generation thread may still be running; force exit
         std::process::exit(code);
+    }
+
+    // Default: add --dangerously-skip-permissions unless safe mode
+    if !safe_mode {
+        claude_args.insert(0, "--dangerously-skip-permissions".into());
     }
 
     let action = ShellAction {

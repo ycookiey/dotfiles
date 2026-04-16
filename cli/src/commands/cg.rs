@@ -41,13 +41,17 @@ pub fn run(args: &[String]) {
     claude_args.push("--model".into());
     claude_args.push("claude-opus-4-6".into());
     let rest: Vec<String>;
-    if matches!(args.first().map(|s| s.as_str()), Some("r" | "rd")) {
-        if args[0] == "rd" {
+    let safe_mode = args.first().map(|s| s.as_str()) == Some("s");
+    if matches!(args.first().map(|s| s.as_str()), Some("r" | "rs")) {
+        if args[0] != "rs" {
             claude_args.push("--dangerously-skip-permissions".into());
         }
         claude_args.push("/resume".into());
         rest = args[1..].to_vec();
+    } else if safe_mode {
+        rest = args[1..].to_vec();
     } else {
+        claude_args.push("--dangerously-skip-permissions".into());
         rest = args.to_vec();
     }
     claude_args.extend(rest);
