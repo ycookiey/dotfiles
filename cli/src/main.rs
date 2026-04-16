@@ -106,6 +106,21 @@ enum Commands {
         /// Absolute file path to check
         file_path: String,
     },
+    /// Show a desktop notification popup (Win32)
+    Notify {
+        /// Notification title
+        #[arg(short, long)]
+        title: String,
+        /// Notification message
+        #[arg(short, long)]
+        message: String,
+        /// Display duration in milliseconds
+        #[arg(short, long, default_value_t = 3000)]
+        duration: u32,
+        /// Vertical stack offset (0 = bottom, 1 = one above, ...)
+        #[arg(short, long, default_value_t = 0)]
+        offset: i32,
+    },
 }
 
 #[derive(Subcommand)]
@@ -174,5 +189,11 @@ fn main() {
         Commands::TokenAudit { args } => commands::token_audit::run(&args),
         Commands::GitPrompt { path } => commands::git_prompt::run(&path),
         Commands::CheckDirty { file_path } => commands::check_dirty::run(&file_path),
+        Commands::Notify {
+            title,
+            message,
+            duration,
+            offset,
+        } => commands::notify::run(&title, &message, duration, offset),
     }
 }
