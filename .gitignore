@@ -44,3 +44,12 @@ node_modules/
 .gcc-prompt.md
 .gcc-agent.log
 .gcc-result.json
+
+# Cursor agent temp files
+.cursor/
+.cursor-summary.md
+.cursor-prompt.md
+.cursor-agent.log
+
+# Agent team output
+.agent-output/
