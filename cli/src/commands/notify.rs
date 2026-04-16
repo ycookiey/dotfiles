@@ -53,13 +53,13 @@ mod win {
 
             let hinstance: HINSTANCE = GetModuleHandleW(None).unwrap().into();
 
-            let class_name: Vec<u16> = "DotcliNotify\0".encode_utf16().collect();
+            let class_name = w!("DotcliNotify");
 
             let wc = WNDCLASSEXW {
                 cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
                 lpfnWndProc: Some(wnd_proc),
                 hInstance: hinstance,
-                lpszClassName: PCWSTR(class_name.as_ptr()),
+                lpszClassName: class_name,
                 hbrBackground: HBRUSH(GetStockObject(NULL_BRUSH).0),
                 ..Default::default()
             };
@@ -85,7 +85,7 @@ mod win {
 
             let hwnd = CreateWindowExW(
                 WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-                PCWSTR(class_name.as_ptr()),
+                class_name,
                 PCWSTR(std::ptr::null()),
                 WS_POPUP,
                 x,
