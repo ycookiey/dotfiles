@@ -1,4 +1,9 @@
 [[model]]
+name = ["Opus 4.7"]
+display = "🅾 4.7"
+color = "207,144,82"
+
+[[model]]
 name = ["Opus 4.6"]
 display = "🅾 4.6"
 color = "207,144,82"
@@ -12,6 +17,11 @@ color = "180,130,100"
 name = ["Haiku 4.5"]
 display = "🅷 4.5"
 color = "120,180,120"
+
+[[model]]
+name = ["Opus 4.7 (1M context)"]
+display = "🅾 4.7⁺"
+color = "207,144,82"
 
 [[model]]
 name = ["Opus 4.6 (1M context)"]

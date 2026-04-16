@@ -233,7 +233,7 @@ fn load_rules() -> LoadedRules {
 }
 
 fn fmt_color(rgb: &str) -> String {
-    format!("\x1b[38;2;{}m", rgb)
+    format!("\x1b[38;2;{}m", rgb.replace(',', ";"))
 }
 
 /// Badge (1-glyph icon): trailing space to prevent glyph overlap in terminals
