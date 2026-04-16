@@ -69,6 +69,15 @@
             "command": "bash \"$HOME/.claude/hooks/session-edits-log.sh\""
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/file-history.sh\""
+          }
+        ]
       }
     ]
   }
