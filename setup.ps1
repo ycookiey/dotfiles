@@ -48,6 +48,10 @@ try {
     mkd "$HOME\Documents\PowerShell"
     mkl "$HOME\Documents\PowerShell\Microsoft.PowerShell_profile.ps1" "$ScriptDir\pwsh\profile.ps1"
 
+    # Git
+    mkl "$HOME\.gitconfig" "$ScriptDir\git\.gitconfig"
+    mkl "$HOME\.gitattributes" "$ScriptDir\git\gitattributes"
+
     mkd "$HOME\.config"
     mkl "$HOME\.config\wezterm" "$ScriptDir\wezterm"
     mkd "$env:APPDATA\yazi\config"
