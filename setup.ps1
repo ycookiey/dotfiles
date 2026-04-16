@@ -101,6 +101,24 @@ try {
         "$(Get-Date) - Registered WezTermNvim for $($exts.Count) extensions" >> $LogFile
     }
 
+    # .sh file association: run with sh.exe via PATHEXT + ftype
+    $shExe = "$HOME\scoop\apps\git\current\usr\bin\sh.exe"
+    if (tp $shExe) {
+        # PATHEXT に .SH 追加（Machine 環境変数 — 管理者ブロック内）
+        $pathext = [Environment]::GetEnvironmentVariable('PATHEXT', 'Machine')
+        if ($pathext -notmatch '\.SH') {
+            [Environment]::SetEnvironmentVariable('PATHEXT', "$pathext;.SH", 'Machine')
+            $env:PATHEXT = "$env:PATHEXT;.SH"
+            "$(Get-Date) - Added .SH to PATHEXT (Machine)" >> $LogFile
+        }
+        # assoc + ftype（レジストリ直接書き込み）
+        $null = ni "HKLM:\SOFTWARE\Classes\.sh" -Force
+        sp "HKLM:\SOFTWARE\Classes\.sh" '(Default)' 'ShellScript'
+        $null = ni "HKLM:\SOFTWARE\Classes\ShellScript\shell\open\command" -Force
+        sp "HKLM:\SOFTWARE\Classes\ShellScript\shell\open\command" '(Default)' "`"$shExe`" `"%1`" %*"
+        "$(Get-Date) - Registered .sh file association (ShellScript -> sh.exe)" >> $LogFile
+    }
+
     # Claude Code: PATH ($HOME\.local\bin)
     $claudeBin = "$HOME\.local\bin"
     $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
