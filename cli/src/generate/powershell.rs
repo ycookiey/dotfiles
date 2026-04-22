@@ -150,6 +150,12 @@ const APPLY_HELPER: &str = r#"function _dotcli_apply {
             wh $_.text -ForegroundColor $c
         }
     }
-    if ($a.exec) { & $a.exec.program @($a.exec.args) }
+    if ($a.exec) {
+        if ($a.exec.program -eq 'claude') {
+            # Tag pane for WezTerm Alt+Z redraw detection (app=claude)
+            [Console]::Write("`e]1337;SetUserVar=app=Y2xhdWRl`a")
+        }
+        & $a.exec.program @($a.exec.args)
+    }
 }
 "#;
