@@ -1,8 +1,11 @@
 local wezterm = require("wezterm")
 local config = wezterm.config_builder()
 
-local appearance = wezterm.gui.get_appearance()
-local is_dark = appearance:find("Dark") ~= nil
+local function detect_is_dark()
+  return wezterm.gui.get_appearance():find("Dark") ~= nil
+end
+
+local is_dark = detect_is_dark()
 
 -- nvim連携: テーマをファイルに書き出す（config reload = OSテーマ変更時に更新）
 local home = os.getenv("USERPROFILE") or os.getenv("HOME") or ""
@@ -11,6 +14,41 @@ if f then
   f:write(is_dark and "dark" or "light")
   f:close()
 end
+
+-- 新規ウィンドウ/リロード時に最新のOSテーマを各ウィンドウへ適用
+-- （is_dark はプロセス起動時の値で固定されるため、window_config_reloaded でoverride）
+wezterm.on("window-config-reloaded", function(window)
+  local dark = detect_is_dark()
+  local overrides = window:get_config_overrides() or {}
+  local scheme = dark and "Tokyo Night" or "Tokyo Night Day"
+  local grad = dark and "#000000" or "#e1e2e7"
+  local fg = dark and "#ffffff" or "#3760bf"
+
+  local changed = false
+  if overrides.color_scheme ~= scheme then
+    overrides.color_scheme = scheme
+    changed = true
+  end
+  local cur_grad = overrides.window_background_gradient
+    and overrides.window_background_gradient.colors
+    and overrides.window_background_gradient.colors[1]
+  if cur_grad ~= grad then
+    overrides.window_background_gradient = { colors = { grad } }
+    changed = true
+  end
+  local cur_fg = overrides.colors and overrides.colors.foreground
+  if cur_fg ~= fg then
+    overrides.colors = { foreground = fg, tab_bar = { inactive_tab_edge = "none" } }
+    changed = true
+  end
+
+  if changed then
+    window:set_config_overrides(overrides)
+    -- appearanceファイルも同期
+    local fp = io.open(home .. "\\.wezterm_appearance", "w")
+    if fp then fp:write(dark and "dark" or "light"); fp:close() end
+  end
+end)
 
 ----------------------------------------------------
 -- 基本設定
@@ -102,13 +140,14 @@ local SOLID_LEFT_ARROW = wezterm.nerdfonts.ple_left_half_circle_thick
 local SOLID_RIGHT_ARROW = wezterm.nerdfonts.ple_right_half_circle_thick
 
 wezterm.on("format-tab-title", function(tab, tabs, panes, config, hover, max_width)
+  local dark = detect_is_dark()
   local edge_background = "none"
   local tab_bg = tab.is_active
-    and (is_dark and "#6c7086" or "#b6bfe2")
-    or  (is_dark and "#45475a" or "#c4c8da")
-  local active_fg = is_dark and "#ffffff" or "#3760bf"
-  local inactive_fg = is_dark and "#959cb4" or "#6172b0"
-  local dim_fg = is_dark and "#6c7086" or "#a1a6c5"
+    and (dark and "#6c7086" or "#b6bfe2")
+    or  (dark and "#45475a" or "#c4c8da")
+  local active_fg = dark and "#ffffff" or "#3760bf"
+  local inactive_fg = dark and "#959cb4" or "#6172b0"
+  local dim_fg = dark and "#6c7086" or "#a1a6c5"
 
   -- タブの丸括弧（左）
   local elements = {
