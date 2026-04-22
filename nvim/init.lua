@@ -55,6 +55,9 @@ vim.api.nvim_create_autocmd({ "BufNewFile", "BufRead" }, {
   end,
 })
 
+-- Ctrl+S で保存
+vim.keymap.set({ "n", "i", "v" }, "<C-s>", "<cmd>update<cr><esc>", { desc = "Save file" })
+
 -- Markdownチェックボックスのトグル (Alt+L)
 local function toggle_checkbox(line)
   if line:match("[%-%*%+] %[ %]") then
