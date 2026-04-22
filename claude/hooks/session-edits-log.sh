@@ -8,10 +8,7 @@ SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
 [ -z "$FILE_PATH" ] && exit 0
 [ -z "$SESSION_ID" ] && exit 0
 
-# Windows path (C:\...) -> Unix path
-if [[ "$FILE_PATH" =~ ^[A-Za-z]:\\ ]]; then
-  FILE_PATH=$(cygpath -u "$FILE_PATH")
-fi
+FILE_PATH=$(normalize-path.sh "$FILE_PATH")
 
 DIR="${TMPDIR:-/tmp}/claude-session-edits"
 mkdir -p "$DIR"
