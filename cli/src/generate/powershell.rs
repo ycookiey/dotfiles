@@ -152,8 +152,8 @@ const APPLY_HELPER: &str = r#"function _dotcli_apply {
     }
     if ($a.exec) {
         if ($a.exec.program -eq 'claude') {
-            # Tag pane for WezTerm Alt+Z redraw detection (app=claude)
-            [Console]::Write("`e]1337;SetUserVar=app=Y2xhdWRl`a")
+            # Tag pane for WezTerm Alt+Z redraw detection (app=claude). PS 5.1 doesn't support `e.
+            [Console]::Write([string][char]27 + ']1337;SetUserVar=app=Y2xhdWRl' + [string][char]7)
         }
         & $a.exec.program @($a.exec.args)
     }
