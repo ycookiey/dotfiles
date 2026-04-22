@@ -22,8 +22,9 @@ local function is_nvim(pane)
 end
 
 local function is_claude_code(pane)
-  local name = fg_name(pane)
-  return name == "claude.exe" or name == "claude"
+  -- claude起動時にdotcliが OSC 1337 で SetUserVar app=claude を発行する
+  local vars = pane:get_user_vars() or {}
+  return vars.app == "claude"
 end
 
 -- nvimからのペイン移動要求を処理（user-var経由）
