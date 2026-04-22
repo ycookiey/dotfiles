@@ -12,6 +12,15 @@ color: purple
 
 Writeは `.agent-output/<task-id>/` への成果物書き出し専用。それ以外のパスへの書き込み禁止。
 
+原則は単一plan file。以下に該当する時のみ分割を検討:
+- plan全体が500行超、または独立実装可能なphaseが3個以上
+- phase間結合が弱い(共通state・型の共有が少ない)
+
+分割時の構成: `00-overview.md`(index・phase一覧・依存)、`NN-<phase>.md`(phase個別)。
+`00-common.md`はさらに例外。ほぼ全phase(例: 5中4以上)で参照され、重複記載が同期漏れで致命的な要素(共通型・API契約・命名規約)が実在する時のみ作成。2-3phaseでの共有はphase fileに置く。
+
+implementerには該当phase file(+ 存在すればcommon)を渡す。
+
 ## 報告
 
 leadの次判断に必要な要約は必ず報告に含める。経過説明不要。詳細が多い場合はファイルに書き出し、要約+そのパスで渡す。
