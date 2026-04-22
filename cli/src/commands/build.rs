@@ -17,6 +17,25 @@ fn post_dotcli(dotfiles_dir: &Path) {
         .status();
 }
 
+fn post_pdfview(dotfiles_dir: &Path) {
+    let Some(cargo_bin) = cargo_bin_dir() else {
+        return;
+    };
+    let dst = cargo_bin.join("pdfium.dll");
+    if dst.exists() {
+        return;
+    }
+    let src = dotfiles_dir.join("cli/target/release/pdfium.dll");
+    if !src.exists() {
+        eprintln!("  pdfium.dll missing; run cli\\pdfview\\scripts\\setup-pdfium.ps1 -Profile release");
+        return;
+    }
+    match std::fs::copy(&src, &dst) {
+        Ok(_) => eprintln!("  copied pdfium.dll to cargo bin"),
+        Err(e) => eprintln!("  pdfium.dll copy failed: {e}"),
+    }
+}
+
 const CRATES: &[Crate] = &[
     Crate {
         path: "cli",
@@ -27,6 +46,11 @@ const CRATES: &[Crate] = &[
         path: "claude/statusline",
         bin_name: "claude-statusline",
         post: None,
+    },
+    Crate {
+        path: "cli/pdfview",
+        bin_name: "pdfview",
+        post: Some(post_pdfview),
     },
 ];
 
