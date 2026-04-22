@@ -195,6 +195,26 @@ return {
     },
     -- 新規ウィンドウ
     { key = "n", mods = "SHIFT|CTRL", action = act.SpawnWindow },
+    -- nvimを新規ウィンドウで開く（現在ペインのCWDを引き継ぐ）
+    {
+      key = "e",
+      mods = "ALT",
+      action = wezterm.action_callback(function(window, pane)
+        local cwd_uri = pane:get_current_working_dir()
+        local cwd = nil
+        if cwd_uri then
+          if type(cwd_uri) == "string" then
+            cwd = cwd_uri:gsub("^file://[^/]*", "")
+          elseif cwd_uri.file_path then
+            cwd = cwd_uri.file_path
+          end
+        end
+        window:perform_action(act.SpawnCommandInNewWindow({
+          args = { "nvim" },
+          cwd = cwd,
+        }), pane)
+      end),
+    },
     -- タブを閉じる
     { key = "w", mods = "CTRL", action = act({ CloseCurrentTab = { confirm = true } }) },
     -- タブ/ペイン位置入れ替え（隣のペインとスワップ、端なら外へ → タブ移動）
