@@ -7,9 +7,12 @@ SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
 
 [ -z "$FILE_PATH" ] && exit 0
 
+# session-edits-log.sh は Unix パスで記録するため照合前に正規化
+UNIX_PATH=$(normalize-path.sh "$FILE_PATH")
+
 # 当セッションで既に編集済みなら dirty は Claude 自身の編集 → 警告不要
 EDITS_FILE="${TMPDIR:-/tmp}/claude-session-edits/${SESSION_ID:-default}"
-if [ -f "$EDITS_FILE" ] && grep -qxF "$FILE_PATH" "$EDITS_FILE" 2>/dev/null; then
+if [ -f "$EDITS_FILE" ] && grep -qxF "$UNIX_PATH" "$EDITS_FILE" 2>/dev/null; then
   exit 0
 fi
 
@@ -19,10 +22,7 @@ if command -v dotcli >/dev/null 2>&1; then
   exit 0
 fi
 
-# Convert Windows path (C:\...) to Unix path for git
-if [[ "$FILE_PATH" =~ ^[A-Za-z]:\\ ]]; then
-  FILE_PATH=$(cygpath -u "$FILE_PATH")
-fi
+FILE_PATH="$UNIX_PATH"
 
 # Check if file is in a git repo
 REPO_DIR=$(cd "$(dirname "$FILE_PATH")" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)
