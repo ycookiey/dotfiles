@@ -347,8 +347,8 @@ const APPLY_HELPER: &str = r#"def --env _dotcli_apply [] {
     }
     if ($action | get -o exec | is-not-empty) {
         if $action.exec.program == "claude" {
-            # Tag pane for WezTerm Alt+Z redraw detection (app=claude)
-            print -n $"(char esc)]1337;SetUserVar=app=Y2xhdWRl(char bel)"
+            # Tag pane for WezTerm Alt+Z redraw detection (app=claude). Use -u for portability.
+            print -n $"(char -u "1b")]1337;SetUserVar=app=Y2xhdWRl(char -u "07")"
         }
         ^($action.exec.program) ...($action.exec.args)
     }
