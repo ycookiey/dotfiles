@@ -106,6 +106,11 @@ enum Commands {
         /// Absolute file path to check
         file_path: String,
     },
+    /// Inject a physical key chord via Win32 SendInput (e.g. ctrl+l)
+    SendKey {
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
+    },
     /// Show a desktop notification popup (Win32)
     Notify {
         /// Notification title
@@ -189,6 +194,7 @@ fn main() {
         Commands::TokenAudit { args } => commands::token_audit::run(&args),
         Commands::GitPrompt { path } => commands::git_prompt::run(&path),
         Commands::CheckDirty { file_path } => commands::check_dirty::run(&file_path),
+        Commands::SendKey { args } => commands::send_key::run(&args),
         Commands::Notify {
             title,
             message,
