@@ -361,12 +361,9 @@ return {
         if matched then
           -- claude (ink) は PTY 経由の \x0c を Ctrl+L キーイベントとして認識しない。
           -- 物理キー入力でないと発火しないため、Win32 SendInput で注入する。
-          -- SIGWINCH を claude が処理してから送るために少し待つ（30msで実用十分）。
-          wezterm.time.call_after(0.03, function()
-            -- active pane が変わっていたら abort（誤送信防止）
+          wezterm.time.call_after(0.1, function()
             local active = window:active_pane()
             if not active or active:pane_id() ~= origin_id then return end
-            -- WezTerm がフォアグラウンドのときだけ実際に送る
             wezterm.background_child_process({
               "dotcli", "send-key", "ctrl+l",
               "--only-when-class", "org.wezfurlong.wezterm",

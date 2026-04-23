@@ -3,8 +3,9 @@
 // claude code の Ctrl+L など、PTY 経由 (\x0c) では発火しない処理を起動するために使う。
 
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
-    VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_MENU, VK_SHIFT,
+    INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP,
+    MAPVK_VK_TO_VSC, MapVirtualKeyW, SendInput, VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_MENU,
+    VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetForegroundWindow};
 
@@ -54,21 +55,24 @@ pub fn run(args: &[String]) {
         }
     };
 
-    let mut inputs: Vec<INPUT> = Vec::with_capacity(vks.len() * 2);
+    // 物理キー入力に近づけるためキーイベントごとに小さな間隔を入れる。
+    // 一括 SendInput だと modifier の押下時間がゼロに近く、GetAsyncKeyState などで
+    // 物理状態を確認するアプリ (claude code 等) が Ctrl+L として認識しないケースあり。
+    let sz = std::mem::size_of::<INPUT>() as i32;
+    let mut events: Vec<INPUT> = Vec::with_capacity(vks.len() * 2);
     for vk in &vks {
-        inputs.push(make_input(*vk, false));
+        events.push(make_input(*vk, false));
     }
     for vk in vks.iter().rev() {
-        inputs.push(make_input(*vk, true));
+        events.push(make_input(*vk, true));
     }
-
-    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
-    if sent as usize != inputs.len() {
-        eprintln!(
-            "SendInput partial: sent {sent}/{total}",
-            total = inputs.len()
-        );
-        std::process::exit(1);
+    for ev in &events {
+        let sent = unsafe { SendInput(std::slice::from_ref(ev), sz) };
+        if sent != 1 {
+            eprintln!("SendInput failed");
+            std::process::exit(1);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }
 
@@ -108,12 +112,15 @@ fn foreground_class() -> Option<String> {
 }
 
 fn make_input(vk: u16, key_up: bool) -> INPUT {
+    // 物理キー入力では VK と ScanCode の両方が立つ。一部アプリは scan code を
+    // 区別するため、MapVirtualKey で動的に補完して物理入力に近づける。
+    let scan = unsafe { MapVirtualKeyW(vk as u32, MAPVK_VK_TO_VSC) } as u16;
     INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
             ki: KEYBDINPUT {
                 wVk: VIRTUAL_KEY(vk),
-                wScan: 0,
+                wScan: scan,
                 dwFlags: if key_up {
                     KEYEVENTF_KEYUP
                 } else {
