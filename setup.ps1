@@ -158,6 +158,14 @@ try {
     & "$ScriptDir\install\winget.ps1"
     "$(Get-Date) - Winget apps install checked" >> $LogFile
 
+    # 外部skill 同期 (skills.json)
+    try {
+        & "$ScriptDir\install\sync-skills.ps1" -Dot $ScriptDir
+        "$(Get-Date) - External skills synced" >> $LogFile
+    } catch {
+        "$(Get-Date) - Warning: sync-skills.ps1 failed: $_" >> $LogFile
+    }
+
     # Rust CLIs — 初回ビルド＆エイリアス生成
     if (gcm cargo -ea 0) {
         cargo install --path "$ScriptDir\cli" --quiet
