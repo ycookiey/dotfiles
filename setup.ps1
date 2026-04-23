@@ -126,7 +126,9 @@ try {
         [Environment]::SetEnvironmentVariable('Path', "$userPath;$claudeBin", 'User')
         "$(Get-Date) - Added $claudeBin to User PATH" >> $LogFile
     }
-    mkl "$claudeBin" "$ScriptDir\bin"
+    # .local\bin は claude.exe 等のインストーラ配置物と共存するため、ディレクトリ単位ではなくファイル単位で symlink
+    mkd $claudeBin
+    gci "$ScriptDir\bin" -File | % { mkl "$claudeBin\$($_.Name)" $_.FullName }
 
     # Claude Code: WSL セットアップ + bash 切り替え
     try {
