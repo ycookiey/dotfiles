@@ -101,15 +101,22 @@ enum Commands {
         /// Path to git repository
         path: String,
     },
-    /// PreToolUse hook: warn if file has uncommitted git changes
-    CheckDirty {
-        /// Absolute file path to check
-        file_path: String,
-    },
+    /// PreToolUse hook: warn if file has uncommitted git changes (reads JSON from stdin)
+    CheckDirty,
     /// Inject a physical key chord via Win32 SendInput (e.g. ctrl+l)
     SendKey {
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
+    },
+    /// PostToolUse/PostToolUseFailure hook: update CAS journal
+    CasPost {
+        #[arg(long)]
+        failure: bool,
+    },
+    /// CAS journal admin
+    Cas {
+        #[command(subcommand)]
+        action: CasAction,
     },
     /// Show a desktop notification popup (Win32)
     Notify {
@@ -132,6 +139,22 @@ enum Commands {
 enum TitlesAction {
     /// Generate titles for all uncached sessions
     Build,
+}
+
+#[derive(Subcommand)]
+enum CasAction {
+    /// Delete old journal entries
+    Gc {
+        #[arg(long, default_value = "7")]
+        days: u32,
+    },
+    /// Show journal entries as TSV
+    Inspect {
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long)]
+        path: Option<String>,
+    },
 }
 
 fn main() {
@@ -193,7 +216,7 @@ fn main() {
         Commands::TokenAuditFormat => commands::token_audit_format::run(),
         Commands::TokenAudit { args } => commands::token_audit::run(&args),
         Commands::GitPrompt { path } => commands::git_prompt::run(&path),
-        Commands::CheckDirty { file_path } => commands::check_dirty::run(&file_path),
+        Commands::CheckDirty => commands::check_dirty::run(),
         Commands::SendKey { args } => commands::send_key::run(&args),
         Commands::Notify {
             title,
@@ -201,5 +224,10 @@ fn main() {
             duration,
             offset,
         } => commands::notify::run(&title, &message, duration, offset),
+        Commands::CasPost { failure } => commands::cas_post::run(failure),
+        Commands::Cas { action } => match action {
+            CasAction::Gc { days } => commands::cas_admin::gc(days),
+            CasAction::Inspect { session, path } => commands::cas_admin::inspect(session.as_deref(), path.as_deref()),
+        },
     }
 }

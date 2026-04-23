@@ -32,11 +32,11 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Edit|Write",
+        "matcher": "Edit|Write|MultiEdit",
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$HOME/.claude/hooks/check-dirty.sh\""
+            "command": "dotcli check-dirty"
           }
         ]
       },
@@ -62,11 +62,11 @@
         ]
       },
       {
-        "matcher": "Edit|Write|NotebookEdit",
+        "matcher": "Edit|Write|MultiEdit",
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$HOME/.claude/hooks/session-edits-log.sh\""
+            "command": "dotcli cas-post"
           }
         ]
       },
@@ -76,6 +76,17 @@
           {
             "type": "command",
             "command": "bash \"$HOME/.claude/hooks/file-history.sh\""
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "dotcli cas-post --failure"
           }
         ]
       }

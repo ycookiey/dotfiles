@@ -17,6 +17,8 @@ anyhow = "1"
 rayon = "1"
 ureq = { version = "3", features = ["json"] }
 gix = { version = "0.81", default-features = false, features = ["status", "revision", "sha1"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite_migration = "1"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [

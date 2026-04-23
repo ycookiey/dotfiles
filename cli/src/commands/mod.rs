@@ -1,4 +1,8 @@
 pub mod build;
+pub mod cas_admin;
+pub mod cas_db;
+pub mod cas_hash;
+pub mod cas_post;
 pub mod notify;
 pub mod check_dirty;
 pub mod git_prompt;
