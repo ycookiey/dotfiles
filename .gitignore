@@ -31,6 +31,9 @@ nushell/generated-aliases.nu
 cli/target/
 claude/statusline/target/
 
+# CAS journal DB (runtime data, not tracked)
+claude/db/
+
 # Claude Skills
 claude/skills/life
 claude/skills/browser-fetch/scratchpad/
