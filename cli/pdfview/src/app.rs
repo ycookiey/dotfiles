@@ -127,8 +127,20 @@ async fn handle_event(
             // to the debounced path. Cancel any outstanding prefetch up
             // front because dims are about to change under its feet.
             prefetch.cancel();
+            // Also cancel any in-flight render: its output is sized for
+            // the old geometry and would draw in the wrong place.
+            app.nav_token.cancel();
+            app.nav_token = CancellationToken::new();
             app.term_dims.cols = cols;
             app.term_dims.rows = rows;
+            // Blank the screen so the pre-resize image doesn't linger
+            // at its stale cell coordinates during the debounce window.
+            {
+                let mut out = std::io::stdout().lock();
+                let _ = crate::render::clear_screen(&mut out);
+                let _ = out.flush();
+            }
+            app.display = DisplayStatus::Empty;
             schedule_resize_debounce(tx.clone(), resize_timer);
             Ok(false)
         }

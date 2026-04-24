@@ -58,10 +58,12 @@ pub fn build_rendered_page(
 }
 
 pub fn clear_screen<W: Write>(out: &mut W) -> Result<()> {
-    // ESC[2J clears the whole screen, ESC[H moves the cursor to the
-    // top-left. Using raw escapes here (instead of crossterm::execute!)
-    // keeps this module dependency-light and easy to unit-test.
-    out.write_all(b"\x1b[2J\x1b[H")?;
+    // ESC[2J clears the visible screen; ESC[3J drops the scrollback
+    // buffer as well so inline images that drifted off-screen during a
+    // pane zoom don't resurface. ESC[H moves the cursor home. Using
+    // raw escapes (instead of crossterm::execute!) keeps this module
+    // dependency-light and easy to unit-test.
+    out.write_all(b"\x1b[3J\x1b[2J\x1b[H")?;
     Ok(())
 }
 
@@ -128,7 +130,7 @@ mod tests {
     fn clear_screen_emits_csi_sequences() {
         let mut out = Vec::new();
         clear_screen(&mut out).unwrap();
-        assert_eq!(out, b"\x1b[2J\x1b[H");
+        assert_eq!(out, b"\x1b[3J\x1b[2J\x1b[H");
     }
 
     #[test]
@@ -182,7 +184,7 @@ mod tests {
         let mut out = Vec::new();
         write_page(&mut out, &rp, 2, 5).unwrap();
         let s = String::from_utf8_lossy(&out);
-        assert!(s.starts_with("\x1b[2J\x1b[H"));
+        assert!(s.starts_with("\x1b[3J\x1b[2J\x1b[H"));
         assert!(s.contains("\x1b]1337;"));
         assert!(s.contains("[2/5]"));
     }
