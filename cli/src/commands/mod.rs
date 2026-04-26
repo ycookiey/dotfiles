@@ -16,6 +16,7 @@ pub mod locked;
 pub mod proxy;
 pub mod resume;
 pub mod send_key;
+pub mod sync;
 pub mod titles;
 pub mod token_audit;
 pub mod token_audit_format;

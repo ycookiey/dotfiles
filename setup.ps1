@@ -140,7 +140,7 @@ try {
     }
 
     # Claude マルチアカウント
-    # settings.json: Claude Code が symlink を上書き破壊するため除外（マージ型で sync.ps1 が管理）
+    # settings.json: Claude Code が symlink を上書き破壊するため除外（マージ型で dotcli sync が管理）
     $claudeExclude = '.credentials*', '.statusline_debug.json', 'settings.json', '.rate-limits.json'
     foreach ($dir in gci "$HOME\.claude-*" -Dir -Force) {
         gci "$HOME\.claude" -Force | ? {
@@ -192,9 +192,13 @@ try {
     & "$ScriptDir\startup\register.ps1" -Action Register
     "$(Get-Date) - Startup registered" >> $LogFile
 
-    # 同期（settings.json マージ等）
-    & "$ScriptDir\pwsh\sync.ps1" -Dot $ScriptDir
-    "$(Get-Date) - Sync completed" >> $LogFile
+    # 同期（settings.json マージ・scoopfile・wingetfile・MCP servers 等）
+    if (gcm dotcli -ea 0) {
+        dotcli sync --dot $ScriptDir | Out-Null
+        "$(Get-Date) - Sync completed" >> $LogFile
+    } else {
+        "$(Get-Date) - Sync skipped: dotcli not found" >> $LogFile
+    }
 
     "$(Get-Date) - Done" >> $LogFile
 } catch {
