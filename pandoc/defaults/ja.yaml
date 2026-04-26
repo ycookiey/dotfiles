@@ -1,0 +1,6 @@
+pdf-engine: xelatex
+variables:
+  CJKmainfont: "Yu Gothic"
+  mainfont: "Yu Gothic"
+  geometry: margin=2cm
+  fontsize: 11pt

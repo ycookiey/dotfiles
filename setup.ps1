@@ -58,6 +58,7 @@ try {
     mkl "$env:APPDATA\yazi\config" "$ScriptDir\yazi"
     mkl "$env:LOCALAPPDATA\nvim" "$ScriptDir\nvim"
     mkl "$env:APPDATA\nushell" "$ScriptDir\nushell"
+    mkl "$env:APPDATA\pandoc" "$ScriptDir\pandoc"
     # Nushell: starship/zoxide キャッシュ生成
     $nuCache = "$ScriptDir\nushell\cache"
     mkd $nuCache
