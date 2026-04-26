@@ -119,6 +119,10 @@
       "Source": "yscoopy"
     },
     {
+      "Name": "git-filter-repo",
+      "Source": "main"
+    },
+    {
       "Name": "googlechrome",
       "Source": "extras"
     },
@@ -163,6 +167,10 @@
       "Source": "extras"
     },
     {
+      "Name": "msys2",
+      "Source": "main"
+    },
+    {
       "Name": "neovim",
       "Source": "main"
     },
@@ -185,6 +193,10 @@
     {
       "Name": "onlyoffice-desktopeditors",
       "Source": "extras"
+    },
+    {
+      "Name": "pandoc",
+      "Source": "main"
     },
     {
       "Name": "parsec-np",
@@ -212,6 +224,10 @@
     },
     {
       "Name": "ripgrep",
+      "Source": "main"
+    },
+    {
+      "Name": "ruby",
       "Source": "main"
     },
     {
