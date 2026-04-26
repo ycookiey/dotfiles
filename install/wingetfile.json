@@ -40,9 +40,6 @@
       "Id": "Henry++.simplewall"
     },
     {
-      "Id": "junegunn.fzf"
-    },
-    {
       "Id": "Kenkun.AviUtlExEdit2"
     },
     {
@@ -97,6 +94,9 @@
       "Id": "Microsoft.VisualStudio.BuildTools"
     },
     {
+      "Id": "Microsoft.WSL"
+    },
+    {
       "Id": "Microsoft.WindowsAppRuntime.1.5"
     },
     {
@@ -116,9 +116,6 @@
     },
     {
       "Id": "Microsoft.WingetCreate"
-    },
-    {
-      "Id": "Microsoft.WSL"
     },
     {
       "Id": "Notion.NotionCalendar"
@@ -158,6 +155,9 @@
     },
     {
       "Id": "Zoom.Zoom.EXE"
+    },
+    {
+      "Id": "junegunn.fzf"
     }
   ]
 }

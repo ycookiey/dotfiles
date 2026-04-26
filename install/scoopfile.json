@@ -139,6 +139,10 @@
       "Source": "main"
     },
     {
+      "Name": "just",
+      "Source": "main"
+    },
+    {
       "Name": "lazygit",
       "Source": "extras"
     },
