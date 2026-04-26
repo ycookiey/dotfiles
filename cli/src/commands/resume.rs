@@ -384,9 +384,11 @@ fn parse_session(path: &Path) -> Result<SessionInfo, bool> {
             if let Some(msg) = v.get("message") {
                 if msg.get("role").and_then(|r| r.as_str()) == Some("user") {
                     if let Some(text) = extract_user_content(msg) {
-                        let cleaned = strip_xml_tags(&text);
-                        if !cleaned.is_empty() {
-                            latest_message = Some(truncate_message(cleaned, 120));
+                        if !is_slash_command_content(&text) {
+                            let cleaned = strip_xml_tags(&text);
+                            if !cleaned.is_empty() {
+                                latest_message = Some(truncate_message(cleaned, 120));
+                            }
                         }
                     }
                 }
@@ -481,6 +483,12 @@ fn truncate_str(s: &str, max: usize) -> String {
         out.push('…');
         out
     }
+}
+
+/// True if the user content is a slash command invocation (e.g. /clear, /commit).
+/// Claude Code stores these as type:"user" messages with `<command-name>...` content.
+pub(crate) fn is_slash_command_content(text: &str) -> bool {
+    text.trim_start().starts_with("<command-name>")
 }
 
 pub(crate) fn extract_user_content(msg: &Value) -> Option<String> {
@@ -780,9 +788,11 @@ pub(crate) fn extract_title_input(path: &Path) -> Option<TitleInput> {
             if let Some(msg) = v.get("message") {
                 if msg.get("role").and_then(|r| r.as_str()) == Some("user") {
                     if let Some(text) = extract_user_content(msg) {
-                        let cleaned = strip_xml_tags(&text);
-                        if !cleaned.is_empty() {
-                            first_message = Some(truncate_message(cleaned, 200));
+                        if !is_slash_command_content(&text) {
+                            let cleaned = strip_xml_tags(&text);
+                            if !cleaned.is_empty() {
+                                first_message = Some(truncate_message(cleaned, 200));
+                            }
                         }
                     }
                 }
@@ -817,9 +827,11 @@ pub(crate) fn extract_title_input(path: &Path) -> Option<TitleInput> {
             if let Some(msg) = v.get("message") {
                 if msg.get("role").and_then(|r| r.as_str()) == Some("user") {
                     if let Some(text) = extract_user_content(msg) {
-                        let cleaned = strip_xml_tags(&text);
-                        if !cleaned.is_empty() {
-                            latest_message = Some(truncate_message(cleaned, 200));
+                        if !is_slash_command_content(&text) {
+                            let cleaned = strip_xml_tags(&text);
+                            if !cleaned.is_empty() {
+                                latest_message = Some(truncate_message(cleaned, 200));
+                            }
                         }
                     }
                 }
