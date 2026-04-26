@@ -1,0 +1,10 @@
+pdf-engine: xelatex
+variables:
+  CJKmainfont: "Yu Gothic"
+  mainfont: "Yu Gothic"
+  geometry:
+    - landscape
+    - margin=1cm
+  fontsize: 10pt
+  header-includes: |
+    \renewcommand{\arraystretch}{1.5}
