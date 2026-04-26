@@ -4,6 +4,9 @@
       "Id": "Amazon.Kindle"
     },
     {
+      "Id": "Anki.Anki"
+    },
+    {
       "Id": "Anthropic.Claude"
     },
     {
@@ -40,6 +43,9 @@
       "Id": "junegunn.fzf"
     },
     {
+      "Id": "Kenkun.AviUtlExEdit2"
+    },
+    {
       "Id": "Microsoft.AppInstaller"
     },
     {
@@ -59,6 +65,9 @@
     },
     {
       "Id": "Microsoft.UI.Xaml.2.8"
+    },
+    {
+      "Id": "Microsoft.VCLibs.14"
     },
     {
       "Id": "Microsoft.VCLibs.Desktop.14"
@@ -86,6 +95,18 @@
     },
     {
       "Id": "Microsoft.VisualStudio.BuildTools"
+    },
+    {
+      "Id": "Microsoft.WindowsAppRuntime.1.5"
+    },
+    {
+      "Id": "Microsoft.WindowsAppRuntime.1.6"
+    },
+    {
+      "Id": "Microsoft.WindowsAppRuntime.1.7"
+    },
+    {
+      "Id": "Microsoft.WindowsAppRuntime.1.8"
     },
     {
       "Id": "Microsoft.WindowsSDK.10.0.26100"
