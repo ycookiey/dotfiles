@@ -140,37 +140,6 @@ local merge_adjacent_tab = wezterm.action_callback(function(window, pane)
   })
 end)
 
--- ペイン幅を均等化（毎回再取得して1境界ずつ調整）
-local equalize_panes = wezterm.action_callback(function(window, pane)
-  local tab = window:active_tab()
-  local panes_info = tab:panes_with_info()
-  if #panes_info <= 1 then return end
-
-  local n = #panes_info
-  table.sort(panes_info, function(a, b) return a.left < b.left end)
-
-  local total_width = 0
-  for _, info in ipairs(panes_info) do
-    total_width = total_width + info.width
-  end
-  local target = math.floor(total_width / n)
-
-  for i = 1, n - 1 do
-    -- 各境界調整前に最新の状態を取得
-    local fresh = tab:panes_with_info()
-    table.sort(fresh, function(a, b) return a.left < b.left end)
-
-    local diff = fresh[i].width - target
-    if diff > 0 then
-      -- i番目が大きすぎる → i+1番目を左に広げて縮める
-      window:perform_action(act.AdjustPaneSize({ "Left", diff }), fresh[i + 1].pane)
-    elseif diff < 0 then
-      -- i番目が小さすぎる → i番目を右に広げる
-      window:perform_action(act.AdjustPaneSize({ "Right", -diff }), fresh[i].pane)
-    end
-  end
-end)
-
 -- 現在のペインを新規タブに分離
 local split_pane_to_tab = wezterm.action_callback(function(window, pane)
   pane:move_to_new_tab()
@@ -372,9 +341,6 @@ return {
         end
       end),
     },
-    -- ペイン幅均等化
-    { key = "S", mods = "ALT|SHIFT", action = equalize_panes },
-
     -- フォントサイズ
     { key = "+", mods = "CTRL", action = act.IncreaseFontSize },
     { key = "-", mods = "CTRL", action = act.DecreaseFontSize },
