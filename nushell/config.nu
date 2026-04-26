@@ -18,6 +18,19 @@ source ($nu.default-config-dir | path join 'cache/zoxide.nu')
 # --- Generated aliases (from dotcli) ---
 source ($nu.default-config-dir | path join 'generated-aliases.nu')
 
+# --- run-task (F5) ---
+source ($nu.default-config-dir | path join 'run-task.nu')
+
+$env.config = ($env.config | upsert keybindings (
+    ($env.config.keybindings? | default []) | append {
+        name: run_task
+        modifier: none
+        keycode: f5
+        mode: [emacs, vi_normal, vi_insert]
+        event: { send: executehostcommand, cmd: "run-task" }
+    }
+))
+
 # --- yazi (TUI needs direct terminal, can't pipe through dotcli) ---
 # --- Build outdated check ---
 if (which dotcli | is-not-empty) { dotcli build --check }
