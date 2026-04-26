@@ -388,7 +388,7 @@ fn parse_session(path: &Path) -> Result<SessionInfo, bool> {
             if let Some(msg) = v.get("message") {
                 if msg.get("role").and_then(|r| r.as_str()) == Some("user") {
                     if let Some(text) = extract_user_content(msg) {
-                        if !is_slash_command_content(&text) {
+                        if !is_noise_user_content(&text) {
                             let cleaned = strip_xml_tags(&text);
                             if !cleaned.is_empty() {
                                 if !message_parts.is_empty() {
@@ -500,18 +500,48 @@ fn truncate_str(s: &str, max: usize) -> String {
     }
 }
 
-/// True if the user content is a slash command invocation (e.g. /clear, /commit).
-/// Claude Code stores these as type:"user" messages with `<command-name>...` content.
-pub(crate) fn is_slash_command_content(text: &str) -> bool {
-    text.trim_start().starts_with("<command-name>")
+/// True if the user content should be skipped from resume preview / title input.
+/// Covers Claude Code internal command tags, plain-text slash commands, and raw JSON
+/// tool outputs that occasionally land in the user role.
+pub(crate) fn is_noise_user_content(text: &str) -> bool {
+    let t = text.trim_start();
+    if t.starts_with("<command-") || t.starts_with("<local-command-") {
+        return true;
+    }
+    // Plain-text slash command (e.g. "/commit", "/lgtm") with no surrounding prose.
+    if t.starts_with('/') && t.len() > 1 && !t.contains(|c: char| c.is_whitespace()) {
+        return true;
+    }
+    // Raw JSON tool output (e.g. {"type":"teammate_terminated",...}).
+    if t.starts_with("{\"") {
+        return true;
+    }
+    false
+}
+
+/// Strip raw JSON blobs (e.g. agent-team idle/shutdown notifications) that occasionally
+/// get appended to user-role messages. Drops any line whose first non-space char starts
+/// `{"`, and truncates lines at a trailing ` {"` so prose followed by a JSON dump survives.
+pub(crate) fn strip_json_blobs(s: &str) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for line in s.lines() {
+        if line.trim_start().starts_with("{\"") {
+            continue;
+        }
+        let cut = line.find(" {\"").unwrap_or(line.len());
+        let kept = &line[..cut];
+        if !kept.trim().is_empty() {
+            parts.push(kept.to_string());
+        }
+    }
+    parts.join("\n")
 }
 
 pub(crate) fn extract_user_content(msg: &Value) -> Option<String> {
     let content = msg.get("content")?;
-    if let Some(s) = content.as_str() {
-        return Some(s.to_string());
-    }
-    if let Some(arr) = content.as_array() {
+    let raw = if let Some(s) = content.as_str() {
+        s.to_string()
+    } else if let Some(arr) = content.as_array() {
         let mut out = String::new();
         for item in arr {
             if let Some(t) = item.get("text").and_then(|t| t.as_str()) {
@@ -521,11 +551,19 @@ pub(crate) fn extract_user_content(msg: &Value) -> Option<String> {
                 out.push_str(t);
             }
         }
-        if !out.is_empty() {
-            return Some(out);
+        if out.is_empty() {
+            return None;
         }
+        out
+    } else {
+        return None;
+    };
+    let cleaned = strip_json_blobs(&raw);
+    if cleaned.trim().is_empty() {
+        None
+    } else {
+        Some(cleaned)
     }
-    None
 }
 
 /// "2026-04-03T11:05:19.155Z" → " 4/ 3 20:05" (UTC+9)
@@ -803,7 +841,7 @@ pub(crate) fn extract_title_input(path: &Path) -> Option<TitleInput> {
             if let Some(msg) = v.get("message") {
                 if msg.get("role").and_then(|r| r.as_str()) == Some("user") {
                     if let Some(text) = extract_user_content(msg) {
-                        if !is_slash_command_content(&text) {
+                        if !is_noise_user_content(&text) {
                             let cleaned = strip_xml_tags(&text);
                             if !cleaned.is_empty() {
                                 first_message = Some(truncate_message(cleaned, 200));
@@ -842,7 +880,7 @@ pub(crate) fn extract_title_input(path: &Path) -> Option<TitleInput> {
             if let Some(msg) = v.get("message") {
                 if msg.get("role").and_then(|r| r.as_str()) == Some("user") {
                     if let Some(text) = extract_user_content(msg) {
-                        if !is_slash_command_content(&text) {
+                        if !is_noise_user_content(&text) {
                             let cleaned = strip_xml_tags(&text);
                             if !cleaned.is_empty() {
                                 latest_message = Some(truncate_message(cleaned, 200));
