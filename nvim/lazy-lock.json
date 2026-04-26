@@ -7,7 +7,8 @@
   "cmp_luasnip": { "branch": "master", "commit": "98d9cb5c2c38532bd9bdb481067b20fea8f32e90" },
   "gitsigns.nvim": { "branch": "main", "commit": "9f3c6dd7868bcc116e9c1c1929ce063b978fa519" },
   "hydra.nvim": { "branch": "main", "commit": "8c4a9f621ec7cdc30411a1f3b6d5eebb12b469dc" },
-  "lazy.nvim": { "branch": "main", "commit": "85c7ff3711b730b4030d03144f6db6375044ae82" },
+  "lazy.nvim": { "branch": "main", "commit": "306a05526ada86a7b30af95c5cc81ffba93fef97" },
+  "markdown-preview.nvim": { "branch": "master", "commit": "a923f5fc5ba36a3b17e289dc35dc17f66d0548ee" },
   "mini.trailspace": { "branch": "main", "commit": "27acb69562a4742256ab3e4b0127391fcb49dbb3" },
   "multicursors.nvim": { "branch": "main", "commit": "72225ea9e4443c3f4b9df91d0193e07c4ee8d382" },
   "neoscroll.nvim": { "branch": "master", "commit": "c8d29979cb0cb3a2437a8e0ae683fd82f340d3b8" },
@@ -24,5 +25,6 @@
   "telescope.nvim": { "branch": "master", "commit": "5255aa27c422de944791318024167ad5d40aad20" },
   "vim-asterisk": { "branch": "master", "commit": "77e97061d6691637a034258cc415d98670698459" },
   "vim-matchup": { "branch": "master", "commit": "0fb1e6b7cea34e931a2af50b8ad565c5c4fd8f4d" },
+  "vim-pandoc": { "branch": "master", "commit": "c31d5c10b29c99cf1a344ae30e2ffa32cf2df743" },
   "yazi.nvim": { "branch": "main", "commit": "1317633540114eeed5dd060d23590d448b7fe16e" }
 }
