@@ -35,6 +35,11 @@ $env.config = ($env.config | upsert keybindings (
 # --- Build outdated check ---
 if (which dotcli | is-not-empty) { dotcli build --check }
 
+# --- Background sync (settings.json / scoopfile / wingetfile / MCP servers) ---
+if (which dotcli | is-not-empty) {
+    job spawn { ^dotcli sync --dot $env.DOT | ignore } | ignore
+}
+
 # --- yazi (TUI needs direct terminal, can't pipe through dotcli) ---
 def y [...args: string] {
     let tmp = (mktemp -t "yazi-cwd.XXXXXX")

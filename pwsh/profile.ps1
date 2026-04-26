@@ -166,10 +166,12 @@ if ($script:IsInteractive) {
             $global:j = @{ PowerShell = $_ps; Handle = $_ps.BeginInvoke() }
             # Build outdated check
             if (gcm dotcli -ea 0) { dotcli build --check }
-            # Sync (MCP servers etc.)
-            $_syncPs = [PowerShell]::Create()
-            [void]$_syncPs.AddScript("& '$Dot\pwsh\sync.ps1' -Dot '$Dot'")
-            $global:syncJob = @{ PowerShell = $_syncPs; Handle = $_syncPs.BeginInvoke() }
+            # Sync (settings.json / scoopfile / wingetfile / MCP servers)
+            if (Get-Command dotcli -ea 0) {
+                $_syncPs = [PowerShell]::Create()
+                [void]$_syncPs.AddScript("dotcli sync --dot '$Dot' | Out-Null")
+                $global:syncJob = @{ PowerShell = $_syncPs; Handle = $_syncPs.BeginInvoke() }
+            }
             return "$PWD> "
         }
         . "$HOME\.cache\pwsh\starship-init.ps1"

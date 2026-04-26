@@ -113,6 +113,12 @@ enum Commands {
         #[arg(long)]
         failure: bool,
     },
+    /// Sync dotfiles → ~/.claude*/, scoopfile, wingetfile, mcp servers
+    Sync {
+        /// Path to dotfiles repo (defaults to $DOTFILES_DIR)
+        #[arg(long)]
+        dot: Option<String>,
+    },
     /// CAS journal admin
     Cas {
         #[command(subcommand)]
@@ -225,6 +231,7 @@ fn main() {
             offset,
         } => commands::notify::run(&title, &message, duration, offset),
         Commands::CasPost { failure } => commands::cas_post::run(failure),
+        Commands::Sync { dot } => commands::sync::run(dot),
         Commands::Cas { action } => match action {
             CasAction::Gc { days } => commands::cas_admin::gc(days),
             CasAction::Inspect { session, path } => commands::cas_admin::inspect(session.as_deref(), path.as_deref()),
