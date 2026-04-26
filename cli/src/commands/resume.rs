@@ -358,7 +358,11 @@ fn parse_session(path: &Path) -> Result<SessionInfo, bool> {
 
     let mut title: Option<String> = None;
     let mut last_timestamp: Option<String> = None;
-    let mut latest_message: Option<String> = None;
+    let mut message_parts: Vec<String> = Vec::new();
+    let mut accumulated_len: usize = 0;
+    const MIN_MSG_LEN: usize = 40;
+    const MAX_MSG_LEN: usize = 120;
+    const MSG_SEP: &str = " / ";
     for line in lines.iter().rev() {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             continue;
@@ -377,7 +381,7 @@ fn parse_session(path: &Path) -> Result<SessionInfo, bool> {
                 .and_then(|t| t.as_str())
                 .map(|s| s.to_string());
         }
-        if latest_message.is_none()
+        if accumulated_len < MIN_MSG_LEN
             && v.get("type").and_then(|t| t.as_str()) == Some("user")
             && v.get("isMeta").and_then(|m| m.as_bool()) != Some(true)
         {
@@ -387,19 +391,30 @@ fn parse_session(path: &Path) -> Result<SessionInfo, bool> {
                         if !is_slash_command_content(&text) {
                             let cleaned = strip_xml_tags(&text);
                             if !cleaned.is_empty() {
-                                latest_message = Some(truncate_message(cleaned, 120));
+                                if !message_parts.is_empty() {
+                                    accumulated_len += MSG_SEP.chars().count();
+                                }
+                                accumulated_len += cleaned.chars().count();
+                                message_parts.push(cleaned);
                             }
                         }
                     }
                 }
             }
         }
-        if title.is_some() && last_timestamp.is_some() && latest_message.is_some() {
+        if title.is_some()
+            && last_timestamp.is_some()
+            && accumulated_len >= MIN_MSG_LEN
+        {
             break;
         }
     }
 
-    let latest_message = latest_message.unwrap_or_else(|| "(no user message)".into());
+    let latest_message = if message_parts.is_empty() {
+        "(no user message)".into()
+    } else {
+        truncate_message(message_parts.join(MSG_SEP), MAX_MSG_LEN)
+    };
     let timestamp = last_timestamp.ok_or(true)?;
 
     let project = project_label(&cwd);
