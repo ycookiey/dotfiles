@@ -80,6 +80,7 @@ try {
     mkl "$HOME\.claude\statusline-rules.toml" "$ScriptDir\claude\statusline\statusline-models.toml"
     mkl "$HOME\.claude\hooks" "$ScriptDir\claude\hooks"
     mkd "$HOME\.claude\skills"
+    mkl "$HOME\.claude\skills\urleader" "$ScriptDir\skills\urleader"
 
     # File association: Neovim (WezTerm)
     $wt = "$HOME\scoop\apps\wezterm\current\wezterm-gui.exe"
@@ -150,6 +151,13 @@ try {
             $l = "$dir\$($_.Name)"
             if (tp $l) { rm $l -Force -Recurse -ea 0 }
             mkl $l $_.FullName
+        }
+        # skills/配下のsymlinkをミラー（個別skillが増えても自動対応）
+        if (tp "$HOME\.claude\skills") {
+            mkd "$dir\skills"
+            gci "$HOME\.claude\skills" -Force | ? { $_.Attributes -match 'ReparsePoint' } | % {
+                mkl "$dir\skills\$($_.Name)" $_.Target
+            }
         }
     }
 
