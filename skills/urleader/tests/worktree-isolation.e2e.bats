@@ -587,12 +587,9 @@ EOF
   [ "$status" -eq 2 ]
 }
 
-# ========== 補足-e: ~/.claude/docs/ はdeny listに非該当のためallow (実装記録) ==========
-# plain bash版 E2E Case 8aは「symlink実体がdotfilesのためdeny」と記述していたが、
-# worktree-guard.shのcheck_home_pathは明示deny listのみdenyする設計のため
-# ~/.claude/docs/ は現状allow。deny対象は settings.json/hooks/skills/urleaderのみ。
+# ========== 補足-e: ~/.claude/docs/ はdeny listに追加済みのためdeny ==========
 
-@test "補足-e: ~/.claude/docs/配下はdeny listに非該当のためallowされる (実装の現状記録)" {
+@test "補足-e: ~/.claude/docs/配下はdeny listに追加済みのためdenyされる" {
   local task_id="e2e-suppe"
   run_spawn_prep "$task_id" > /dev/null
   local wt_dir="$E2E_REPO/.claude/worktrees/agent-$task_id"
@@ -603,11 +600,11 @@ REPO_ROOT=$E2E_REPO
 MODE=deny
 EOF
 
-  # ~/.claude/docs/ はcheck_home_pathのdeny listに含まれないためallow (exit 0)
   local target="$E2E_HOME/.claude/docs/test.md"
   mkdir -p "$(dirname "$target")"
 
   run simulate_edit "Write" "$target" "$wt_dir" \
     "CLAUDE_PROJECT_DIR=$wt_dir" "HOME=$E2E_HOME"
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"BLOCKED"* ]]
 }

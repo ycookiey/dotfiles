@@ -110,7 +110,7 @@ run_guard_edit_with_config() {
 # ========== 観点1: check_home_path ホワイトリスト一致 ==========
 
 @test "check_home_path: HOME配下の一般ファイルは許可される" {
-  local target="$FAKE_HOME/.claude/docs/some-doc.md"
+  local target="$FAKE_HOME/.claude/some-allowed-file.md"
   mkdir -p "$(dirname "$target")"
   touch "$target"
 
@@ -188,6 +188,45 @@ run_guard_edit_with_config() {
 @test "check_home_path: マルチアカウント ~/.claude-1/hooks/配下はdenyされる" {
   mkdir -p "$FAKE_HOME/.claude-1/hooks"
   local target="$FAKE_HOME/.claude-1/hooks/some-hook.sh"
+  touch "$target"
+
+  local json
+  json=$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"},"cwd":"%s"}' \
+    "$target" "$FAKE_WT_ROOT")
+  CLAUDE_PROJECT_DIR="$FAKE_WT_ROOT" HOME="$FAKE_HOME" \
+    run bash -c "echo '$json' | bash '$GUARD_SCRIPT'"
+  [ "$status" -eq 2 ]
+}
+
+@test "check_home_path: ~/.claude/docs/agent-team.md へのEditはdenyされる" {
+  mkdir -p "$FAKE_HOME/.claude/docs"
+  local target="$FAKE_HOME/.claude/docs/agent-team.md"
+  touch "$target"
+
+  local json
+  json=$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"},"cwd":"%s"}' \
+    "$target" "$FAKE_WT_ROOT")
+  CLAUDE_PROJECT_DIR="$FAKE_WT_ROOT" HOME="$FAKE_HOME" \
+    run bash -c "echo '$json' | bash '$GUARD_SCRIPT'"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"BLOCKED"* ]]
+}
+
+@test "check_home_path: ~/.claude/docs/foo.md へのWriteはdenyされる" {
+  mkdir -p "$FAKE_HOME/.claude/docs"
+  local target="$FAKE_HOME/.claude/docs/foo.md"
+
+  local json
+  json=$(printf '{"tool_name":"Write","tool_input":{"file_path":"%s"},"cwd":"%s"}' \
+    "$target" "$FAKE_WT_ROOT")
+  CLAUDE_PROJECT_DIR="$FAKE_WT_ROOT" HOME="$FAKE_HOME" \
+    run bash -c "echo '$json' | bash '$GUARD_SCRIPT'"
+  [ "$status" -eq 2 ]
+}
+
+@test "check_home_path: マルチアカウント ~/.claude-1/docs/ 配下はdenyされる" {
+  mkdir -p "$FAKE_HOME/.claude-1/docs"
+  local target="$FAKE_HOME/.claude-1/docs/agent-team.md"
   touch "$target"
 
   local json
