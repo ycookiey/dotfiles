@@ -62,8 +62,25 @@ vim.api.nvim_create_autocmd({ "BufNewFile", "BufRead" }, {
   end,
 })
 
+-- Windows IME を英数に切り替え (jk 操作を維持するため)
+local has_zenhan = vim.fn.has("win32") == 1 and vim.fn.executable("zenhan") == 1
+local function ime_off()
+  if has_zenhan then
+    vim.fn.jobstart({ "zenhan", "0" }, { detach = true })
+  end
+end
+
+-- Insert を抜けるたびに IME オフ (Esc / <C-c> / <C-[> 含む)
+vim.api.nvim_create_autocmd("InsertLeave", {
+  callback = ime_off,
+})
+
 -- Ctrl+S で保存
-vim.keymap.set({ "n", "i", "v" }, "<C-s>", "<cmd>update<cr><esc>", { desc = "Save file" })
+vim.keymap.set({ "n", "i", "v" }, "<C-s>", function()
+  vim.cmd("update")
+  vim.cmd("stopinsert")
+  ime_off()
+end, { desc = "Save file" })
 
 -- Markdownチェックボックスのトグル (Alt+L)
 local function toggle_checkbox(line)
