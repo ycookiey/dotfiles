@@ -64,6 +64,7 @@ check_home_path() {
     "$HOME_REAL/.claude/settings.local.json"
     "$HOME_REAL/.claude/hooks"
     "$HOME_REAL/.claude/skills/urleader"
+    "$HOME_REAL/.claude/docs"
     "*/.worktree-guard-config"
   )
 
@@ -72,7 +73,8 @@ check_home_path() {
     return 2
   fi
   if [[ "$NORMALIZED" == "$HOME_REAL"/.claude-*/hooks/* ]] || \
-     [[ "$NORMALIZED" == "$HOME_REAL"/.claude-*/skills/urleader/* ]]; then
+     [[ "$NORMALIZED" == "$HOME_REAL"/.claude-*/skills/urleader/* ]] || \
+     [[ "$NORMALIZED" == "$HOME_REAL"/.claude-*/docs/* ]]; then
     return 2
   fi
 
