@@ -12,6 +12,9 @@ pub fn generate(defs: &Definitions, dotfiles_dir: &Path) -> String {
     // _dotcli_apply helper
     writeln!(out, "{}", APPLY_HELPER).unwrap();
 
+    // _dotcli_launch helper (detached external process via job spawn)
+    writeln!(out, "{}", LAUNCH_HELPER).unwrap();
+
     // Aliases
     if !defs.alias.is_empty() {
         writeln!(out, "# --- Aliases ---").unwrap();
@@ -97,42 +100,30 @@ pub fn generate(defs: &Definitions, dotfiles_dir: &Path) -> String {
                             .join(" ");
                         format!("([{segments}] | path join)")
                     } else {
-                        // Bare executable name (no path separators) — cannot use
-                        // `start` which expects a file/URI. Use `^` to invoke via PATH.
-                        raw_path.to_string()
+                        // Bare exe — pass as quoted literal to _dotcli_launch (resolved via PATH)
+                        format!("\"{raw_path}\"")
                     };
-                    let is_bare = !raw_path.contains('\\') && !raw_path.contains("{PROGRAM_FILES}");
-                    if l.args.is_empty() {
-                        if is_bare {
-                            writeln!(
-                                out,
-                                "def {name} [] {{ ^{path} }}",
-                                name = l.name,
-                                path = path_expr,
-                            )
-                            .unwrap();
-                        } else {
-                            writeln!(
-                                out,
-                                "def {name} [] {{ start {path} }}",
-                                name = l.name,
-                                path = path_expr,
-                            )
-                            .unwrap();
-                        }
-                    } else {
-                        let args_str = l
-                            .args
-                            .iter()
-                            .map(|a| {
-                                let escaped = a.replace('"', r#"\""#);
-                                format!("\"{escaped}\"")
-                            })
-                            .collect::<Vec<_>>()
-                            .join(" ");
+                    let args_str = l
+                        .args
+                        .iter()
+                        .map(|a| {
+                            let escaped = a.replace('"', r#"\""#);
+                            format!("\"{escaped}\"")
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    if args_str.is_empty() {
                         writeln!(
                             out,
-                            "def {name} [] {{ ^{path} {args} }}",
+                            "def {name} [] {{ _dotcli_launch {path} }}",
+                            name = l.name,
+                            path = path_expr,
+                        )
+                        .unwrap();
+                    } else {
+                        writeln!(
+                            out,
+                            "def {name} [] {{ _dotcli_launch {path} {args} }}",
                             name = l.name,
                             path = path_expr,
                             args = args_str,
@@ -329,6 +320,11 @@ mod tests {
         );
     }
 }
+
+const LAUNCH_HELPER: &str = r#"def _dotcli_launch [program: string, ...args: string] {
+    job spawn { ^$program ...$args } | ignore
+}
+"#;
 
 const APPLY_HELPER: &str = r#"def --env _dotcli_apply [] {
     let action = ($in | from json)
