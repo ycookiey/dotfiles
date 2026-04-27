@@ -34,5 +34,15 @@ researcher → planner → implementer → reviewer（並列可）
 
 ## Spawn
 
-- 絶対パス（相対不可）、前memberの出力サマリー（またはファイルパス）、期待出力形式、「やらないこと」の明示
+- 前memberの出力サマリー（またはファイルパス）、期待出力形式、「やらないこと」の明示
+- パス指定: prompt内のファイルパスは絶対パスを使用。worktree運用時はagent-spawn-prep.shが自動的にworktree rootに書き換える
 - ブロック時: memberがSendMessageで報告 → Leadが追加情報or別member
+
+## Worktree運用
+
+書き込みsubagent(implementer/tester)のspawn時、SKILL.mdの「Worktree Isolation」手順に従う。
+- prompt file作成 → agent-spawn-prep.sh実行 → 書き換え済みpromptでAgent spawn
+- subagentにはWORKTREE_GUARD_ROOT環境変数を設定させる(補助。hookはconfigファイルから自動解決)
+- `.agent-output/` への書き込みはEdit/Write toolを使用(Bash redirect不可)
+- cleanup: 完了後にworktree/branchを削除
+- 例外: researcher/plannerは読み取り専用のためworktree分離不要
