@@ -33,6 +33,13 @@ vim.opt.title = true
 vim.opt.number = true
 vim.opt.relativenumber = true
 
+-- インデント（スペース2つ）
+vim.opt.expandtab = true
+vim.opt.tabstop = 2
+vim.opt.shiftwidth = 2
+vim.opt.softtabstop = 2
+vim.opt.smarttab = true
+
 -- 空白文字の可視化
 vim.opt.list = true
 vim.opt.listchars = {
