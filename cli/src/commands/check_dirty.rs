@@ -1,4 +1,5 @@
 use std::io::Read;
+use std::path::Path;
 use rusqlite::TransactionBehavior;
 use crate::commands::{cas_db, cas_hash};
 
@@ -23,8 +24,7 @@ fn try_run() -> Option<String> {
     let mut conn = cas_db::open_db(&db_path).ok()?;
     cas_db::migrate(&mut conn).ok()?;
 
-    let file_content = std::fs::read(&file_path).ok()?;
-    let current_blob = cas_hash::compute_blob_hash(&file_content);
+    let current_blob = cas_hash::canonical_worktree_blob_hash(Path::new(&file_path))?;
 
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).ok()?;
 
@@ -32,7 +32,7 @@ fn try_run() -> Option<String> {
 
     let warning = match entry {
         None => {
-            let head_blob = cas_hash::head_blob_hash_from_git(std::path::Path::new(&file_path));
+            let head_blob = cas_hash::head_blob_hash_from_git(Path::new(&file_path));
             cas_db::insert_entry(&*tx, &normalized_path, session_id, head_blob.as_deref(), Some(&current_blob), None).ok()?;
 
             if head_blob.is_none() {

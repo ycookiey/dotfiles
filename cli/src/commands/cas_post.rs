@@ -1,4 +1,5 @@
 use std::io::Read;
+use std::path::Path;
 use crate::commands::{cas_db, cas_hash};
 
 pub fn run(failure: bool) {
@@ -20,14 +21,13 @@ fn try_run(failure: bool) -> Option<()> {
 
     let normalized_path = cas_hash::normalize_path(&file_path);
 
-    let file_content = std::fs::read(&file_path).ok()?;
-    let current_blob = cas_hash::compute_blob_hash(&file_content);
+    let current_blob = cas_hash::canonical_worktree_blob_hash(Path::new(&file_path))?;
 
     let db_path = cas_db::cas_db_path()?;
     let mut conn = cas_db::open_db(&db_path).ok()?;
     cas_db::migrate(&mut conn).ok()?;
 
-    let head_blob = cas_hash::head_blob_hash_from_git(std::path::Path::new(&file_path));
+    let head_blob = cas_hash::head_blob_hash_from_git(Path::new(&file_path));
 
     if failure {
         cas_db::upsert_seen_only(&conn, &normalized_path, session_id, head_blob.as_deref(), &current_blob).ok()?;

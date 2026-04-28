@@ -13,43 +13,54 @@ pub fn compute_blob_hash(content: &[u8]) -> String {
     oid.to_hex().to_string()
 }
 
-/// Returns the blob hash of `file_path` at HEAD using `git rev-parse HEAD:<relpath>`.
-pub fn head_blob_hash_from_git(file_path: &Path) -> Option<String> {
+/// Returns the canonical git blob hash of a worktree file, applying clean filters
+/// (autocrlf / .gitattributes text/eol/encoding / custom clean filters / lfs /
+/// working-tree-encoding) so the result matches `git hash-object <path>` and is
+/// directly comparable with `git rev-parse HEAD:<path>`.
+///
+/// Falls back to a raw-bytes hash when the file is outside any git repo or
+/// `git hash-object` fails. Within a single repo the result is self-consistent
+/// across calls.
+pub fn canonical_worktree_blob_hash(file_path: &Path) -> Option<String> {
+    if let Some(hash) = canonical_via_git(file_path) {
+        return Some(hash);
+    }
+    let bytes = std::fs::read(file_path).ok()?;
+    Some(compute_blob_hash(&bytes))
+}
+
+fn canonical_via_git(file_path: &Path) -> Option<String> {
     let parent = file_path.parent()?;
+    // `git hash-object <path>` applies the full clean-filter pipeline derived from
+    // repo config and .gitattributes — autocrlf, eol, working-tree-encoding, custom
+    // clean filters (e.g. git-lfs) — so the result matches `git rev-parse HEAD:<path>`
+    // bit-for-bit when the file is committed unchanged. Subprocess keeps semantics in
+    // lockstep with the user's installed git, which gix-filter cannot reproduce
+    // for non-builtin filters.
     let output = Command::new("git")
-        .args(["-C", parent.to_str()?, "rev-parse", &format!("HEAD:{}", rel_path_from_git_root(file_path)?)])
+        .args(["-C", parent.to_str()?, "hash-object", "--"])
+        .arg(file_path)
         .output()
         .ok()?;
     if !output.status.success() {
         return None;
     }
     let hash = String::from_utf8(output.stdout).ok()?.trim().to_string();
-    if hash.len() == 40 {
-        Some(hash)
-    } else {
-        None
-    }
+    if hash.len() == 40 { Some(hash) } else { None }
 }
 
-/// Returns the path of `file_path` relative to the git root.
-fn rel_path_from_git_root(file_path: &Path) -> Option<String> {
+/// Returns the blob hash of `file_path` at HEAD, or None if the path is not tracked
+/// in HEAD (or the repo cannot be opened). Resolved entirely in-process via gix.
+pub fn head_blob_hash_from_git(file_path: &Path) -> Option<String> {
     let parent = file_path.parent()?;
-    let output = Command::new("git")
-        .args(["-C", parent.to_str()?, "rev-parse", "--show-toplevel"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let root_raw = String::from_utf8(output.stdout).ok()?;
-    let root = normalize_path(root_raw.trim());
-    let file_norm = normalize_path(file_path.to_str()?);
-    let root_prefix = if root.ends_with('/') { root.clone() } else { format!("{root}/") };
-    if file_norm.starts_with(&root_prefix) {
-        Some(file_norm[root_prefix.len()..].to_string())
-    } else {
-        None
-    }
+    let repo = gix::discover(parent).ok()?;
+    let workdir = repo.workdir()?;
+    let rel = file_path.strip_prefix(workdir).ok()?;
+
+    let head_commit = repo.head_commit().ok()?;
+    let tree = head_commit.tree().ok()?;
+    let entry = tree.lookup_entry_by_path(rel).ok()??;
+    Some(entry.id().to_hex().to_string())
 }
 
 pub fn normalize_path(p: &str) -> String {
