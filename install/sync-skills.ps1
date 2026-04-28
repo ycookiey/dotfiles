@@ -29,11 +29,15 @@ function Sync-SkillDir([string]$Repo, [string]$Path, [string]$Ref, [string]$Dest
 $spec = Get-Content $manifest -Raw | ConvertFrom-Json
 foreach ($s in $spec.skills) {
     $dest = "$Dot\skills\$($s.name)"
+    $staging = "$dest.tmp-sync"
     try {
+        if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
+        Sync-SkillDir $s.repo $s.path $s.ref $staging
         if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
-        Sync-SkillDir $s.repo $s.path $s.ref $dest
+        Move-Item $staging $dest
         Write-Host "sync-skills: $($s.name) <- $($s.repo)/$($s.path)@$($s.ref)" -Fo Green
     } catch {
+        if (Test-Path $staging) { Remove-Item $staging -Recurse -Force -ea 0 }
         Write-Host "sync-skills: failed $($s.name): $_" -Fo Red
     }
 }
