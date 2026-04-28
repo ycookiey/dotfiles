@@ -22,6 +22,7 @@ setup.ps1 で管理。追加・変更は setup.ps1 の mkl で行う（直接コ
 | ~/.claude/aliases.ps1 | dotfiles/aliases.ps1 |
 | ~/.claude/CLAUDE.md | dotfiles/claude/CLAUDE.md |
 | ~/.claude/settings.json | マージ型（dotfiles/claude/settings.json をテンプレートとしてマージ） |
+| ~/.claude/keybindings.json | マージ型（dotfiles/claude/keybindings.json をテンプレートとしてマージ。bindings 配列は context 単位でマージ） |
 | ~/.claude/statusline.py | dotfiles/claude/statusline.py |
 | ~/.claude/statusline-rules.toml | dotfiles/claude/statusline/statusline-models.toml |
 | ~/.claude/rules/ | dotfiles/claude/rules/ |
@@ -31,4 +32,4 @@ setup.ps1 で管理。追加・変更は setup.ps1 の mkl で行う（直接コ
 
 ## マルチアカウント (~/.claude-*)
 
-~/.claude-* ディレクトリが存在する場合、~/.claude/ 配下の各エントリが自動ミラーリングされる。除外: .credentials*, .statusline_debug.json, settings.json（settings.json は個別にマージ型で管理）
+~/.claude-* ディレクトリが存在する場合、~/.claude/ 配下の各エントリが自動ミラーリングされる。除外: .credentials*, .statusline_debug.json, settings.json, keybindings.json（settings.json と keybindings.json は個別にマージ型で管理）

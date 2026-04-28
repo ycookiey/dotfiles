@@ -145,8 +145,8 @@ try {
     }
 
     # Claude マルチアカウント
-    # settings.json: Claude Code が symlink を上書き破壊するため除外（マージ型で dotcli sync が管理）
-    $claudeExclude = '.credentials*', '.statusline_debug.json', 'settings.json', '.rate-limits.json'
+    # settings.json / keybindings.json: Claude Code が symlink を上書き破壊するため除外（マージ型で dotcli sync が管理）
+    $claudeExclude = '.credentials*', '.statusline_debug.json', 'settings.json', 'keybindings.json', '.rate-limits.json'
     foreach ($dir in gci "$HOME\.claude-*" -Dir -Force) {
         gci "$HOME\.claude" -Force | ? {
             $name = $_.Name
