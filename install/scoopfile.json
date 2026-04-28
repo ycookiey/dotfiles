@@ -2,7 +2,7 @@
   "buckets": [
     {
       "Name": "main",
-      "Source": "https://github.com/ScoopInstaller/Main.git"
+      "Source": "https://github.com/ScoopInstaller/Main"
     },
     {
       "Name": "extras",
@@ -75,6 +75,10 @@
       "Source": "extras"
     },
     {
+      "Name": "dotnet-sdk",
+      "Source": "main"
+    },
+    {
       "Name": "epic-games-launcher",
       "Source": "games"
     },
@@ -115,14 +119,6 @@
       "Source": "main"
     },
     {
-      "Name": "git-all-status",
-      "Source": "yscoopy"
-    },
-    {
-      "Name": "git-filter-repo",
-      "Source": "main"
-    },
-    {
       "Name": "googlechrome",
       "Source": "extras"
     },
@@ -136,10 +132,6 @@
     },
     {
       "Name": "jq",
-      "Source": "main"
-    },
-    {
-      "Name": "just",
       "Source": "main"
     },
     {
@@ -167,12 +159,12 @@
       "Source": "main"
     },
     {
-      "Name": "mpv",
-      "Source": "extras"
+      "Name": "mise",
+      "Source": "main"
     },
     {
-      "Name": "msys2",
-      "Source": "main"
+      "Name": "mpv",
+      "Source": "extras"
     },
     {
       "Name": "neovim",
@@ -192,19 +184,15 @@
     },
     {
       "Name": "ollama",
-      "Source": "main"
+      "Source": null
     },
     {
       "Name": "onlyoffice-desktopeditors",
       "Source": "extras"
     },
     {
-      "Name": "pandoc",
-      "Source": "main"
-    },
-    {
       "Name": "parsec-np",
-      "Source": "nonportable"
+      "Source": null
     },
     {
       "Name": "perl",
@@ -231,10 +219,6 @@
       "Source": "main"
     },
     {
-      "Name": "ruby",
-      "Source": "main"
-    },
-    {
       "Name": "rust",
       "Source": "main"
     },
@@ -244,6 +228,10 @@
     },
     {
       "Name": "scoop-search",
+      "Source": "main"
+    },
+    {
+      "Name": "sqlite",
       "Source": "main"
     },
     {
@@ -284,7 +272,7 @@
     },
     {
       "Name": "vcpkg",
-      "Source": "main"
+      "Source": null
     },
     {
       "Name": "vcxsrv",
@@ -337,6 +325,10 @@
     {
       "Name": "ywatchy",
       "Source": "yscoopy"
+    },
+    {
+      "Name": "zenhan",
+      "Source": "main"
     },
     {
       "Name": "zoom",
