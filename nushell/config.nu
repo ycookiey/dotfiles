@@ -37,6 +37,11 @@ if (which dotcli | is-not-empty) {
     job spawn { ^dotcli sync --dot $env.DOT | ignore } | ignore
 }
 
+# --- Background starship/zoxide cache refresh (idempotent, no-op if fresh) ---
+job spawn {
+    ^nu ($env.DOT | path join 'nushell\generate-cache.nu') | ignore
+} | ignore
+
 # --- yazi (TUI needs direct terminal, can't pipe through dotcli) ---
 def y [...args: string] {
     let tmp = (mktemp -t "yazi-cwd.XXXXXX")
