@@ -1,0 +1,10 @@
+# worktree作成時にコピーするファイル/ディレクトリのallowlist
+# - 1行1パターン (glob可)。`#`以降はコメント、空行は無視
+# - repo rootからの相対パスで指定
+# - tracked化されたものは除外 (worktree既存・上書き防止の安全装置)
+# - プロジェクト固有の追加は <repo>/.claude/worktree-copy.list へ
+
+.agent-output/
+.env
+.env.*
+.claude/settings.local.json

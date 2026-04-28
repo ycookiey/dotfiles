@@ -81,6 +81,7 @@ try {
     mkl "$HOME\.claude\docs" "$ScriptDir\claude\docs"
     mkl "$HOME\.claude\agents" "$ScriptDir\claude\agents"
     mkl "$HOME\.claude\statusline-rules.toml" "$ScriptDir\claude\statusline\statusline-models.toml"
+    mkl "$HOME\.claude\worktree-copy.list" "$ScriptDir\claude\worktree-copy.list"
     mkl "$HOME\.claude\hooks" "$ScriptDir\claude\hooks"
     mkd "$HOME\.claude\skills"
     mkl "$HOME\.claude\skills\urleader" "$ScriptDir\skills\urleader"
