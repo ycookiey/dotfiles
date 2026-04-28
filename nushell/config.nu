@@ -32,9 +32,6 @@ $env.config = ($env.config | upsert keybindings (
 ))
 
 # --- yazi (TUI needs direct terminal, can't pipe through dotcli) ---
-# --- Build outdated check ---
-if (which dotcli | is-not-empty) { dotcli build --check }
-
 # --- Background sync (settings.json / scoopfile / wingetfile / MCP servers) ---
 if (which dotcli | is-not-empty) {
     job spawn { ^dotcli sync --dot $env.DOT | ignore } | ignore
@@ -51,6 +48,9 @@ def y [...args: string] {
 
 # --- Dotfiles auto-update (background git-prompt) ---
 $env.DOTCLI_JOB_ID = null
+
+# --- Build outdated check (background) ---
+$env.BUILD_CHECK_JOB_ID = null
 
 $env.config = ($env.config | upsert hooks.pre_prompt {|cfg|
     let existing = try { $cfg.hooks.pre_prompt } catch { [] }
@@ -76,6 +76,30 @@ $env.config = ($env.config | upsert hooks.pre_prompt {|cfg|
             $env.DOTCLI_JOB_ID = (job spawn {
                 let r = (^dotcli git-prompt $dot | complete)
                 if $r.exit_code == 0 { $r.stdout | job send 0 }
+            })
+        }
+        # ③ build --check の結果を回収して表示（1回のみ）
+        if ($env.BUILD_CHECK_JOB_ID != null and $env.BUILD_CHECK_JOB_ID != -1) {
+            let msg = try { job recv --tag 1 --timeout 0sec } catch { null }
+            if ($msg != null) {
+                let trimmed = ($msg | str trim)
+                if ($trimmed | is-not-empty) {
+                    print $trimmed
+                }
+                $env.BUILD_CHECK_JOB_ID = -1
+            } else {
+                let running = (job list | where id == $env.BUILD_CHECK_JOB_ID | length)
+                if $running == 0 { $env.BUILD_CHECK_JOB_ID = -1 }
+            }
+        }
+        # ④ 初回のみ build --check を job spawn
+        if ($env.BUILD_CHECK_JOB_ID == null and (which dotcli | is-not-empty)) {
+            $env.BUILD_CHECK_JOB_ID = (job spawn {
+                let r = (^dotcli build --check | complete)
+                if $r.exit_code != 0 {
+                    let out = ($r.stdout + $r.stderr)
+                    if ($out | str trim | is-not-empty) { $out | job send 1 }
+                }
             })
         }
     }
