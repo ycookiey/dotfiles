@@ -202,24 +202,18 @@ pub fn format_session(v: &Value) -> String {
         out.push('\n');
     }
 
-    // Check if total_output/efficiency fields exist for header
-    let has_extra = v.get("by_tool")
-        .and_then(|x| x.as_array())
-        .map_or(false, |arr| arr.iter().any(|o| o.get("total_output").is_some()));
-    if has_extra {
-        out.push_str("By Tool (Δctx=context growth, out=output, eff=out/Δctx)\n");
-    } else {
-        out.push_str("By Tool (Δctx)\n");
-    }
     if let Some(arr) = v.get("by_tool").and_then(|x| x.as_array()) {
+        let has_extra = arr.iter().any(|o| o.get("total_output").is_some());
+        if has_extra {
+            out.push_str("By Tool (Δctx=context growth, out=output, eff=out/Δctx)\n");
+        } else {
+            out.push_str("By Tool (Δctx)\n");
+        }
         let max_cc = arr
             .iter()
             .map(|o| as_f64(o.get("cache_create").unwrap_or(&Value::Null)))
             .fold(0.0_f64, f64::max)
             .max(1.0);
-
-        // Check if total_output/efficiency fields exist
-        let has_extra = arr.iter().any(|o| o.get("total_output").is_some());
 
         for o in arr {
             let tool = o
@@ -284,8 +278,10 @@ pub fn format_session(v: &Value) -> String {
         }
     }
 
-    out.push_str("\nTop Reads\n");
     if let Some(arr) = v.get("top_reads").and_then(|x| x.as_array()) {
+        if !arr.is_empty() {
+            out.push_str("\nTop Reads\n");
+        }
         let max_tok = arr
             .iter()
             .map(|o| as_f64(o.get("total_cache_create").unwrap_or(&Value::Null)))
