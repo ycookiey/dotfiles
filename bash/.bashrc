@@ -20,3 +20,8 @@ command_not_found_handle() {
   printf "bash: %s: command not found\n" "$cmd" >&2
   return 127
 }
+
+# dotcli-generated aliases (mirrors pwsh/nushell)
+_dot_bash_dir="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+[ -f "$_dot_bash_dir/generated-aliases.sh" ] && . "$_dot_bash_dir/generated-aliases.sh"
+unset _dot_bash_dir

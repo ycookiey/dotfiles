@@ -52,6 +52,9 @@ try {
     mkl "$HOME\.gitconfig" "$ScriptDir\git\.gitconfig"
     mkl "$HOME\.gitattributes" "$ScriptDir\git\gitattributes"
 
+    # Bash (Git Bash) — sources dotcli-generated aliases
+    mkl "$HOME\.bashrc" "$ScriptDir\bash\.bashrc"
+
     mkd "$HOME\.config"
     mkl "$HOME\.config\wezterm" "$ScriptDir\wezterm"
     mkd "$env:APPDATA\yazi\config"
