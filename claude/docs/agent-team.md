@@ -44,8 +44,12 @@ researcher → planner → implementer → reviewer（並列可）
 - prompt file作成 → agent-spawn-prep.sh実行 → 書き換え済みpromptでAgent spawn
 - subagentにはWORKTREE_GUARD_ROOT環境変数を設定させる(補助。hookはconfigファイルから自動解決)
 - `.agent-output/` への書き込みはEdit/Write toolを使用(Bash redirect不可)
-- cleanup: 完了後にworktree/branchを削除
+- cleanup/merge-back: 完了後は `agent-merge-back.sh --task-id <TASK_ID>` でmainへ取り込み+worktree/branch削除を一括実行
 - 例外: researcher/plannerは読み取り専用のためworktree分離不要
+
+### merge-back挙動
+
+`agent-merge-back.sh` はworktree内で `git rebase main` → main側で `git merge --ff-only` → worktree remove + branch -D を行う。並列agentでmainが進みdivergeした場合も自動解消。conflict時は `rebase --abort` + 非0 exitでworktreeが保持されるので、Leadは上流memberに再指示するか手動対処する。手動cherry-pickは応急処置にとどめ、原則本scriptを使う。pushはしない。
 
 ### ファイルの自動コピー(allowlist方式)
 
