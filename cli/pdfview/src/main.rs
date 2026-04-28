@@ -27,12 +27,22 @@ struct Cli {
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() -> ExitCode {
+    // デバッグ用: 固定ファイルにログ出力(stderr は raw mode で
+    // flush タイミングが噛み合わないため取りこぼしやすい)。
+    // TODO: デバッグ完了後に元の stderr 出力に戻す。
+    let log_path = std::env::temp_dir().join("pdfview-debug.log");
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .expect("open debug log");
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("pdfview=info")),
         )
-        .with_writer(std::io::stderr)
+        .with_writer(std::sync::Mutex::new(log_file))
+        .with_ansi(false)
         .init();
 
     match run().await {
@@ -170,6 +180,7 @@ async fn build_state(cli: &Cli) -> Result<AppState, PdfViewError> {
         pdfium,
         shutdown: CancellationToken::new(),
         display: DisplayStatus::Empty,
+        last_drawn: None,
     })
 }
 

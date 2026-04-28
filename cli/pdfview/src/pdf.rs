@@ -52,14 +52,18 @@ fn open_pdf<'a>(
 /// Derive the render pixel size for the given quality. Low is roughly a
 /// third of the terminal's width so a placeholder lands quickly; High
 /// targets the full terminal width for pixel-accurate display.
+///
+/// 高さ上限は画面全高(`term.px_h`)。フッター行を引かない理由は
+/// アスペクト比次第でフッターを画像の右余白に置く配置 (RightOf) があり、
+/// その場合は画像が画面全高を使うため。横長 PDF で下フッター配置になる
+/// 場合は `build_rendered_page` 側で esc の cell height を 1 行少なく指定
+/// するため、画像が下のフッター行と被ることはない。
 pub fn compute_dims(term: &TerminalDims, quality: Quality) -> (u32, u32) {
     let w = match quality {
         Quality::Low => (term.px_w / 3).max(64),
         Quality::High => term.px_w.max(128),
     };
-    // Reserve one row for the footer when computing height.
-    let footer_px = term.cell_h;
-    let h = term.px_h.saturating_sub(footer_px).max(64);
+    let h = term.px_h.max(64);
     (w, h)
 }
 
@@ -139,6 +143,8 @@ pub fn render_via_cache(
             footer_rows,
             term.rows,
             term.cols,
+            term.cell_w,
+            term.cell_h,
         ));
     }
 
@@ -153,6 +159,22 @@ pub fn render_via_cache(
     }
     let (png, w, h) = render_page_png(pdfium, pdf_bytes, page, target_dims)?;
     let actual_dims = (w, h);
+    tracing::info!(
+        page,
+        ?quality,
+        target_w = target_dims.0,
+        target_h = target_dims.1,
+        actual_w = w,
+        actual_h = h,
+        rows = term.rows,
+        cols = term.cols,
+        cell_w = term.cell_w,
+        cell_h = term.cell_h,
+        footer_rows,
+        cells_h_actual = h as f32 / term.cell_h as f32,
+        cells_w_actual = w as f32 / term.cell_w as f32,
+        "rendered png"
+    );
     let out_key = cache_key(page, actual_dims, quality);
     if let Err(e) = disk.write(&out_key, &png) {
         tracing::warn!(error = %e, key = %out_key, "disk cache write failed");
@@ -164,6 +186,8 @@ pub fn render_via_cache(
         footer_rows,
         term.rows,
         term.cols,
+        term.cell_w,
+        term.cell_h,
     ))
 }
 
@@ -198,10 +222,10 @@ mod tests {
     }
 
     #[test]
-    fn compute_dims_reserves_footer_row() {
+    fn compute_dims_uses_full_screen_height() {
         let t = dims(1920, 1080);
         let (_, h) = compute_dims(&t, Quality::High);
-        assert_eq!(h, 1080 - 16);
+        assert_eq!(h, 1080);
     }
 
     #[test]

@@ -64,6 +64,10 @@ pub struct AppState {
     pub nav_token: CancellationToken,
     pub shutdown: CancellationToken,
     pub display: DisplayStatus,
+    /// 直近で画面に描画した RenderedPage。次回描画時に差分セルだけを erase
+    /// して点滅を防ぐために保持する。リサイズや明示的な clear_screen 後は
+    /// `None` にして次の描画で全画面を新規描画扱いにする。
+    pub last_drawn: Option<RenderedPage>,
 }
 
 impl AppState {
@@ -95,6 +99,9 @@ mod tests {
             esc_seq: Arc::new("esc".into()),
             dims: (100, 100),
             quality: Quality::Low,
+            footer_placement: crate::render::FooterPlacement::Bottom,
+            image_cells_w: 10,
+            image_cells_h: 10,
         };
         c.set(rp.clone());
         assert!(c.get(Quality::Low).is_some());
