@@ -496,8 +496,12 @@ fn extract_frontmatter_description(content: &str) -> usize {
     0
 }
 
-/// cmd_session: analyze session logs.
-fn cmd_session(mode: &str, value: &str, project: Option<&str>) -> Value {
+/// Resolve files + parse + compute deltas. Returns None when no files match.
+fn collect_requests(
+    mode: &str,
+    value: &str,
+    project: Option<&str>,
+) -> Option<(Vec<PathBuf>, Vec<Request>)> {
     let all_files = find_jsonl_files();
     let all_files = match project {
         Some(path) => filter_by_project(&all_files, path),
@@ -517,12 +521,22 @@ fn cmd_session(mode: &str, value: &str, project: Option<&str>) -> Value {
     };
 
     if files.is_empty() {
-        return json!({"error": "no sessions found"});
+        return None;
     }
 
-    let session_count = files.len();
     let mut requests = parse_requests(&files);
     compute_deltas(&mut requests);
+    Some((files, requests))
+}
+
+/// cmd_session: analyze session logs (full report).
+fn cmd_session(mode: &str, value: &str, project: Option<&str>) -> Value {
+    let (files, requests) = match collect_requests(mode, value, project) {
+        Some(x) => x,
+        None => return json!({"error": "no sessions found"}),
+    };
+
+    let session_count = files.len();
     let is_single_session = mode == "session";
 
     let (growth, compactions) = if is_single_session {
@@ -549,7 +563,88 @@ fn cmd_session(mode: &str, value: &str, project: Option<&str>) -> Value {
     })
 }
 
+/// cmd_session_section: emit a single section. Output JSON keeps the same key
+/// names as cmd_session so token-audit-format can render it without changes.
+fn cmd_session_section(
+    section: &str,
+    mode: &str,
+    value: &str,
+    project: Option<&str>,
+) -> Value {
+    let (files, requests) = match collect_requests(mode, value, project) {
+        Some(x) => x,
+        None => return json!({"error": "no sessions found"}),
+    };
+
+    let session_count = files.len();
+    let is_single_session = mode == "session";
+
+    let mut out = json!({
+        "sessions_analyzed": session_count,
+        "total_requests": requests.len(),
+    });
+    let obj = out.as_object_mut().unwrap();
+
+    match section {
+        "by-tool" => {
+            obj.insert("by_tool".into(), aggregate_by_tool(&requests));
+        }
+        "top-reads" => {
+            obj.insert("top_reads".into(), aggregate_top_reads(&requests));
+        }
+        "duplicates" => {
+            obj.insert("duplicate_reads".into(), detect_dup_reads(&requests));
+        }
+        "large-ops" => {
+            obj.insert("large_operations".into(), detect_large_ops(&requests));
+        }
+        "large-responses" => {
+            obj.insert("large_responses".into(), detect_large_responses(&requests));
+        }
+        "toolsearch" => {
+            obj.insert(
+                "toolsearch_breakdown".into(),
+                aggregate_toolsearch(&requests),
+            );
+        }
+        "startup" => {
+            let (sc, ms) = per_session_stats(&files);
+            obj.insert("startup_costs".into(), sc);
+            obj.insert("per_session_max_ctx".into(), ms);
+        }
+        "growth" => {
+            // growth/compactions only meaningful for a single session
+            if is_single_session {
+                obj.insert("context_growth".into(), context_growth(&requests));
+                obj.insert("compactions".into(), detect_compactions(&requests));
+            } else {
+                obj.insert("context_growth".into(), json!([]));
+                obj.insert("compactions".into(), json!([]));
+                obj.insert(
+                    "note".into(),
+                    json!("growth requires --session ID"),
+                );
+            }
+        }
+        _ => {
+            return json!({
+                "error": format!("unknown section: {}", section),
+                "available": [
+                    "by-tool", "top-reads", "duplicates",
+                    "large-ops", "large-responses", "toolsearch",
+                    "startup", "growth"
+                ]
+            });
+        }
+    }
+    out
+}
+
 /// Aggregate delta_cc and output by tool combination key.
+/// Caps to top BY_TOOL_TOP_N; remaining tools collapsed into "(others N tools)".
+/// Cap protects callers that pipe raw JSON through `head` from losing tail sections.
+const BY_TOOL_TOP_N: usize = 15;
+
 fn aggregate_by_tool(requests: &[Request]) -> Value {
     let mut by_tool: HashMap<String, (i64, i64)> = HashMap::new(); // tool -> (delta_cc, total_output)
     let mut total: i64 = 0;
@@ -562,35 +657,50 @@ fn aggregate_by_tool(requests: &[Request]) -> Value {
         total += r.delta_cc;
     }
 
-    let mut items: Vec<_> = by_tool
+    let mut raw: Vec<(String, i64, i64)> = by_tool
         .into_iter()
-        .map(|(tool, (delta_cc, total_output))| {
-            let pct = if total > 0 {
-                (delta_cc as f64 / total as f64) * 100.0
-            } else {
-                0.0
-            };
-            let efficiency = if delta_cc > 0 {
-                (total_output as f64 / delta_cc as f64 * 10.0).round() / 10.0
-            } else {
-                0.0
-            };
-            json!({
-                "tool": tool,
-                "cache_create": delta_cc,
-                "total_output": total_output,
-                "pct": (pct * 10.0).round() / 10.0, // 1 decimal
-                "efficiency": efficiency
-            })
-        })
+        .map(|(tool, (cc, out))| (tool, cc, out))
         .collect();
+    raw.sort_by(|a, b| b.1.cmp(&a.1));
 
-    // Sort by cache_create descending
-    items.sort_by(|a, b| {
-        let a_cc = b["cache_create"].as_i64().unwrap_or(0);
-        let b_cc = a["cache_create"].as_i64().unwrap_or(0);
-        a_cc.cmp(&b_cc)
-    });
+    let make_entry = |tool: String, cc: i64, out: i64| {
+        let pct = if total > 0 {
+            (cc as f64 / total as f64) * 100.0
+        } else {
+            0.0
+        };
+        let efficiency = if cc > 0 {
+            (out as f64 / cc as f64 * 10.0).round() / 10.0
+        } else {
+            0.0
+        };
+        json!({
+            "tool": tool,
+            "cache_create": cc,
+            "total_output": out,
+            "pct": (pct * 10.0).round() / 10.0,
+            "efficiency": efficiency,
+        })
+    };
+
+    let mut items: Vec<Value> = Vec::new();
+    if raw.len() <= BY_TOOL_TOP_N {
+        for (tool, cc, out) in raw {
+            items.push(make_entry(tool, cc, out));
+        }
+    } else {
+        let (top, rest) = raw.split_at(BY_TOOL_TOP_N);
+        for (tool, cc, out) in top {
+            items.push(make_entry(tool.clone(), *cc, *out));
+        }
+        let others_cc: i64 = rest.iter().map(|(_, cc, _)| cc).sum();
+        let others_out: i64 = rest.iter().map(|(_, _, out)| out).sum();
+        items.push(make_entry(
+            format!("(others {} tools)", rest.len()),
+            others_cc,
+            others_out,
+        ));
+    }
 
     json!(items)
 }
@@ -950,8 +1060,23 @@ pub fn run(args: &[String]) {
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         Some("session") => {
-            let sa = parse_session_args(&args[1..]);
-            let result = cmd_session(&sa.mode, &sa.value, sa.project.as_deref());
+            // Optional first positional: section name (e.g. "by-tool"). Bare
+            // `session` keeps the old full-report behaviour.
+            let rest = &args[1..];
+            let (section, opts) = match rest.first() {
+                Some(s) if !s.starts_with("--") => (Some(s.as_str()), &rest[1..]),
+                _ => (None, rest),
+            };
+            let sa = parse_session_args(opts);
+            let result = match section {
+                None => cmd_session(&sa.mode, &sa.value, sa.project.as_deref()),
+                Some(sec) => cmd_session_section(
+                    sec,
+                    &sa.mode,
+                    &sa.value,
+                    sa.project.as_deref(),
+                ),
+            };
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         Some("compare") => {
@@ -977,7 +1102,9 @@ pub fn run(args: &[String]) {
         _ => {
             eprintln!("Usage: dotcli token-audit <static|session|all|compare>");
             eprintln!("  dotcli token-audit static");
-            eprintln!("  dotcli token-audit session [--all|--last N|--session ID] [--project PATH]");
+            eprintln!("  dotcli token-audit session [SECTION] [--all|--last N|--session ID] [--project PATH]");
+            eprintln!("    SECTION: by-tool|top-reads|duplicates|large-ops|large-responses|toolsearch|startup|growth");
+            eprintln!("    (omit SECTION for full report)");
             eprintln!("  dotcli token-audit all [--last N|--session ID] [--project PATH]  (default: --last 10)");
             eprintln!("  dotcli token-audit compare <id1> <id2>");
             std::process::exit(1);
