@@ -53,6 +53,7 @@ Start-App-Logged "AutoHotkey" -Elevated {
 }
 sleep -Seconds 1
 Start-App-Logged "yClocky" { yclocky }
+Start-App-Logged "ytasky TUI" { wezterm start --always-new-process -- ytasky }
 sleep -Seconds 2
 
 # --- Medium priority ---
