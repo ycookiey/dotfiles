@@ -96,6 +96,20 @@ enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Scan source files for duplicate token sequences (refactor candidates)
+    DupScan {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Format dup-scan JSON output (stdin)
+    DupScanFormat,
+    /// Scan source files for duplicate string literals (Tailwind, SQL, prompts, etc.)
+    StringDup {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Format string-dup JSON output (stdin)
+    StringDupFormat,
     /// Git prompt info: dirty/updated check for background job
     GitPrompt {
         /// Path to git repository
@@ -221,6 +235,10 @@ fn main() {
         Commands::TokenAuditHook => commands::token_audit_hook::run(),
         Commands::TokenAuditFormat => commands::token_audit_format::run(),
         Commands::TokenAudit { args } => commands::token_audit::run(&args),
+        Commands::DupScan { args } => commands::dup_scan::run(&args),
+        Commands::DupScanFormat => commands::dup_scan_format::run(),
+        Commands::StringDup { args } => commands::string_dup::run(&args),
+        Commands::StringDupFormat => commands::string_dup_format::run(),
         Commands::GitPrompt { path } => commands::git_prompt::run(&path),
         Commands::CheckDirty => commands::check_dirty::run(),
         Commands::SendKey { args } => commands::send_key::run(&args),
