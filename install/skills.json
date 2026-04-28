@@ -2,8 +2,8 @@
   "skills": [
     {
       "name": "empirical-prompt-tuning",
-      "repo": "mizchi/chezmoi-dotfiles",
-      "path": "dot_claude/skills/empirical-prompt-tuning",
+      "repo": "mizchi/skills",
+      "path": "empirical-prompt-tuning",
       "ref": "main"
     }
   ]
