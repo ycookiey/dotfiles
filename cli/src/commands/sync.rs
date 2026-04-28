@@ -16,6 +16,9 @@ pub fn run(dot_arg: Option<String>) {
     if let Err(e) = sync_claude_settings(&dot) {
         eprintln!("dotcli sync settings: {e}");
     }
+    if let Err(e) = sync_claude_keybindings(&dot) {
+        eprintln!("dotcli sync keybindings: {e}");
+    }
     match sync_scoopfile(&dot) {
         Ok(true) => synced = true,
         Ok(false) => {}
@@ -77,6 +80,201 @@ fn sync_claude_settings(dot: &Path) -> Result<()> {
         write_if_different(&target, &serialized)?;
     }
     Ok(())
+}
+
+// --- 1b) Claude keybindings.json 3-way merge ---
+//
+// 前回 sync 時のテンプレート (.dotcli-keybindings-prev.json) を保存し、
+// prev / template / existing の 3-way merge で
+// 「テンプレートからの削除」もローカルに伝搬させる。
+//
+// 各 (context, key) について:
+//   - template にあり        : テンプレート値で上書き
+//   - prev にあるが template に無い : テンプレートから削除されたとみなしローカルから削除
+//   - prev にも template にも無い  : ローカル独自バインドとして保持
+//
+// prev が存在しない初回 sync 時は削除判定をスキップし、単純マージとして振る舞う。
+
+fn sync_claude_keybindings(dot: &Path) -> Result<()> {
+    let template_path = dot.join("claude").join("keybindings.json");
+    if !template_path.exists() {
+        return Ok(());
+    }
+    let template_str = std::fs::read_to_string(&template_path)?;
+    let template: Value = serde_json::from_str(&template_str)?;
+    let template_obj = template
+        .as_object()
+        .context("claude/keybindings.json is not a JSON object")?;
+
+    for dir in claude_dirs()? {
+        let target = dir.join("keybindings.json");
+        let prev_path = dir.join(".dotcli-keybindings-prev.json");
+
+        let mut existing: Map<String, Value> = match std::fs::read_to_string(&target) {
+            Ok(s) => match serde_json::from_str::<Value>(&s) {
+                Ok(Value::Object(m)) => m,
+                _ => Map::new(),
+            },
+            Err(_) => Map::new(),
+        };
+
+        let prev: Option<Value> = std::fs::read_to_string(&prev_path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<Value>(&s).ok());
+        let prev_bindings = prev
+            .as_ref()
+            .and_then(|v| v.as_object())
+            .and_then(|o| o.get("bindings"));
+
+        for (k, v) in template_obj {
+            if k == "bindings" {
+                let merged =
+                    three_way_merge_keybindings_array(prev_bindings, existing.get("bindings"), v);
+                existing.insert(k.clone(), merged);
+            } else {
+                existing.insert(k.clone(), v.clone());
+            }
+        }
+        let serialized = serde_json::to_string_pretty(&Value::Object(existing))?;
+        write_if_different(&target, &serialized)?;
+
+        // 今回適用したテンプレートを次回比較用に保存
+        std::fs::write(&prev_path, &template_str)?;
+    }
+    Ok(())
+}
+
+fn three_way_merge_keybindings_array(
+    prev: Option<&Value>,
+    existing: Option<&Value>,
+    template: &Value,
+) -> Value {
+    use std::collections::{BTreeSet, HashMap};
+
+    let template_arr = match template.as_array() {
+        Some(a) => a,
+        None => return template.clone(),
+    };
+
+    // prev: context -> 管理対象キー集合
+    let mut prev_keys_by_ctx: HashMap<String, BTreeSet<String>> = HashMap::new();
+    if let Some(prev_arr) = prev.and_then(|v| v.as_array()) {
+        for entry in prev_arr {
+            let Some(obj) = entry.as_object() else { continue };
+            let Some(ctx) = obj.get("context").and_then(|v| v.as_str()) else { continue };
+            let keys: BTreeSet<String> = obj
+                .get("bindings")
+                .and_then(|v| v.as_object())
+                .map(|m| m.keys().cloned().collect())
+                .unwrap_or_default();
+            prev_keys_by_ctx.insert(ctx.to_string(), keys);
+        }
+    }
+
+    // template: context -> bindings & extras（context, bindings 以外のキー）
+    let mut tpl_bindings_by_ctx: HashMap<String, Map<String, Value>> = HashMap::new();
+    let mut tpl_extras_by_ctx: HashMap<String, Map<String, Value>> = HashMap::new();
+    let mut tpl_ctx_order: Vec<String> = Vec::new();
+    for entry in template_arr {
+        let Some(obj) = entry.as_object() else { continue };
+        let Some(ctx) = obj.get("context").and_then(|v| v.as_str()) else { continue };
+        let bindings = obj
+            .get("bindings")
+            .and_then(|v| v.as_object())
+            .cloned()
+            .unwrap_or_default();
+        tpl_bindings_by_ctx.insert(ctx.to_string(), bindings);
+        let mut extras = Map::new();
+        for (k, v) in obj {
+            if k != "bindings" && k != "context" {
+                extras.insert(k.clone(), v.clone());
+            }
+        }
+        tpl_extras_by_ctx.insert(ctx.to_string(), extras);
+        if !tpl_ctx_order.contains(&ctx.to_string()) {
+            tpl_ctx_order.push(ctx.to_string());
+        }
+    }
+
+    let mut result: Vec<Value> = match existing.and_then(|v| v.as_array()) {
+        Some(a) => a.clone(),
+        None => Vec::new(),
+    };
+
+    let mut existing_indices: HashMap<String, usize> = HashMap::new();
+    for (i, entry) in result.iter().enumerate() {
+        if let Some(ctx) = entry
+            .as_object()
+            .and_then(|o| o.get("context"))
+            .and_then(|v| v.as_str())
+        {
+            existing_indices.insert(ctx.to_string(), i);
+        }
+    }
+
+    // 関係する context: prev ∪ template
+    let mut all_ctxs: BTreeSet<String> = BTreeSet::new();
+    all_ctxs.extend(prev_keys_by_ctx.keys().cloned());
+    all_ctxs.extend(tpl_bindings_by_ctx.keys().cloned());
+
+    for ctx in &all_ctxs {
+        let prev_keys = prev_keys_by_ctx.get(ctx);
+        let tpl_bindings = tpl_bindings_by_ctx.get(ctx);
+        let tpl_extras = tpl_extras_by_ctx.get(ctx);
+
+        match existing_indices.get(ctx) {
+            Some(&i) => {
+                let existing_entry = result[i].as_object().cloned().unwrap_or_default();
+                let mut bindings_map: Map<String, Value> = existing_entry
+                    .get("bindings")
+                    .and_then(|v| v.as_object())
+                    .cloned()
+                    .unwrap_or_default();
+
+                // prev にあって template に無いキーを削除
+                if let Some(pk) = prev_keys {
+                    for k in pk {
+                        let in_tpl = tpl_bindings.map(|m| m.contains_key(k)).unwrap_or(false);
+                        if !in_tpl {
+                            bindings_map.remove(k);
+                        }
+                    }
+                }
+
+                // template の値で上書き
+                if let Some(tpl) = tpl_bindings {
+                    for (k, v) in tpl {
+                        bindings_map.insert(k.clone(), v.clone());
+                    }
+                }
+
+                let mut merged = existing_entry;
+                merged.insert("bindings".to_string(), Value::Object(bindings_map));
+                if let Some(extras) = tpl_extras {
+                    for (k, v) in extras {
+                        merged.insert(k.clone(), v.clone());
+                    }
+                }
+                result[i] = Value::Object(merged);
+            }
+            None => {
+                // existing に context が無い → template にあれば追加（prev のみは無視）
+                if let Some(tpl) = tpl_bindings {
+                    let mut new_obj = Map::new();
+                    new_obj.insert("context".to_string(), Value::String(ctx.clone()));
+                    new_obj.insert("bindings".to_string(), Value::Object(tpl.clone()));
+                    if let Some(extras) = tpl_extras {
+                        for (k, v) in extras {
+                            new_obj.insert(k.clone(), v.clone());
+                        }
+                    }
+                    result.push(Value::Object(new_obj));
+                }
+            }
+        }
+    }
+
+    Value::Array(result)
 }
 
 fn claude_dirs() -> Result<Vec<PathBuf>> {
