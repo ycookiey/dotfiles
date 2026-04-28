@@ -46,3 +46,24 @@ researcher → planner → implementer → reviewer（並列可）
 - `.agent-output/` への書き込みはEdit/Write toolを使用(Bash redirect不可)
 - cleanup: 完了後にworktree/branchを削除
 - 例外: researcher/plannerは読み取り専用のためworktree分離不要
+
+### ファイルの自動コピー(allowlist方式)
+
+`git worktree add`はtrackedのみ持ち込むため、`.agent-output/`や`.env`等のuntracked/ignoredファイルはworktreeから見えない。agent-spawn-prep.shが以下のallowlistを読み、tracked**でない**ファイル/ディレクトリ(=untracked or ignored)をworktreeへコピーする。trackedは既にworktreeにあるため除外(allowlistに誤って書いても上書きされない)。
+
+- global: `~/.claude/worktree-copy.list` (dotfiles管理。既定で`.agent-output/`, `.env*`等)
+- project: `<repo>/.claude/worktree-copy.list` (プロジェクト固有を追加)
+
+書式: 1行1パターン(repo root相対のglob)、`#`コメント、空行無視。両方読みunion。
+
+#### allowlistの自己改善(Lead責務)
+
+agentがworktree内で「ファイルが見つからない/参照できない」とSendMessageで報告した場合、Leadは以下を判断する:
+
+1. **不足ファイルがmain側に存在し、tracked化すべきでない(中間生成物・秘匿情報・local設定等)** → allowlistへ追加
+   - そのプロジェクト固有なら `<repo>/.claude/worktree-copy.list` (作成→commitするとチーム共有)
+   - 全プロジェクト共通(例: 新たな`.aiconfig`)なら `~/.claude/worktree-copy.list` (dotfilesでcommit)
+2. **不足ファイルをtrackedにすべき** → main側で`git add`+commitを指示。allowlist追加は不要
+3. **不要な参照(plannerの誤指示等)** → allowlist追加せず、上流memberへ再指示
+
+追加後は既存のworktreeでは反映されないため、必要なら当該worktreeを破棄→agent-spawn-prep.sh再実行。allowlistの追加は1パターン1行で最小限に保ち、`node_modules/`等の重量級は基本入れない(必要なら明示判断)。

@@ -123,7 +123,49 @@ WT_GIT_DIR=$(cygpath -u "$WT_GIT_DIR" 2>/dev/null || echo "$WT_GIT_DIR")
 mkdir -p "$WT_GIT_DIR/info"
 echo ".worktree-guard-config" >> "$WT_GIT_DIR/info/exclude"
 
-# --- 8. worktree root pathを出力 ---
+# --- 8. allowlistによるファイルコピー ---
+# global ($HOME/.claude/worktree-copy.list) と project ($REPO_ROOT/.claude/worktree-copy.list)
+# を読み、glob展開してtracked**でない**ファイル/ディレクトリ(=untracked or ignored)を
+# worktreeへコピー。trackedはworktreeが既に持つため除外(誤コピー防止)。
+
+copy_from_allowlist() {
+  local list_file="$1"
+  [[ -f "$list_file" ]] || return 0
+
+  local raw_line pattern src dst
+  local -a matched
+  while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+    pattern="${raw_line%%#*}"
+    pattern="${pattern#"${pattern%%[![:space:]]*}"}"
+    pattern="${pattern%"${pattern##*[![:space:]]}"}"
+    [[ -z "$pattern" ]] && continue
+    pattern="${pattern%/}"
+
+    shopt -s nullglob dotglob
+    # shellcheck disable=SC2206
+    matched=( $pattern )
+    shopt -u nullglob dotglob
+
+    for src in "${matched[@]}"; do
+      [[ -e "$src" ]] || continue
+      # tracked除外: trackedはworktree既存のため上書きしない
+      if git -C "$REPO_ROOT" ls-files --error-unmatch -- "$src" >/dev/null 2>&1; then
+        continue
+      fi
+      dst="$WT_DIR/$src"
+      mkdir -p "$(dirname "$dst")"
+      cp -rp "$src" "$dst"
+    done
+  done < "$list_file"
+}
+
+(
+  cd "$REPO_ROOT"
+  copy_from_allowlist "$HOME/.claude/worktree-copy.list"
+  copy_from_allowlist "$REPO_ROOT/.claude/worktree-copy.list"
+)
+
+# --- 9. worktree root pathを出力 ---
 
 echo "WORKTREE_ROOT=$WT_DIR"
 echo "WORKTREE_ROOT_WIN=$WT_WIN"
