@@ -140,6 +140,7 @@ async fn handle_event(
                 let _ = crate::render::clear_screen(&mut out);
                 let _ = out.flush();
             }
+            app.last_drawn = None;
             app.display = DisplayStatus::Empty;
             schedule_resize_debounce(tx.clone(), resize_timer);
             Ok(false)
@@ -323,10 +324,24 @@ fn store(app: &AppState, page: u32, rp: RenderedPage) {
     }
 }
 
-fn draw(app: &AppState, rp: &RenderedPage) -> Result<()> {
+fn draw(app: &mut AppState, rp: &RenderedPage) -> Result<()> {
     let mut out = std::io::stdout().lock();
-    write_page(&mut out, rp, app.current_page, app.total_pages)?;
+    // 初回描画 (last_drawn=None) の場合、起動直後のシェルプロンプト残骸が
+    // 残らないよう一度だけ画面をクリアする。以降の描画は差分 erase で済む。
+    if app.last_drawn.is_none() {
+        crate::render::clear_screen(&mut out)?;
+    }
+    write_page(
+        &mut out,
+        rp,
+        app.last_drawn.as_ref(),
+        app.current_page,
+        app.total_pages,
+        app.term_dims.rows,
+    )?;
     out.flush()?;
+    drop(out);
+    app.last_drawn = Some(rp.clone());
     Ok(())
 }
 
@@ -450,14 +465,16 @@ pub fn handle_render_complete(
 }
 
 fn matches_dims(rp: &RenderedPage, app: &AppState) -> bool {
-    // We only compare widths because heights are aspect-preserved.
-    let target_w = match rp.quality {
-        Quality::Low => app.term_dims.px_w / 3,
-        Quality::High => app.term_dims.px_w,
+    // 画像はアスペクト比保持でラスタライズされ、PDF が縦長なら高さ制約・
+    // 横長なら幅制約のどちらか一方の軸が target に達する。よってどちらか
+    // 一方の軸が target と一致していれば現在のターミナル寸法用の画像。
+    let (target_w, target_h) = match rp.quality {
+        Quality::Low => (app.term_dims.px_w / 3, app.term_dims.px_h),
+        Quality::High => (app.term_dims.px_w, app.term_dims.px_h),
     };
-    // Accept a small rounding tolerance.
-    let diff = rp.dims.0.abs_diff(target_w);
-    diff <= 2
+    let dw = rp.dims.0.abs_diff(target_w);
+    let dh = rp.dims.1.abs_diff(target_h);
+    dw <= 2 || dh <= 2
 }
 
 // TODO(T-11 follow-up): add handle_render_complete / navigate tests

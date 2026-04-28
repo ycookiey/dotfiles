@@ -117,25 +117,39 @@ pub fn query_dims() -> Result<TerminalDims> {
 fn query_dims_raw(cols: u16, rows: u16) -> TerminalDims {
     let timeout = Duration::from_millis(150);
 
-    let pixel = query_csi(b"\x1b[14t", timeout)
-        .ok()
-        .and_then(|buf| parse_csi_report(&buf, 4));
+    // 注意: CSI 14t (window pixel size) は **ウィンドウ全体** の px を
+    // 返す。wezterm/tmux 等でペイン分割している場合は pane の表示領域
+    // より大きい値になり、これを画像高さの上限に使うと画像がペインの
+    // 縦幅を超えて描画され上端が見切れる。代わりに cell サイズ × セル数
+    // (cols/rows は crossterm から pane 単位で取得済み) で pane の実寸を
+    // 算出する。
     let cell = query_csi(b"\x1b[16t", timeout)
         .ok()
         .and_then(|buf| parse_csi_report(&buf, 6));
 
-    match (pixel, cell) {
-        (Some((ph, pw)), Some((ch, cw))) => TerminalDims {
+    let dims = match cell {
+        Some((ch, cw)) => TerminalDims {
             cols,
             rows,
-            px_w: pw,
-            px_h: ph,
+            px_w: u32::from(cols) * cw,
+            px_h: u32::from(rows) * ch,
             cell_w: cw,
             cell_h: ch,
             is_fallback: false,
         },
         _ => TerminalDims::fallback(cols, rows),
-    }
+    };
+    tracing::info!(
+        cols = dims.cols,
+        rows = dims.rows,
+        cell_w = dims.cell_w,
+        cell_h = dims.cell_h,
+        px_w = dims.px_w,
+        px_h = dims.px_h,
+        is_fallback = dims.is_fallback,
+        "terminal dims"
+    );
+    dims
 }
 
 #[cfg(test)]
