@@ -61,6 +61,10 @@ path = "bin/ycusage.ps1"
 name = "claude-reauth"
 path = "bin/claude-reauth.ps1"
 
+[[script]]
+name = "doctor"
+path = "bin/doctor.ps1"
+
 # =============================================
 # C. App launchers
 # =============================================
