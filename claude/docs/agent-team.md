@@ -38,6 +38,15 @@ researcher → planner → implementer → reviewer（並列可）
 - パス指定: prompt内のファイルパスは絶対パスを使用。worktree運用時はagent-spawn-prep.shが自動的にworktree rootに書き換える
 - ブロック時: memberがSendMessageで報告 → Leadが追加情報or別member
 
+### planner: plan構成指示
+
+spawn promptの `plan_layout: single|multi|auto` で構成を指示(省略=auto)。
+- `single`: 単一plan file
+- `multi`: 複数file(`00-overview.md` + `NN-<phase>.md`)。phase一覧も指示可
+- `auto`: planner判断
+
+plannerが規模乖離を検知すれば報告するので、Leadが再判断。
+
 ## Worktree運用
 
 書き込みsubagent(implementer/tester)のspawn時、SKILL.mdの「Worktree Isolation」手順に従う。
