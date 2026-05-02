@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
-# agent-spawn-prep.sh — worktree作成 + prompt pathsの書き換え + .worktree-guard-config書き出し
-# 仕様: .agent-output/worktree-isolation/plan-v2.md Section 2
+# agent-spawn-prep.sh — worktree作成 + .worktree-guard-config書き出し + allowlist copy
+#
+# 責務 (M3 設計):
+#   - worktree 作成のみ。prompt の生成・置換・永続化は Lead 側責任。
+#   - prompt は Agent tool に文字列で直渡し。本 script は prompt を扱わない。
 #
 # 使い方:
-#   agent-spawn-prep.sh --task-id <TASK_ID> --prompt-file <PATH> [--base-ref <REF>]
+#   agent-spawn-prep.sh --task-id <TASK_ID> [--base-ref <REF>]
+#
+# 後方互換:
+#   --prompt-file は受け付けるが警告のみで無視 (deprecation 経過用)。
 
 set -euo pipefail
 
 # --- 引数パース ---
 
 TASK_ID=""
-PROMPT_FILE=""
 BASE_REF="HEAD"
 
 while [[ $# -gt 0 ]]; do
@@ -20,7 +25,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --prompt-file)
-      PROMPT_FILE="$2"
+      echo "WARN: --prompt-file is deprecated and ignored. Lead must pass prompt directly to Agent tool." >&2
       shift 2
       ;;
     --base-ref)
@@ -36,16 +41,6 @@ done
 
 if [[ -z "$TASK_ID" ]]; then
   echo "ERROR: --task-id is required" >&2
-  exit 1
-fi
-
-if [[ -z "$PROMPT_FILE" ]]; then
-  echo "ERROR: --prompt-file is required" >&2
-  exit 1
-fi
-
-if [[ ! -f "$PROMPT_FILE" ]]; then
-  echo "ERROR: prompt file not found: $PROMPT_FILE" >&2
   exit 1
 fi
 
@@ -77,43 +72,7 @@ if [[ ! -d "$WT_DIR" ]]; then
   git -C "$REPO_ROOT" worktree add -b "$WT_BRANCH" "$WT_DIR" "$BASE_REF"
 fi
 
-# --- 5. prompt file内の絶対パス置換 ---
-
-REPO_WIN=$(cygpath -w "$REPO_ROOT" 2>/dev/null || echo "$REPO_ROOT")
-REPO_MIX=$(cygpath -m "$REPO_ROOT" 2>/dev/null || echo "$REPO_ROOT")
-WT_WIN=$(cygpath -w "$WT_DIR" 2>/dev/null || echo "$WT_DIR")
-WT_MIX=$(cygpath -m "$WT_DIR" 2>/dev/null || echo "$WT_DIR")
-
-# 空ファイルはスキップ
-if [[ -s "$PROMPT_FILE" ]]; then
-  PROMPT_CONTENT=$(cat "$PROMPT_FILE")
-
-  # Windows形式のバックスラッシュをsedでエスケープして置換
-  REPO_WIN_ESC="${REPO_WIN//\\/\\\\}"
-  WT_WIN_ESC="${WT_WIN//\\/\\\\}"
-
-  PROMPT_CONTENT=$(printf '%s' "$PROMPT_CONTENT" | sed "s|${REPO_WIN_ESC}|${WT_WIN_ESC}|g")
-  PROMPT_CONTENT=$(printf '%s' "$PROMPT_CONTENT" | sed "s|${REPO_MIX}|${WT_MIX}|g")
-  PROMPT_CONTENT=$(printf '%s' "$PROMPT_CONTENT" | sed "s|${REPO_ROOT}|${WT_DIR}|g")
-
-  printf '%s' "$PROMPT_CONTENT" > "$PROMPT_FILE"
-
-  # --- 6. 置換漏れ検出 (ゲート) ---
-  # WT_DIR以下のパスはOK (REPO_ROOTはWT_DIRのprefixとして含まれる場合がある)
-  LEAK_POSIX=$(grep -F "$REPO_ROOT" "$PROMPT_FILE" | grep -vF "$WT_DIR" || true)
-  LEAK_WIN=$(grep -F "$REPO_WIN" "$PROMPT_FILE" | grep -vF "$WT_WIN" || true)
-  LEAK_MIX=$(grep -F "$REPO_MIX" "$PROMPT_FILE" | grep -vF "$WT_MIX" || true)
-  if [[ -n "$LEAK_POSIX" || -n "$LEAK_WIN" || -n "$LEAK_MIX" ]]; then
-    echo "ERROR: prompt file still contains original repo path after substitution" >&2
-    echo "Remaining occurrences:" >&2
-    [[ -n "$LEAK_POSIX" ]] && echo "$LEAK_POSIX" >&2
-    [[ -n "$LEAK_WIN" ]] && echo "$LEAK_WIN" >&2
-    [[ -n "$LEAK_MIX" ]] && echo "$LEAK_MIX" >&2
-    exit 1
-  fi
-fi
-
-# --- 7. .worktree-guard-config書き出し ---
+# --- 5. .worktree-guard-config書き出し ---
 
 cat > "$WT_DIR/.worktree-guard-config" <<GUARD_EOF
 WORKTREE_ROOT=$WT_DIR
@@ -127,7 +86,7 @@ WT_GIT_DIR=$(cygpath -u "$WT_GIT_DIR" 2>/dev/null || echo "$WT_GIT_DIR")
 mkdir -p "$WT_GIT_DIR/info"
 echo ".worktree-guard-config" >> "$WT_GIT_DIR/info/exclude"
 
-# --- 8. allowlistによるファイルコピー ---
+# --- 6. allowlistによるファイルコピー ---
 # global ($HOME/.claude/worktree-copy.list) と project ($REPO_ROOT/.claude/worktree-copy.list)
 # を読み、glob展開してtracked**でない**ファイル/ディレクトリ(=untracked or ignored)を
 # worktreeへコピー。trackedはworktreeが既に持つため除外(誤コピー防止)。
@@ -197,7 +156,8 @@ copy_from_allowlist() {
   copy_from_allowlist "$REPO_ROOT/.claude/worktree-copy.list"
 )
 
-# --- 9. worktree root pathを出力 ---
+# --- 7. worktree root pathを出力 ---
 
+WT_WIN=$(cygpath -w "$WT_DIR" 2>/dev/null || echo "$WT_DIR")
 echo "WORKTREE_ROOT=$WT_DIR"
 echo "WORKTREE_ROOT_WIN=$WT_WIN"
