@@ -115,6 +115,9 @@ vim.keymap.set("v", "<A-l>", function()
   end
 end, { desc = "Toggle markdown checkboxes (visual)" })
 
+-- vim-pandoc の .md 乗っ取りを無効化（ftdetect が lazy.nvim 起動時に先行 source されるため、ここで設定する必要がある）
+vim.g["pandoc#filetypes#pandoc_markdown"] = 0
+
 -- lazy.nvim ブートストラップ
 local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
 if not vim.uv.fs_stat(lazypath) then
