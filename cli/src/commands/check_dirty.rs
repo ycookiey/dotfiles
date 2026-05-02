@@ -37,7 +37,10 @@ fn try_run() -> Option<String> {
 
             let other_wrote = cas_db::other_session_wrote(&*tx, &normalized_path, session_id).ok()?;
             if other_wrote {
-                Some("Another agent session has written to this file. Re-read it before editing to avoid clobbering their changes.".to_string())
+                Some(format!(
+                    "Another agent session has written to `{}`. Re-read it before editing to avoid clobbering their changes. (No need to run git status — this warning targets only this file.)",
+                    normalized_path
+                ))
             } else {
                 None
             }
@@ -50,7 +53,10 @@ fn try_run() -> Option<String> {
             } else {
                 let other_wrote = cas_db::other_session_wrote(&*tx, &normalized_path, session_id).ok()?;
                 if other_wrote {
-                    Some("Another agent session edited this file since Claude's last touch. Review before proceeding.".to_string())
+                    Some(format!(
+                        "Another agent session edited `{}` since Claude's last touch. Review before proceeding. (No need to run git status — this warning targets only this file.)",
+                        normalized_path
+                    ))
                 } else {
                     None
                 }
