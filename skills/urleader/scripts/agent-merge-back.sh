@@ -44,8 +44,15 @@ if [[ -z "$TASK_ID" ]]; then
 fi
 
 # --- repo root ---
-REPO_ROOT=$(git -C "$(git rev-parse --git-common-dir 2>/dev/null)" rev-parse --show-toplevel 2>/dev/null \
-  || git rev-parse --show-toplevel)
+# main worktree (= 本体 repo) を取得。cwd が worktree 内/外いずれでも同じ結果。
+# 旧実装の `git -C $(git rev-parse --git-common-dir) rev-parse --show-toplevel`
+# は .git ディレクトリ内では fatal となり、|| フォールバックで cwd の
+# show-toplevel が採用されて worktree path を main repo として誤認していた。
+REPO_ROOT=$(git worktree list --porcelain | awk '/^worktree / {print $2; exit}')
+if [[ -z "$REPO_ROOT" ]]; then
+  echo "ERROR: failed to resolve main repo root via git worktree list" >&2
+  exit 1
+fi
 REPO_ROOT=$(cygpath -u "$REPO_ROOT" 2>/dev/null || echo "$REPO_ROOT")
 
 WT_DIR="$REPO_ROOT/.claude/worktrees/agent-$TASK_ID"
