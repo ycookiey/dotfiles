@@ -61,6 +61,17 @@ pub fn lookup_entry(conn: &Connection, path: &str, session_id: &str) -> rusqlite
     }
 }
 
+/// Returns true if any other session has written to this path (last_written IS NOT NULL).
+pub fn other_session_wrote(conn: &Connection, path: &str, session_id: &str) -> rusqlite::Result<bool> {
+    let mut stmt = conn.prepare(
+        "SELECT 1 FROM cas_journal
+         WHERE path = ?1 AND session_id != ?2 AND last_written IS NOT NULL
+         LIMIT 1"
+    )?;
+    let mut rows = stmt.query(params![path, session_id])?;
+    Ok(rows.next()?.is_some())
+}
+
 pub fn insert_entry(
     conn: &Connection,
     path: &str,
