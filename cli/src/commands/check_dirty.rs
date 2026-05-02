@@ -35,12 +35,11 @@ fn try_run() -> Option<String> {
             let head_blob = cas_hash::head_blob_hash_from_git(Path::new(&file_path));
             cas_db::insert_entry(&*tx, &normalized_path, session_id, head_blob.as_deref(), Some(&current_blob), None).ok()?;
 
-            if head_blob.is_none() {
-                None
-            } else if head_blob.as_deref() == Some(current_blob.as_str()) {
-                None
+            let other_wrote = cas_db::other_session_wrote(&*tx, &normalized_path, session_id).ok()?;
+            if other_wrote {
+                Some("Another agent session has written to this file. Re-read it before editing to avoid clobbering their changes.".to_string())
             } else {
-                Some("This file has uncommitted changes — editing may mix unrelated changes into a single commit. Consider committing first.".to_string())
+                None
             }
         }
         Some(e) => {
@@ -49,7 +48,12 @@ fn try_run() -> Option<String> {
             } else if e.last_written.as_deref() == Some(current_blob.as_str()) {
                 None
             } else {
-                Some("External changes detected since Claude's last edit. Review before proceeding to avoid mixing unrelated changes.".to_string())
+                let other_wrote = cas_db::other_session_wrote(&*tx, &normalized_path, session_id).ok()?;
+                if other_wrote {
+                    Some("Another agent session edited this file since Claude's last touch. Review before proceeding.".to_string())
+                } else {
+                    None
+                }
             };
             cas_db::update_last_seen(&*tx, &normalized_path, session_id, &current_blob).ok()?;
             warn
