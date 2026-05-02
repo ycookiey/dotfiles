@@ -50,7 +50,7 @@ plannerが規模乖離を検知すれば報告するので、Leadが再判断。
 ## Worktree運用
 
 書き込みsubagent(implementer/tester)のspawn時、SKILL.mdの「Worktree Isolation」手順に従う。
-- prompt file作成 → agent-spawn-prep.sh実行 → 書き換え済みpromptでAgent spawn
+- prompt file作成 → `~/.claude/skills/urleader/scripts/agent-spawn-prep.sh` 実行 → 書き換え済みpromptでAgent spawn (merge-backも同ディレクトリ)
 - subagentにはWORKTREE_GUARD_ROOT環境変数を設定させる(補助。hookはconfigファイルから自動解決)
 - `.agent-output/` への書き込みはEdit/Write toolを使用(Bash redirect不可)
 - cleanup/merge-back: 完了後は `agent-merge-back.sh --task-id <TASK_ID>` でmainへ取り込み+worktree/branch削除を一括実行
