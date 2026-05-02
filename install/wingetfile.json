@@ -1,6 +1,12 @@
 {
   "apps": [
     {
+      "Id": "Amazon.Kindle"
+    },
+    {
+      "Id": "Anki.Anki"
+    },
+    {
       "Id": "Anthropic.Claude"
     },
     {
@@ -16,28 +22,43 @@
       "Id": "Discord.Discord"
     },
     {
+      "Id": "Docker.DockerDesktop"
+    },
+    {
       "Id": "EpicGames.EpicGamesLauncher"
+    },
+    {
+      "Id": "GitHub.GitHubDesktop"
+    },
+    {
+      "Id": "Google.Antigravity"
     },
     {
       "Id": "Google.JapaneseIME"
     },
     {
+      "Id": "Henry++.simplewall"
+    },
+    {
+      "Id": "Kenkun.AviUtlExEdit2"
+    },
+    {
       "Id": "Microsoft.AppInstaller"
     },
     {
-      "Id": "Microsoft.Edge"
+      "Id": "Microsoft.DotNet.Native.Runtime"
     },
     {
-      "Id": "Microsoft.EdgeWebView2Runtime"
+      "Id": "Microsoft.DotNet.SDK.8"
+    },
+    {
+      "Id": "Microsoft.Edge"
     },
     {
       "Id": "Microsoft.OneDrive"
     },
     {
       "Id": "Microsoft.Teams"
-    },
-    {
-      "Id": "Microsoft.Teams.Free"
     },
     {
       "Id": "Microsoft.UI.Xaml.2.7"
@@ -52,10 +73,25 @@
       "Id": "Microsoft.VCLibs.Desktop.14"
     },
     {
+      "Id": "Microsoft.VCRedist.2010.x64"
+    },
+    {
+      "Id": "Microsoft.VCRedist.2010.x86"
+    },
+    {
+      "Id": "Microsoft.VCRedist.2013.x64"
+    },
+    {
+      "Id": "Microsoft.VCRedist.2013.x86"
+    },
+    {
       "Id": "Microsoft.VCRedist.2015+.x64"
     },
     {
       "Id": "Microsoft.VCRedist.2015+.x86"
+    },
+    {
+      "Id": "Microsoft.VisualStudio.2019.BuildTools"
     },
     {
       "Id": "Microsoft.VisualStudio.BuildTools"
@@ -82,10 +118,49 @@
       "Id": "Microsoft.WindowsTerminal"
     },
     {
+      "Id": "Microsoft.WingetCreate"
+    },
+    {
+      "Id": "Notion.NotionCalendar"
+    },
+    {
+      "Id": "Nvidia.PhysX"
+    },
+    {
+      "Id": "Oracle.VirtualBox"
+    },
+    {
+      "Id": "ParadoxInteractive.ParadoxLauncher"
+    },
+    {
       "Id": "Parsec.Parsec"
     },
     {
       "Id": "Parsec.ParsecVDD"
+    },
+    {
+      "Id": "Perplexity.Comet"
+    },
+    {
+      "Id": "Python.Launcher"
+    },
+    {
+      "Id": "SlackTechnologies.Slack"
+    },
+    {
+      "Id": "Spotify.Spotify"
+    },
+    {
+      "Id": "ZAP.ZAP"
+    },
+    {
+      "Id": "ZhipuAI.AutoClaw"
+    },
+    {
+      "Id": "Zoom.Zoom.EXE"
+    },
+    {
+      "Id": "junegunn.fzf"
     }
   ]
 }

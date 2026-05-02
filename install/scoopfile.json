@@ -2,7 +2,7 @@
   "buckets": [
     {
       "Name": "main",
-      "Source": "https://github.com/ScoopInstaller/Main"
+      "Source": "https://github.com/ScoopInstaller/Main.git"
     },
     {
       "Name": "extras",
@@ -75,10 +75,6 @@
       "Source": "extras"
     },
     {
-      "Name": "dotnet-sdk",
-      "Source": "main"
-    },
-    {
       "Name": "epic-games-launcher",
       "Source": "games"
     },
@@ -119,6 +115,14 @@
       "Source": "main"
     },
     {
+      "Name": "git-all-status",
+      "Source": "yscoopy"
+    },
+    {
+      "Name": "git-filter-repo",
+      "Source": "main"
+    },
+    {
       "Name": "googlechrome",
       "Source": "extras"
     },
@@ -132,6 +136,10 @@
     },
     {
       "Name": "jq",
+      "Source": "main"
+    },
+    {
+      "Name": "just",
       "Source": "main"
     },
     {
@@ -159,12 +167,12 @@
       "Source": "main"
     },
     {
-      "Name": "mise",
-      "Source": "main"
-    },
-    {
       "Name": "mpv",
       "Source": "extras"
+    },
+    {
+      "Name": "msys2",
+      "Source": "main"
     },
     {
       "Name": "neovim",
@@ -184,15 +192,19 @@
     },
     {
       "Name": "ollama",
-      "Source": null
+      "Source": "main"
     },
     {
       "Name": "onlyoffice-desktopeditors",
       "Source": "extras"
     },
     {
+      "Name": "pandoc",
+      "Source": "main"
+    },
+    {
       "Name": "parsec-np",
-      "Source": null
+      "Source": "nonportable"
     },
     {
       "Name": "perl",
@@ -219,6 +231,10 @@
       "Source": "main"
     },
     {
+      "Name": "ruby",
+      "Source": "main"
+    },
+    {
       "Name": "rust",
       "Source": "main"
     },
@@ -228,10 +244,6 @@
     },
     {
       "Name": "scoop-search",
-      "Source": "main"
-    },
-    {
-      "Name": "sqlite",
       "Source": "main"
     },
     {
@@ -272,7 +284,7 @@
     },
     {
       "Name": "vcpkg",
-      "Source": null
+      "Source": "main"
     },
     {
       "Name": "vcxsrv",
@@ -325,10 +337,6 @@
     {
       "Name": "ywatchy",
       "Source": "yscoopy"
-    },
-    {
-      "Name": "zenhan",
-      "Source": "main"
     },
     {
       "Name": "zoom",
