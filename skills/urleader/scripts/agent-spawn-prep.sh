@@ -1,15 +1,12 @@
 #!/usr/bin/env bash
 # agent-spawn-prep.sh — worktree作成 + .worktree-guard-config書き出し + allowlist copy
 #
-# 責務 (M3 設計):
+# 責務:
 #   - worktree 作成のみ。prompt の生成・置換・永続化は Lead 側責任。
 #   - prompt は Agent tool に文字列で直渡し。本 script は prompt を扱わない。
 #
 # 使い方:
 #   agent-spawn-prep.sh --task-id <TASK_ID> [--base-ref <REF>]
-#
-# 後方互換:
-#   --prompt-file は受け付けるが警告のみで無視 (deprecation 経過用)。
 
 set -euo pipefail
 
@@ -22,10 +19,6 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --task-id)
       TASK_ID="$2"
-      shift 2
-      ;;
-    --prompt-file)
-      echo "WARN: --prompt-file is deprecated and ignored. Lead must pass prompt directly to Agent tool." >&2
       shift 2
       ;;
     --base-ref)
