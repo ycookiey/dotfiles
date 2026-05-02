@@ -53,6 +53,11 @@ Start-App-Logged "AutoHotkey" -Elevated {
 }
 sleep -Seconds 1
 Start-App-Logged "yClocky" { yclocky }
+Start-App-Logged "ybasey-mirror" {
+    start "C:\Main\Project\ybasey-mirror\target\release\ybasey-mirror.exe" `
+        -Arg "--config","C:\Main\Project\ybasey-mirror\config.toml" `
+        -WindowStyle Hidden
+}
 Start-App-Logged "ytasky TUI" { wezterm start --always-new-process -- ytasky }
 sleep -Seconds 2
 
