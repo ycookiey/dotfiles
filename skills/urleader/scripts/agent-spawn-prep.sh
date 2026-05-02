@@ -50,9 +50,13 @@ if [[ ! -f "$PROMPT_FILE" ]]; then
 fi
 
 # --- 1. repo root取得 (CWD drift対策) ---
-
-REPO_ROOT=$(git -C "$(git rev-parse --git-common-dir 2>/dev/null)" rev-parse --show-toplevel 2>/dev/null \
-  || git rev-parse --show-toplevel)
+# main worktree (= 本体 repo) を取得。cwd が worktree 内/外いずれでも同じ結果。
+# 旧実装は .git ディレクトリ内で fatal となり worktree から呼ぶと cwd を返していた。
+REPO_ROOT=$(git worktree list --porcelain | awk '/^worktree / {print $2; exit}')
+if [[ -z "$REPO_ROOT" ]]; then
+  echo "ERROR: failed to resolve main repo root via git worktree list" >&2
+  exit 1
+fi
 REPO_ROOT=$(cygpath -u "$REPO_ROOT" 2>/dev/null || echo "$REPO_ROOT")
 
 # --- 2. worktreeディレクトリとbranch名の決定 ---
