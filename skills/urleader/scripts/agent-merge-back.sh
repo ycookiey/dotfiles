@@ -96,8 +96,26 @@ if ! git -C "$REPO_ROOT" merge --ff-only "$WT_BRANCH"; then
 fi
 
 # --- 3. cleanup (merge成功時のみ) ---
+# Windowsでは worktree内の node_modules 等で MAX_PATH (260) を超え
+# `git worktree remove` がファイル削除に失敗することがある。
+# その場合は PowerShell の `\\?\` 長パスprefixで強制削除し prune する。
+cleanup_worktree() {
+  if git -C "$REPO_ROOT" worktree remove "$WT_DIR" --force 2>/dev/null; then
+    return 0
+  fi
+  echo "[merge-back] worktree remove failed (likely Windows MAX_PATH); retrying with long-path prefix" >&2
+  local wt_win
+  wt_win=$(cygpath -w "$WT_DIR" 2>/dev/null || echo "$WT_DIR")
+  if command -v powershell.exe >/dev/null 2>&1; then
+    powershell.exe -NoProfile -Command "Remove-Item -LiteralPath '\\\\?\\$wt_win' -Recurse -Force -ErrorAction Stop"
+  else
+    rm -rf "$WT_DIR"
+  fi
+  git -C "$REPO_ROOT" worktree prune
+}
+
 echo "[merge-back] cleanup: removing worktree and branch"
-git -C "$REPO_ROOT" worktree remove "$WT_DIR" --force
+cleanup_worktree
 git -C "$REPO_ROOT" branch -D "$WT_BRANCH"
 
 echo "[merge-back] done: $WT_BRANCH merged into $MAIN_BRANCH"
