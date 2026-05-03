@@ -36,7 +36,6 @@ claude/db/
 
 # Claude Skills
 claude/skills/private
-claude/skills/browser-fetch/scratchpad/
 /nushell/history.txt
 
 # Node modules
