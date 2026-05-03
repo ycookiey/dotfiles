@@ -38,7 +38,7 @@ researcher → planner → implementer → reviewer（並列可）
 ## Spawn
 
 - 前memberの出力サマリー（またはファイルパス）、期待出力形式、「やらないこと」の明示
-- パス指定: prompt内のファイルパスは絶対パスを使用。worktree運用時はagent-spawn-prep.shが自動的にworktree rootに書き換える
+- パス指定: prompt内の絶対パスはLeadが組み立て時に`<WORKTREE_ROOT>`(agent-spawn-prep.sh stdout)を直接埋め込む。main repo pathをそのまま書くとworktree外参照になる。spawn-prep.shはpath書き換えを行わない(詳細はurleader SKILL.md)
 - ブロック時: memberがSendMessageで報告 → Leadが追加情報or別member
 
 ### planner: plan構成指示
