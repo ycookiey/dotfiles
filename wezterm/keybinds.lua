@@ -21,12 +21,6 @@ local function is_nvim(pane)
   return title:find("nvim") ~= nil
 end
 
-local function is_claude_code(pane)
-  -- claude起動時にdotcliが OSC 1337 で SetUserVar app=claude を発行する
-  local vars = pane:get_user_vars() or {}
-  return vars.app == "claude"
-end
-
 -- nvimからのペイン移動要求を処理（user-var経由）
 wezterm.on("user-var-changed", function(window, pane, name, value)
   if name == "pane_right" then
@@ -319,28 +313,7 @@ return {
     { key = "k", mods = "ALT", action = act.ActivatePaneDirection("Up") },
     { key = "j", mods = "ALT", action = act.ActivatePaneDirection("Down") },
     -- ペインズーム
-    {
-      key = "z",
-      mods = "ALT",
-      action = wezterm.action_callback(function(window, pane)
-        -- 先に判定（zoom切替後に pane オブジェクト参照が壊れるケースあり）
-        local matched = is_claude_code(pane)
-        local origin_id = pane:pane_id()
-        window:perform_action(act.TogglePaneZoomState, pane)
-        if matched then
-          -- claude (ink) は PTY 経由の \x0c を Ctrl+L キーイベントとして認識しない。
-          -- 物理キー入力でないと発火しないため、Win32 SendInput で注入する。
-          wezterm.time.call_after(0.1, function()
-            local active = window:active_pane()
-            if not active or active:pane_id() ~= origin_id then return end
-            wezterm.background_child_process({
-              "dotcli", "send-key", "ctrl+l",
-              "--only-when-class", "org.wezfurlong.wezterm",
-            })
-          end)
-        end
-      end),
-    },
+    { key = "z", mods = "ALT", action = act.TogglePaneZoomState },
     -- フォントサイズ
     { key = "+", mods = "CTRL", action = act.IncreaseFontSize },
     { key = "-", mods = "CTRL", action = act.DecreaseFontSize },
