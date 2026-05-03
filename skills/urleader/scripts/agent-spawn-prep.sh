@@ -149,7 +149,20 @@ copy_from_allowlist() {
   copy_from_allowlist "$REPO_ROOT/.claude/worktree-copy.list"
 )
 
-# --- 7. worktree root pathを出力 ---
+# --- 7. project init hook (任意) ---
+# <repo>/.claude/worktree-init.sh が存在すれば worktree内で実行。
+# 典型用途: pnpm install --frozen-lockfile, env restore, 重量ビルド成果物link等。
+# 失敗時は spawn 中断 (member が壊れた worktree で動くより明示エラーが安全)。
+INIT_HOOK="$REPO_ROOT/.claude/worktree-init.sh"
+if [[ -f "$INIT_HOOK" ]]; then
+  echo "INFO: running project worktree-init.sh in $WT_DIR" >&2
+  if ! ( cd "$WT_DIR" && bash "$INIT_HOOK" ); then
+    echo "ERROR: worktree-init.sh failed (worktree kept at $WT_DIR for inspection)" >&2
+    exit 1
+  fi
+fi
+
+# --- 8. worktree root pathを出力 ---
 
 WT_WIN=$(cygpath -w "$WT_DIR" 2>/dev/null || echo "$WT_DIR")
 echo "WORKTREE_ROOT=$WT_DIR"
