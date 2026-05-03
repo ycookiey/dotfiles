@@ -11,10 +11,13 @@
 
 ## 手順
 
-1. `TeamCreate` → `TaskCreate`（依存: `blockedBy`。同一ファイル編集も依存に含める）
-2. `Agent`でspawn（`team_name`, `name`, `subagent_type`指定）→ `TaskUpdate`で`owner`設定
-3. memberの`SendMessage`を受けて統合・次指示。`blockedBy`解消済みの未着手タスクがあれば即spawn（ユーザ確認不要）
-4. 完了後 `SendMessage`で`{type: "shutdown_request"}`
+1. **session prefix発行**: `TeamCreate`直後にBashで `date +%y%m%d-%H%M%S | cut -c1-8` 等を実行し、5-8文字程度の短いprefixを得る(例: `s60503a`)。以降のtask-idは必ず `<prefix>-T-1` 形式とする(`T-1`単独で使わない)
+2. `TeamCreate` → `TaskCreate`（id=`<prefix>-T-1` 等。依存: `blockedBy`。同一ファイル編集も依存に含める）
+3. `Agent`でspawn（`team_name`, `name`, `subagent_type`指定）→ `TaskUpdate`で`owner`設定
+4. memberの`SendMessage`を受けて統合・次指示。`blockedBy`解消済みの未着手タスクがあれば即spawn（ユーザ確認不要）
+5. 完了後 `SendMessage`で`{type: "shutdown_request"}`
+
+session prefixの目的: 複数Claude Codeセッションが同一repoでagent teamを動かしたとき、worktree(`agent-<task-id>`)と`.agent-output/<task-id>/`が物理衝突して同じファイルを取り合うのを防ぐ。同一タスクの意図的reuseはprefix固定で従来通り可能。
 
 ## フロー
 
@@ -29,7 +32,7 @@ researcher → planner → implementer → reviewer（並列可）
 ## 成果物ファイル
 
 詳細が多い場合は `.agent-output/<task-id>/` にファイル出力し、SendMessageでは概要+ファイルパスのみ送る。Leadのcontext肥大化を防止。
-- 例: `.agent-output/T-7.1/plan.md`, `.agent-output/T-7.1/research-api.md`
+- 例: `.agent-output/s60503a-T-7.1/plan.md`, `.agent-output/s60503a-T-7.1/research-api.md`(task-idはsession prefix込み)
 - implementerへはspawn時にファイルパスを渡す
 
 ## Spawn
