@@ -83,3 +83,14 @@ agentがworktree内で「ファイルが見つからない/参照できない」
 3. **不要な参照(plannerの誤指示等)** → allowlist追加せず、上流memberへ再指示
 
 追加後は既存のworktreeでは反映されないため、必要なら当該worktreeを破棄→agent-spawn-prep.sh再実行。allowlistの追加は1パターン1行で最小限に保ち、`node_modules/`等の重量級は基本入れない(必要なら明示判断)。
+
+### project init hook (worktree-init.sh)
+
+`<repo>/.claude/worktree-init.sh` が存在すれば、agent-spawn-prep.sh が allowlist コピー後に worktree内で実行する。allowlistでコピーするには重すぎる/不適切なものを worktree作成時に整える用途。
+
+典型例:
+- `pnpm install --frozen-lockfile --prefer-offline` (node_modules復元。allowlistコピーだと10万ファイル超 + pnpm symlink破綻リスク)
+- 大型ビルド成果物の symlink/junction 作成
+- `.env` 系の生成・復元
+
+失敗するとspawn中断(worktreeは残る)。member が壊れた環境で動くより明示エラーを優先。
