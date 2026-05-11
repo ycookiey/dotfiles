@@ -7,7 +7,6 @@ $LogFile = "$HOME\.claude\setup.log"
 
 $secrets = @(
     @{ Name = 'GLM API Key'; Dest = "$HOME\.claude\.glm-api-key" }
-    @{ Name = 'Tavily API Key'; Dest = "$HOME\.claude\.tavily-api-key" }
     @{ Name = 'GitHub SSH Key'; Dest = "$HOME\.ssh\id_ed25519"; Mode = 'SSHKey' }
 )
 

@@ -8,9 +8,6 @@
       "WebSearch",
       "Read(~/.claude/docs/**)",
       "Read(~/.claude-*/docs/**)"
-    ],
-    "deny": [
-      "mcp__tavily__*"
     ]
   },
   "statusLine": {

@@ -441,23 +441,12 @@ fn sync_mcp_servers(dot: &Path) -> Result<bool> {
     let localappdata = std::env::var("LOCALAPPDATA").unwrap_or_default();
     let appdata = std::env::var("APPDATA").unwrap_or_default();
 
-    let tavily_file = home.join(".claude").join(".tavily-api-key");
-    let tavily_key = if tavily_file.exists() {
-        std::fs::read_to_string(&tavily_file)
-            .ok()
-            .map(|s| s.trim().to_string())
-            .unwrap_or_default()
-    } else {
-        String::new()
-    };
-
     let to_fwd = |s: &str| s.replace('\\', "/");
     let replaced = raw
         .replace("{HOME}", &to_fwd(&home.display().to_string()))
         .replace("{PROJECTS}", &to_fwd(&projects.display().to_string()))
         .replace("{LOCALAPPDATA}", &to_fwd(&localappdata))
-        .replace("{APPDATA}", &to_fwd(&appdata))
-        .replace("{TAVILY_API_KEY}", &tavily_key);
+        .replace("{APPDATA}", &to_fwd(&appdata));
 
     let servers: Value = serde_json::from_str(&replaced)?;
     let servers_obj = servers
