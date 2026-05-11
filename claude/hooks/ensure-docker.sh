@@ -5,7 +5,8 @@
 set -u
 
 DOCKER_DESKTOP_EXE="/c/Program Files/Docker/Docker/Docker Desktop.exe"
-WAIT_SECONDS=60
+# WSL2コールドスタート + Engine初期化で2分超えることがある
+WAIT_SECONDS=180
 POLL_INTERVAL=2
 
 input=$(cat)
@@ -18,7 +19,12 @@ if ! printf '%s' "$command" | grep -Eq '(^|[|;&`]|&&|\|\|)[[:space:]]*(sudo[[:sp
   exit 0
 fi
 
-if docker info >/dev/null 2>&1; then
+# Server応答までチェック。docker info は Server部500でも exit 0 を返すため不可
+is_ready() {
+  docker version --format '{{.Server.Version}}' >/dev/null 2>&1
+}
+
+if is_ready; then
   exit 0
 fi
 
@@ -26,13 +32,13 @@ if [ ! -x "$DOCKER_DESKTOP_EXE" ]; then
   exit 0
 fi
 
-# background起動（Git Bashから直接実行）
-"$DOCKER_DESKTOP_EXE" >/dev/null 2>&1 &
-disown 2>/dev/null || true
+# Windowsの`start`経由で完全に切り離して起動。`bash &`+`disown` だと
+# hook(bash)プロセスツリー終了時にGUIアプリが巻き添えで死ぬことがある
+cmd.exe //c start "" "$(cygpath -w "$DOCKER_DESKTOP_EXE")" >/dev/null 2>&1
 
 elapsed=0
 while [ "$elapsed" -lt "$WAIT_SECONDS" ]; do
-  if docker info >/dev/null 2>&1; then
+  if is_ready; then
     printf 'Docker Desktop started (%ds).\n' "$elapsed" >&2
     exit 0
   fi
@@ -44,7 +50,7 @@ jq -n --arg sec "$WAIT_SECONDS" '{
   hookSpecificOutput: {
     hookEventName: "PreToolUse",
     permissionDecision: "block",
-    reason: ("Docker Desktop did not become ready within " + $sec + "s. Wait and retry, or start it manually.")
+    reason: ("Docker Desktop did not become ready within " + $sec + "s. Linux Engine may be hung. Recovery: 1) Quit Docker Desktop from tray, 2) Run `wsl --shutdown` in PowerShell, 3) Start Docker Desktop again.")
   }
 }'
 exit 0
