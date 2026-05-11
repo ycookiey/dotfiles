@@ -29,6 +29,9 @@ FocusUAC() {
 ; Ctrl+R をNVIDIA Broadcastより先にインターセプトしてアプリに送る
 $^r::Send "{Ctrl down}r{Ctrl up}"
 
+; F5 を NVIDIA Broadcast より先にインターセプトしてアプリに送る (nushell run-task 等)
+$F5::Send "{F5}"
+
 ; WezTerm - 既に開いている場合はフォーカス、なければ新規起動
 #t::{
     if WinExist("ahk_exe wezterm-gui.exe")
