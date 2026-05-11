@@ -18,7 +18,7 @@
     },
     {
       "Name": "nonportable",
-      "Source": "https://github.com/ScoopInstaller/Nonportable"
+      "Source": null
     },
     {
       "Name": "games",
