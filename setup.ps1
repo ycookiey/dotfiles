@@ -173,6 +173,14 @@ try {
     & "$ScriptDir\install\winget.ps1"
     "$(Get-Date) - Winget apps install checked" >> $LogFile
 
+    # Microsoft IME 無効化（Google IME のみ残す）
+    try {
+        & "$ScriptDir\install\disable-msime.ps1"
+        "$(Get-Date) - Microsoft IME disabled" >> $LogFile
+    } catch {
+        "$(Get-Date) - Warning: disable-msime.ps1 failed: $_" >> $LogFile
+    }
+
     # 外部skill 同期 (skills.json)
     try {
         & "$ScriptDir\install\sync-skills.ps1" -Dot $ScriptDir
