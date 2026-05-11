@@ -1,6 +1,7 @@
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path $MyInvocation.MyCommand.Definition
 . "$ScriptDir\pwsh\aliases.ps1"
+$Host.UI.RawUI.WindowTitle = if (isadmin) { 'dotfiles setup (admin)' } else { 'dotfiles setup (main)' }
 $LogFile = "$HOME\.claude\setup.log"
 $LogDir = Split-Path $LogFile
 if (!(Test-Path $LogDir)) {
@@ -9,8 +10,10 @@ if (!(Test-Path $LogDir)) {
 "$(Get-Date) - Pre-elevation setup starting (ScriptDir: $ScriptDir)" > $LogFile
 
 # Bitwarden secrets（別ウィンドウで対話入力を受け付ける）
+# 管理者昇格時にsetup.ps1が再実行されbw-secretsウィンドウが二重起動するのを防ぐ
+$skipBw = $args -contains '--skip-bw'
 $bwStarted = $false
-if (gcm bw -ea 0) {
+if (!$skipBw -and (gcm bw -ea 0)) {
     start pwsh -Arg "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptDir\install\bw-secrets.ps1`""
     $bwStarted = $true
 }
@@ -21,7 +24,7 @@ if ($args -contains '--scoop' -or !(gcm scoop -ea 0)) {
 }
 
 # Scoop 後: 新PCでbwがインストールされた場合
-if (!$bwStarted -and (gcm bw -ea 0)) {
+if (!$skipBw -and !$bwStarted -and (gcm bw -ea 0)) {
     start pwsh -Arg "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptDir\install\bw-secrets.ps1`""
 }
 
@@ -32,12 +35,21 @@ try {
 }
 
 if (!(isadmin)) {
-    start pwsh -Verb RunAs -Arg "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Wait
+    wh ""
+    wh "==> 管理者ウィンドウ起動中 (UAC承認後、別ウィンドウで処理)..." -ForegroundColor Cyan
+    wh "    完了するまでこのタブは待機します" -ForegroundColor DarkGray
+    start pwsh -Verb RunAs -Arg "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" --skip-bw" -Wait
+    wh ""
+    wh "==> 管理者ウィンドウ終了。ログ表示:" -ForegroundColor Cyan
     if (tp $LogFile) { gc $LogFile | % { wh $_ -ForegroundColor ($_ -match 'Error' ? 'Red' : 'Green') } }
     # Bitwarden secrets: 未取得があれば再実行（今度はウィンドウが埋もれない）
     if (gcm bw -ea 0) {
+        wh ""
+        wh "==> Bitwarden secrets 仕上げ取得 (未取得分のみ)..." -ForegroundColor Cyan
         & "$ScriptDir\install\bw-secrets.ps1"
     }
+    wh ""
+    wh "==> setup.ps1 完了" -ForegroundColor Green
     exit
 }
 
@@ -55,6 +67,26 @@ try {
     # SSH config（鍵自体は install/bw-secrets.ps1 が Bitwarden から取得）
     mkd "$HOME\.ssh"
     mkl "$HOME\.ssh\config" "$ScriptDir\ssh\config"
+    # GitHub host key: 初回接続時のyes/no確認を避けるためfingerprint検証付きで known_hosts に事前登録
+    # 公式fingerprint: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints
+    $knownHosts = "$HOME\.ssh\known_hosts"
+    $hasGithub = (tp $knownHosts) -and (ssh-keygen -F github.com -f $knownHosts 2>$null)
+    if (!$hasGithub) {
+        $expectedFp = 'SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU'
+        $line = ssh-keyscan -t ed25519 github.com 2>$null
+        if ($line) {
+            $actualFp = (($line | ssh-keygen -lf -) -split ' ')[1]
+            if ($actualFp -eq $expectedFp) {
+                if (!(tp $knownHosts)) { ni $knownHosts -ItemType File | Out-Null }
+                ac $knownHosts $line
+                "$(Get-Date) - Added GitHub host key to known_hosts" >> $LogFile
+            } else {
+                "$(Get-Date) - Error: GitHub host key fingerprint mismatch (got: $actualFp, expected: $expectedFp)" >> $LogFile
+            }
+        } else {
+            "$(Get-Date) - Warning: ssh-keyscan github.com failed" >> $LogFile
+        }
+    }
     # ssh-agent: 自動起動化 + 鍵登録（passphraseなし鍵を非対話で追加）
     $sshAgent = Get-Service ssh-agent -ea 0
     if ($sshAgent) {

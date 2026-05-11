@@ -2,6 +2,7 @@
 # setup.ps1 から別ウィンドウで起動される（対話入力が必要なため）
 $ErrorActionPreference = "Stop"
 . "$(Split-Path $MyInvocation.MyCommand.Definition)\..\pwsh\aliases.ps1"
+$Host.UI.RawUI.WindowTitle = 'dotfiles bitwarden secrets'
 $LogFile = "$HOME\.claude\setup.log"
 
 $secrets = @(
@@ -17,11 +18,16 @@ if (!$needed) { exit }
 # bw ログイン/アンロック
 $status = (bw status 2>$null | ConvertFrom-Json).status
 $session = $null
+function Show-InputBanner($label) {
+    wh ""
+    wh " [入力待ち] $label ↓" -ForegroundColor Black -BackgroundColor Yellow
+    try { [console]::beep(880, 200) } catch {}
+}
 if ($status -eq 'unauthenticated') {
-    wh "Bitwarden: ログインが必要" -ForegroundColor Cyan
+    Show-InputBanner 'Bitwarden ログイン (メール/パスワード)'
     $session = bw login --raw
 } elseif ($status -eq 'locked') {
-    wh "Bitwarden: アンロックが必要" -ForegroundColor Cyan
+    Show-InputBanner 'Bitwarden アンロック (マスターパスワード)'
     $session = bw unlock --raw
 }
 if (!$session -or $LASTEXITCODE -ne 0) {
@@ -29,8 +35,13 @@ if (!$session -or $LASTEXITCODE -ne 0) {
     "$(Get-Date) - Error: Bitwarden authentication failed" >> $LogFile
     exit 1
 }
+wh "Bitwarden: 認証成功" -ForegroundColor Green
 
 $bwArgs = @('--session', $session)
+
+# vault同期: 別PCで追加したアイテムをローカルキャッシュに反映
+wh "  vault 同期中..." -ForegroundColor DarkGray
+bw sync @bwArgs 2>&1 | Out-Null
 
 foreach ($s in $needed) {
     $key = & bw get notes $s.Name @bwArgs 2>&1
@@ -38,8 +49,11 @@ foreach ($s in $needed) {
         $dir = Split-Path $s.Dest
         if (!(tp $dir)) { mkd $dir }
         if ($s.Mode -eq 'SSHKey') {
-            # SSH秘密鍵: 末尾改行必須、ACLは現ユーザのみ読み取り、公開鍵を導出
-            [IO.File]::WriteAllText($s.Dest, $key.Trim() + "`n")
+            # SSH秘密鍵: LFのみ + 末尾改行必須(OpenSSHはCRLF不可), ACLは現ユーザのみ読み取り, 公開鍵を導出
+            # bw native callは複数行を配列化するためLFでjoinしてから正規化
+            $rawKey = if ($key -is [array]) { $key -join "`n" } else { [string]$key }
+            $lfKey = ($rawKey -replace "`r", '').Trim() + "`n"
+            [IO.File]::WriteAllText($s.Dest, $lfKey)
             icacls $s.Dest /inheritance:r | Out-Null
             icacls $s.Dest /grant:r "$($env:USERNAME):(R)" | Out-Null
             $pub = "$($s.Dest).pub"
