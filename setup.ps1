@@ -52,6 +52,29 @@ try {
     mkl "$HOME\.gitconfig" "$ScriptDir\git\.gitconfig"
     mkl "$HOME\.gitattributes" "$ScriptDir\git\gitattributes"
 
+    # SSH config（鍵自体は install/bw-secrets.ps1 が Bitwarden から取得）
+    mkd "$HOME\.ssh"
+    mkl "$HOME\.ssh\config" "$ScriptDir\ssh\config"
+    # ssh-agent: 自動起動化 + 鍵登録（passphraseなし鍵を非対話で追加）
+    $sshAgent = Get-Service ssh-agent -ea 0
+    if ($sshAgent) {
+        if ($sshAgent.StartType -ne 'Automatic') {
+            Set-Service ssh-agent -StartupType Automatic
+        }
+        if ($sshAgent.Status -ne 'Running') {
+            Start-Service ssh-agent
+        }
+        $keyPath = "$HOME\.ssh\id_ed25519"
+        if (tp $keyPath) {
+            $fp = ((ssh-keygen -lf $keyPath 2>$null) -split ' ')[1]
+            $registered = $fp -and ((ssh-add -l 2>$null) -match [regex]::Escape($fp))
+            if (!$registered) {
+                ssh-add $keyPath 2>&1 | Out-Null
+                "$(Get-Date) - ssh-add: $keyPath" >> $LogFile
+            }
+        }
+    }
+
     # Bash (Git Bash) — sources dotcli-generated aliases
     mkl "$HOME\.bashrc" "$ScriptDir\bash\.bashrc"
 

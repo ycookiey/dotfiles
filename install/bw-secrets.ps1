@@ -7,6 +7,7 @@ $LogFile = "$HOME\.claude\setup.log"
 $secrets = @(
     @{ Name = 'GLM API Key'; Dest = "$HOME\.claude\.glm-api-key" }
     @{ Name = 'Tavily API Key'; Dest = "$HOME\.claude\.tavily-api-key" }
+    @{ Name = 'GitHub SSH Key'; Dest = "$HOME\.ssh\id_ed25519"; Mode = 'SSHKey' }
 )
 
 # 取得が必要なシークレットがあるか確認
@@ -36,7 +37,16 @@ foreach ($s in $needed) {
     if ($LASTEXITCODE -eq 0 -and $key) {
         $dir = Split-Path $s.Dest
         if (!(tp $dir)) { mkd $dir }
-        [IO.File]::WriteAllText($s.Dest, $key.Trim())
+        if ($s.Mode -eq 'SSHKey') {
+            # SSH秘密鍵: 末尾改行必須、ACLは現ユーザのみ読み取り、公開鍵を導出
+            [IO.File]::WriteAllText($s.Dest, $key.Trim() + "`n")
+            icacls $s.Dest /inheritance:r | Out-Null
+            icacls $s.Dest /grant:r "$($env:USERNAME):(R)" | Out-Null
+            $pub = "$($s.Dest).pub"
+            ssh-keygen -y -f $s.Dest > $pub 2>$null
+        } else {
+            [IO.File]::WriteAllText($s.Dest, $key.Trim())
+        }
         wh "取得: $($s.Name)" -ForegroundColor Green
         "$(Get-Date) - Bitwarden: $($s.Name) fetched" >> $LogFile
     } else {
