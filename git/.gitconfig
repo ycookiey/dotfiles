@@ -85,3 +85,7 @@
 [help]
 	# typoを自動修正
 	autocorrect = 1
+
+[url "git@github.com:"]
+	# HTTPS remote を SSH に透過変換（fetch/push 共に対象）
+	insteadOf = https://github.com/
