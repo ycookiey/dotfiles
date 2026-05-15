@@ -72,14 +72,43 @@ plannerが規模乖離を検知すれば報告するので、Leadが再判断。
 
 書式: 1行1パターン(repo root相対のglob)、`#`コメント、空行無視。両方読みunion。
 
-#### `@junction:` prefix (Windows)
+#### allowlist 行 syntax
 
-パターン先頭に `@junction:` を付けるとcopy代わりにNTFS junctionを作成し、worktreeとmainで同一実体を共有する。大規模untracked dir (`.agent-output/` 等)のcopy時間を回避するための仕組み。
+行は空白区切り token として解釈。`@key:value` 形式はディレクティブ、それ以外の 1 token を pattern とする。順序自由。
+
+- `@junction:<pattern>`: NTFS junction でmain と worktree を共有 (下記)
+- `@tag:<name>`: 条件付き行の opt-out (下記)
+- 残りの token は glob pattern (1 行 1 個まで)
+- `#` 以降はコメント
+
+例:
+```
+.agent-output/                                # plain copy
+@junction:.agent-output/                      # 常時 junction
+@tag:deps @junction:node_modules/.pnpm/       # 条件付き junction
+@tag:slow some/large/dir/                     # 条件付き copy
+```
+
+#### `@junction:` directive (Windows)
+
+`@junction:<pattern>` でcopy代わりにNTFS junctionを作成し、worktreeとmainで同一実体を共有する。大規模untracked dir (`.agent-output/` 等)のcopy時間を回避するための仕組み。
 
 - 例: `@junction:.agent-output/` でcopy 180s → junction 0.1s。
 - 副作用: agentの書き込みがmain側に即時反映される(=並列agent間でも見える)。task-id subdirに閉じた書き込み前提で運用する。
 - cleanup: `agent-merge-back.sh` の `unjunction_worktree()` が `git worktree remove` 前に junction を `cmd /c rmdir` で剥がす。これを怠ると junction を辿って main 側実体が削除されるので merge-back を bypass しない。
 - ディレクトリにのみ適用 (ファイルは無視)。mklink失敗時はcopyにfallback。
+
+#### `@tag:` directive
+
+`@tag:<name>` を付けた行は spawn-prep に `--skip-tag <name>` が渡された時のみ無視される。project 固有の条件付き allowlist (一部タスクで opt-out したいケース) を表現する汎用機構。
+
+- 記法: 1 行 1 タグ。複数 skip は CLI で表現:
+  - カンマ区切り: `--skip-tag deps,wasm`
+  - 複数回指定: `--skip-tag deps --skip-tag wasm`
+- 順序自由: `@tag:deps @junction:foo/` でも `@junction:foo/ @tag:deps` でも同等。
+- タグ名は project が定義。汎用 spawn-prep は文字列として扱うのみ。
+- 推奨タグ規約 (project が採用する場合):
+  - `deps`: package manager の virtual store / cache を junction する行に付ける。Lead は依存変更タスク (package.json / lockfile を編集する可能性のあるタスク) で `--skip-tag deps` を指定し、worktree 内で fresh install させる。これを怠ると worktree 側の依存変更が main 側 store を破壊するリスクあり (e.g. pnpm の prune)。
 
 #### allowlistの自己改善(Lead責務)
 

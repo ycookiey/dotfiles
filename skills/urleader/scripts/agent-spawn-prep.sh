@@ -6,7 +6,12 @@
 #   - prompt は Agent tool に文字列で直渡し。本 script は prompt を扱わない。
 #
 # 使い方:
-#   agent-spawn-prep.sh --task-id <TASK_ID> [--base-ref <REF>]
+#   agent-spawn-prep.sh --task-id <TASK_ID> [--base-ref <REF>] [--skip-tag <name[,name...]>]
+#
+# --skip-tag: allowlist 行に `@tag:<name>` が付いていればその行を無視する。
+#             カンマ区切り or 複数回指定でOK (例: `--skip-tag deps,wasm`)。
+#             用途例: 依存変更タスクで `--skip-tag deps` を渡し、project allowlist の
+#             `@tag:deps @junction:node_modules/.pnpm/` 行を opt-out して fresh install させる。
 
 set -euo pipefail
 
@@ -14,6 +19,7 @@ set -euo pipefail
 
 TASK_ID=""
 BASE_REF="HEAD"
+declare -A SKIP_TAGS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -23,6 +29,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --base-ref)
       BASE_REF="$2"
+      shift 2
+      ;;
+    --skip-tag)
+      # カンマ区切り複数 ("a,b") + 複数回 (--skip-tag a --skip-tag b) どちらも対応
+      IFS=',' read -ra _tags <<< "$2"
+      for _t in "${_tags[@]}"; do
+        [[ -n "$_t" ]] && SKIP_TAGS["$_t"]=1
+      done
       shift 2
       ;;
     *)
@@ -85,12 +99,25 @@ echo ".worktree-guard-config" >> "$WT_GIT_DIR/info/exclude"
 # worktreeへコピー。trackedはworktreeが既に持つため除外(誤コピー防止)。
 # ディレクトリの場合は配下のtrackedサブパスを除外して丸ごと持ち込む。
 #
-# `@junction:<pattern>` 構文 (Windows): copyの代わりにNTFS junctionを作成し、
-# worktreeとmainで同一実体を共有する。大規模untracked dir (.agent-output/ 等)
-# のcopy時間を回避できる。副作用: agentの書き込みがmain側に即時反映される。
-# cleanup時はmerge-backのunjunction_worktreeが先にjunctionを剥がしてから
-# worktreeを削除する (junctionを残したまま `git worktree remove --force` すると
-# target実体まで巻き添えで削除されるため必須)。
+# 行は空白区切り token に分割し、`@key:value` 形式をディレクティブとして扱う。
+# 残った 1 token を pattern とする。順序自由。
+#
+# サポートする directive:
+#   `@junction:<pattern>` (Windows): copyの代わりにNTFS junctionを作成し、
+#     worktreeとmainで同一実体を共有する。大規模untracked dir (.agent-output/ 等)
+#     のcopy時間を回避できる。副作用: agentの書き込みがmain側に即時反映される。
+#     cleanup時はmerge-backのunjunction_worktreeが先にjunctionを剥がしてから
+#     worktreeを削除する (junctionを残したまま `git worktree remove --force` すると
+#     target実体まで巻き添えで削除されるため必須)。
+#   `@tag:<name>`: Lead から `--skip-tag <name>` で渡された場合にその行を無視する。
+#     project 側 allowlist の opt-out 用途 (例: 依存変更タスクで pnpm `.pnpm/`
+#     junction を回避)。1 行 1 タグ。複数 skip は CLI でカンマ区切り。
+#
+# 例:
+#   .agent-output/                                # plain copy
+#   @junction:.agent-output/                      # 常時 junction
+#   @tag:deps @junction:node_modules/.pnpm/       # 条件付き junction
+#   @tag:slow some/large/dir/                     # 条件付き copy
 
 # ファイル単体コピー: trackedならスキップ、それ以外コピー
 copy_one_file() {
@@ -162,39 +189,99 @@ junction_one_dir() {
   done < <(git -C "$REPO_ROOT" ls-files -z -- "$src_dir")
 }
 
+# 1行をパースして pattern, want_junction, tags を抽出。
+# 戻り値は globals: LINE_PATTERN / LINE_WANT_JUNCTION / LINE_TAGS (array) / LINE_KIND
+# LINE_KIND: "ok" | "empty" | "error"
+parse_allowlist_line() {
+  local raw="$1"
+  local stripped="${raw%%#*}"
+  stripped="${stripped#"${stripped%%[![:space:]]*}"}"
+  stripped="${stripped%"${stripped##*[![:space:]]}"}"
+
+  LINE_PATTERN=""
+  LINE_WANT_JUNCTION=0
+  LINE_TAGS=()
+  LINE_KIND="empty"
+
+  [[ -z "$stripped" ]] && return 0
+
+  local -a tokens
+  # shellcheck disable=SC2206
+  tokens=( $stripped )
+
+  local tok
+  for tok in "${tokens[@]}"; do
+    case "$tok" in
+      @tag:*)
+        LINE_TAGS+=( "${tok#@tag:}" )
+        ;;
+      @junction:*)
+        if [[ -n "$LINE_PATTERN" ]]; then
+          echo "ERROR: multiple patterns on one line: $raw" >&2
+          LINE_KIND="error"
+          return 0
+        fi
+        LINE_PATTERN="${tok#@junction:}"
+        LINE_WANT_JUNCTION=1
+        ;;
+      @*:*)
+        echo "WARN: unknown directive '$tok' in line: $raw" >&2
+        ;;
+      *)
+        if [[ -n "$LINE_PATTERN" ]]; then
+          echo "ERROR: multiple patterns on one line: $raw" >&2
+          LINE_KIND="error"
+          return 0
+        fi
+        LINE_PATTERN="$tok"
+        ;;
+    esac
+  done
+
+  if [[ -z "$LINE_PATTERN" ]]; then
+    echo "WARN: no pattern in line: $raw" >&2
+    return 0
+  fi
+
+  LINE_KIND="ok"
+}
+
 copy_from_allowlist() {
   local list_file="$1"
   [[ -f "$list_file" ]] || return 0
 
-  local raw_line pattern src want_junction
+  local raw_line src tag skip pat
   local -a matched
   while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
-    pattern="${raw_line%%#*}"
-    pattern="${pattern#"${pattern%%[![:space:]]*}"}"
-    pattern="${pattern%"${pattern##*[![:space:]]}"}"
-    [[ -z "$pattern" ]] && continue
+    parse_allowlist_line "$raw_line"
+    [[ "$LINE_KIND" != "ok" ]] && continue
 
-    want_junction=0
-    if [[ "$pattern" == "@junction:"* ]]; then
-      want_junction=1
-      pattern="${pattern#@junction:}"
-    fi
-    pattern="${pattern%/}"
+    # tag filter: いずれかのタグが SKIP_TAGS に含まれていればこの行を skip
+    skip=0
+    for tag in "${LINE_TAGS[@]}"; do
+      if [[ -n "${SKIP_TAGS[$tag]:-}" ]]; then
+        skip=1
+        break
+      fi
+    done
+    [[ "$skip" -eq 1 ]] && continue
+
+    pat="${LINE_PATTERN%/}"
 
     shopt -s nullglob dotglob
     # shellcheck disable=SC2206
-    matched=( $pattern )
+    matched=( $pat )
     shopt -u nullglob dotglob
 
     for src in "${matched[@]}"; do
       if [[ -d "$src" ]]; then
-        if [[ "$want_junction" -eq 1 ]]; then
+        if [[ "$LINE_WANT_JUNCTION" -eq 1 ]]; then
           junction_one_dir "$src"
         else
           copy_one_dir "$src"
         fi
       elif [[ -f "$src" ]]; then
-        if [[ "$want_junction" -eq 1 ]]; then
+        if [[ "$LINE_WANT_JUNCTION" -eq 1 ]]; then
           echo "WARN: @junction: applies to dirs only, skipping file: $src" >&2
         else
           copy_one_file "$src"
