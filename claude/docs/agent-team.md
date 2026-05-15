@@ -13,7 +13,7 @@
 
 1. **session prefix発行**: `TeamCreate`直後にBashで `date +%y%m%d-%H%M%S | cut -c1-8` 等を実行し、5-8文字程度の短いprefixを得る(例: `s60503a`)。以降のtask-idは必ず `<prefix>-T-1` 形式とする(`T-1`単独で使わない)
 2. `TeamCreate` → `TaskCreate`（id=`<prefix>-T-1` 等。依存: `blockedBy`。同一ファイル編集も依存に含める）
-3. `Agent`でspawn（`team_name`, `name`, `subagent_type`指定）→ `TaskUpdate`で`owner`設定
+3. `Agent`でspawn（`team_name`, `name`, `subagent_type`指定）→ Lead自身が`TaskUpdate(owner=<member>)`設定。spawn promptに`TaskUpdate(owner=...)`は書かない(memberが自分にownerを立てるとharnessが自己宛 `task_assignment` 通知を発火し、完了報告後に重複報告の無駄動作になる)
 4. memberの`SendMessage`を受けて統合・次指示。`blockedBy`解消済みの未着手タスクがあれば即spawn（ユーザ確認不要）
 5. 完了後 `SendMessage`で`{type: "shutdown_request"}`
 
