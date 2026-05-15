@@ -99,6 +99,23 @@ fi
 # Windowsでは worktree内の node_modules 等で MAX_PATH (260) を超え
 # `git worktree remove` がファイル削除に失敗することがある。
 # その場合は PowerShell の `\\?\` 長パスprefixで強制削除し prune する。
+#
+# 重要: worktree内に NTFS junction (agent-spawn-prep.sh の @junction:
+# allowlist で作成) が残ったまま `git worktree remove --force` を呼ぶと
+# junction を辿って main 側の実体まで削除される。cleanup 前に
+# unjunction_worktree() で `cmd /c rmdir` (junction 単体のみ剥がす安全な
+# 削除) を実行する。bash の `rm -rf` や PowerShell Remove-Item は junction
+# を辿らないため、unjunction 後はどの削除手段でも安全。
+unjunction_worktree() {
+  local wt="$1"
+  [[ -d "$wt" ]] || return 0
+  local link link_win
+  while IFS= read -r -d '' link; do
+    link_win=$(cygpath -w "$link" 2>/dev/null || echo "$link")
+    cmd //c rmdir "$link_win" >/dev/null 2>&1 || rm -f "$link"
+  done < <(find "$wt" -type l -print0 2>/dev/null)
+}
+
 cleanup_worktree() {
   if git -C "$REPO_ROOT" worktree remove "$WT_DIR" --force 2>/dev/null; then
     return 0
@@ -115,6 +132,7 @@ cleanup_worktree() {
 }
 
 echo "[merge-back] cleanup: removing worktree and branch"
+unjunction_worktree "$WT_DIR"
 cleanup_worktree
 git -C "$REPO_ROOT" branch -D "$WT_BRANCH"
 

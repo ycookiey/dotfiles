@@ -72,6 +72,15 @@ plannerが規模乖離を検知すれば報告するので、Leadが再判断。
 
 書式: 1行1パターン(repo root相対のglob)、`#`コメント、空行無視。両方読みunion。
 
+#### `@junction:` prefix (Windows)
+
+パターン先頭に `@junction:` を付けるとcopy代わりにNTFS junctionを作成し、worktreeとmainで同一実体を共有する。大規模untracked dir (`.agent-output/` 等)のcopy時間を回避するための仕組み。
+
+- 例: `@junction:.agent-output/` でcopy 180s → junction 0.1s。
+- 副作用: agentの書き込みがmain側に即時反映される(=並列agent間でも見える)。task-id subdirに閉じた書き込み前提で運用する。
+- cleanup: `agent-merge-back.sh` の `unjunction_worktree()` が `git worktree remove` 前に junction を `cmd /c rmdir` で剥がす。これを怠ると junction を辿って main 側実体が削除されるので merge-back を bypass しない。
+- ディレクトリにのみ適用 (ファイルは無視)。mklink失敗時はcopyにfallback。
+
 #### allowlistの自己改善(Lead責務)
 
 agentがworktree内で「ファイルが見つからない/参照できない」とSendMessageで報告した場合、Leadは以下を判断する:
