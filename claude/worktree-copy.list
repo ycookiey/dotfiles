@@ -3,8 +3,12 @@
 # - repo rootからの相対パスで指定
 # - tracked化されたものは除外 (worktree既存・上書き防止の安全装置)
 # - プロジェクト固有の追加は <repo>/.claude/worktree-copy.list へ
+#
+# `@junction:<pattern>` (Windows): copyの代わりにNTFS junctionで実体共有。
+# 大規模untracked dirのcopy時間を回避できる。副作用: agentの書き込みが
+# main側に即時反映 (cleanupはmerge-backがunjunctionしてから削除する)。
 
-.agent-output/
+@junction:.agent-output/
 .env
 .env.*
 .claude/settings.local.json
