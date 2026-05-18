@@ -13,13 +13,28 @@ if ((tp $GitBash) -and ([Environment]::GetEnvironmentVariable('CLAUDE_CODE_GIT_B
 }
 
 # ─── Step 2: Windows 機能有効化 ───
+# Enable-WindowsOptionalFeature は既に有効でも State=Enabled / RestartNeeded=$false を返す（冪等）
 wh "[WSL 1/4] Windows 機能チェック..." -Fo Cyan
-$wslF = Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -All -NoRestart
-$vmpF = Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -All -NoRestart
+$features = @(
+    @{ Name = 'Microsoft-Windows-Subsystem-Linux'; Label = 'WSL' }
+    @{ Name = 'VirtualMachinePlatform';             Label = 'VirtualMachinePlatform' }
+)
+$rebootNeeded = $false
+foreach ($f in $features) {
+    $before = (Get-WindowsOptionalFeature -Online -FeatureName $f.Name).State
+    if ($before -eq 'Enabled') {
+        wh "  $($f.Label): already Enabled" -Fo Green
+        continue
+    }
+    $r = Enable-WindowsOptionalFeature -Online -FeatureName $f.Name -All -NoRestart -WarningAction SilentlyContinue
+    $tag = if ($r.RestartNeeded) { '再起動必要' } else { '反映済' }
+    wh "  $($f.Label): $before -> Enabled ($tag)" -Fo Yellow
+    if ($r.RestartNeeded) { $rebootNeeded = $true }
+}
 
-if ($wslF.RestartNeeded -or $vmpF.RestartNeeded) {
+if ($rebootNeeded) {
     "pending" | sc $RebootFlag
-    wh "  機能を有効化しました。再起動後に setup.ps1 を再実行してください。" -Fo Yellow
+    wh "  再起動が必要な機能があります。再起動後に setup.ps1 を再実行してください。" -Fo Yellow
     return
 }
 
