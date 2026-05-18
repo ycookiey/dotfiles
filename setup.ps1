@@ -267,6 +267,16 @@ try {
     & "$ScriptDir\startup\register.ps1" -Action Register
     "$(Get-Date) - Startup registered" >> $LogFile
 
+    # Neovim プラグイン: lazy-lock.json から install + build (telescope-fzf-native の make 等)
+    if (gcm nvim -ea 0) {
+        try {
+            nvim --headless "+Lazy! restore" +qa *>> $LogFile
+            "$(Get-Date) - Neovim plugins restored" >> $LogFile
+        } catch {
+            "$(Get-Date) - Warning: nvim Lazy! restore failed: $_" >> $LogFile
+        }
+    }
+
     # 同期（settings.json マージ・scoopfile・wingetfile・MCP servers 等）
     if (gcm dotcli -ea 0) {
         dotcli sync --dot $ScriptDir | Out-Null
