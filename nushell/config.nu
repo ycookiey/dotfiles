@@ -43,7 +43,7 @@ job spawn {
 } | ignore
 
 # --- yazi (TUI needs direct terminal, can't pipe through dotcli) ---
-def y [...args: string] {
+def --env y [...args: string] {
     let tmp = (mktemp -t "yazi-cwd.XXXXXX")
     yazi ...$args --cwd-file $tmp
     let cwd = (open $tmp | str trim)
