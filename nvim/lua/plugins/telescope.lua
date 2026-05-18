@@ -3,7 +3,7 @@ return {
   branch = "master",
   dependencies = {
     "nvim-lua/plenary.nvim",
-    { "nvim-telescope/telescope-fzf-native.nvim", build = "cmake -S. -Bbuild -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release && copy build\\Release\\libfzf.dll build\\libfzf.dll" },
+    { "nvim-telescope/telescope-fzf-native.nvim", build = "make" },
   },
   keys = {
     { "<leader>ff", "<cmd>Telescope find_files<cr>" },
