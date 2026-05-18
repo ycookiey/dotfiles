@@ -67,6 +67,7 @@ c() { local _o; _o=$(dotcli claude-switch "$@"); _dotcli_apply <<<"$_o"; }
 a() { local _o; _o=$(dotcli cursor-agent "$@"); _dotcli_apply <<<"$_o"; }
 cb() { local _o; _o=$(dotcli claude-bedrock "$@"); _dotcli_apply <<<"$_o"; }
 cg() { local _o; _o=$(dotcli claude-glm "$@"); _dotcli_apply <<<"$_o"; }
+zf() { local _o; _o=$(dotcli zf "$@"); _dotcli_apply <<<"$_o"; }
 grf() { dotcli grf "$@"; }
 grfo() { dotcli grfo "$@"; }
 grfc() { dotcli grfc "$@"; }

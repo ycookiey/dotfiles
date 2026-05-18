@@ -178,6 +178,12 @@ modifies_shell = true
 enabled = false
 
 [[command]]
+name = "zf"
+subcommand = "zf"
+modifies_shell = true
+enabled = true
+
+[[command]]
 name = "grf"
 subcommand = "grf"
 modifies_shell = false

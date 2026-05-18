@@ -54,6 +54,11 @@ enum Commands {
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
     },
+    /// fd + fzf → cd (zoxide hook records it)
+    Zf {
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
+    },
     /// gh repo list + fzf
     Grf {
         #[arg(trailing_var_arg = true)]
@@ -217,6 +222,7 @@ fn main() {
         Commands::ClaudeBedrock { args } => commands::cb::run(&args),
         Commands::ClaudeGlm { args } => commands::cg::run(&args),
         Commands::YaziCd { args } => commands::y::run(&args),
+        Commands::Zf { args } => commands::zf::run(&args),
         Commands::Grf { args } => commands::grf::run_print(&args),
         Commands::Grfo { args } => commands::grf::run_open(&args),
         Commands::Grfc { args } => commands::grf::run_clone(&args),
