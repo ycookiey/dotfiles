@@ -27,3 +27,4 @@
 - 環境を横断して再現したい変更（アプリ・設定等） → bootstrap.md
 - MCP サーバー管理 → mcp.md
 - Agent teamタスク → agent-team.md
+- ASCII図の整列 → ascii-diagram.md
