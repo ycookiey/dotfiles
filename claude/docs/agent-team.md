@@ -59,6 +59,26 @@ plannerが規模乖離を検知すれば報告するので、Leadが再判断。
 - cleanup/merge-back: 完了後は `agent-merge-back.sh --task-id <TASK_ID>` でmainへ取り込み+worktree/branch削除を一括実行
 - 例外: researcher/plannerは読み取り専用のためworktree分離不要
 
+### 先行prep(高コストsetup時の待ち時間活用)
+
+`agent-spawn-prep.sh`はprompt内容に依存せず`--task-id`のみでworktreeを作る(task-idはTaskCreate時点で確定)。よって**以下2条件を共に満たす時のみ**、上流member待ちのidle時間にprepを先行実行する:
+
+- トリガー1: 読み取り専用member(researcher/planner)を起動して待ちに入る
+- トリガー2: 下流write-taskのsetupコストが大きい(`worktree-init.sh`あり、または junction非対応の大型untracked copy)
+
+動作:
+
+1. 待ち発生と同時に、確定済みtask-idで`agent-spawn-prep.sh`を`run_in_background`で起動
+2. background完了通知で`WORKTREE_ROOT`を回収
+3. 上流出力が揃い次第prompt組み立て+spawn(回収済み`WORKTREE_ROOT`を使用)
+
+注意:
+
+- 軽量setup(junctionのみで~0.1s)では**先行しない**。background追跡コストの純損になる
+- base-refはHEADのまま。並列merge-backでmainが進んでもcodeはmerge-backのrebaseが吸収する
+- 先行作成したworktreeも通常通りmerge-backを通す
+- branch衝突等のprep失敗を早期検出できる副次利得あり
+
 ### merge-back挙動
 
 `agent-merge-back.sh` はworktree内で `git rebase main` → main側で `git merge --ff-only` → worktree remove + branch -D を行う。並列agentでmainが進みdivergeした場合も自動解消。conflict時は `rebase --abort` + 非0 exitでworktreeが保持されるので、Leadは上流memberに再指示するか手動対処する。手動cherry-pickは応急処置にとどめ、原則本scriptを使う。pushはしない。
