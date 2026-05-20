@@ -101,19 +101,34 @@ fi
 # その場合は PowerShell の `\\?\` 長パスprefixで強制削除し prune する。
 #
 # 重要: worktree内に NTFS junction (agent-spawn-prep.sh の @junction:
-# allowlist で作成) が残ったまま `git worktree remove --force` を呼ぶと
-# junction を辿って main 側の実体まで削除される。cleanup 前に
-# unjunction_worktree() で `cmd /c rmdir` (junction 単体のみ剥がす安全な
-# 削除) を実行する。bash の `rm -rf` や PowerShell Remove-Item は junction
-# を辿らないため、unjunction 後はどの削除手段でも安全。
+# allowlist で作成) が残ったまま削除すると junction を辿って main 側の実体
+# まで削除される (PowerShell `Remove-Item -Recurse` は reparse point を辿る)。
+# cleanup 前に unjunction_worktree() で `cmd /c rmdir` (junction 単体のみ剥がし
+# 実体を辿らない安全な削除) を実行する。
+#
+# junction は Git Bash の `find -type l` では検出できない (NTFS junction は
+# `-type d` = 通常ディレクトリとして見える)。PowerShell の ReparsePoint+
+# Directory 属性で正確に列挙する。PowerShell 不在時は `find -type d -links 1`
+# (junction は nlink=1) でフォールバック。
 unjunction_worktree() {
   local wt="$1"
   [[ -d "$wt" ]] || return 0
-  local link link_win
-  while IFS= read -r -d '' link; do
-    link_win=$(cygpath -w "$link" 2>/dev/null || echo "$link")
-    cmd //c rmdir "$link_win" >/dev/null 2>&1 || rm -f "$link"
-  done < <(find "$wt" -type l -print0 2>/dev/null)
+  if command -v powershell.exe >/dev/null 2>&1; then
+    local wt_win
+    wt_win=$(cygpath -w "$wt" 2>/dev/null || echo "$wt")
+    powershell.exe -NoProfile -Command "
+      Get-ChildItem -LiteralPath '$wt_win' -Recurse -Force -ErrorAction SilentlyContinue |
+      Where-Object { (\$_.Attributes -band [IO.FileAttributes]::ReparsePoint) -and (\$_.Attributes -band [IO.FileAttributes]::Directory) } |
+      Sort-Object FullName -Descending |
+      ForEach-Object { cmd /c rmdir \"\$(\$_.FullName)\" }
+    " >/dev/null 2>&1 || true
+  else
+    local link link_win
+    while IFS= read -r -d '' link; do
+      link_win=$(cygpath -w "$link" 2>/dev/null || echo "$link")
+      cmd //c rmdir "$link_win" >/dev/null 2>&1 || true
+    done < <(find "$wt" -type d -links 1 -print0 2>/dev/null)
+  fi
 }
 
 cleanup_worktree() {
@@ -121,6 +136,9 @@ cleanup_worktree() {
     return 0
   fi
   echo "[merge-back] worktree remove failed (likely Windows MAX_PATH); retrying with long-path prefix" >&2
+  # 二重防衛: リトライ削除 (Remove-Item -Recurse / rm -rf) が junction を辿らない
+  # よう、再帰削除の直前にも junction を確実に剥がす。
+  unjunction_worktree "$WT_DIR"
   local wt_win
   wt_win=$(cygpath -w "$WT_DIR" 2>/dev/null || echo "$WT_DIR")
   if command -v powershell.exe >/dev/null 2>&1; then
