@@ -51,6 +51,34 @@ def --env y [...args: string] {
     rm -p $tmp
 }
 
+# --- chrome-yatcy: CDP 有効 + 専用プロファイルで Chrome 起動 ---
+# pwsh の bin/chrome-yatcy.ps1 と等価。詳細はそちらのコメント参照。
+def chrome-yatcy [
+    --port (-p): int = 9222
+    --profile (-P): string = "yatcy"
+    ...extra: string
+] {
+    let profile_dir = ($env.LOCALAPPDATA | path join "chrome-profiles" $profile)
+    if not ($profile_dir | path exists) {
+        mkdir $profile_dir
+    }
+    let chrome = (which chrome | get path.0?)
+    if ($chrome | is-empty) {
+        error make { msg: "chrome.exe not found. Try: scoop install extras/googlechrome" }
+    }
+    print $"chrome-yatcy: port=($port), profile=($profile)"
+    print $"  exe : ($chrome)"
+    print $"  data: ($profile_dir)"
+    let chrome_args = ([
+        $"--remote-debugging-port=($port)"
+        "--remote-allow-origins=*"
+        $"--user-data-dir=($profile_dir)"
+        "--no-first-run"
+        "--no-default-browser-check"
+    ] ++ $extra)
+    job spawn { ^$chrome ...$chrome_args } | ignore
+}
+
 # --- Dotfiles auto-update (background git-prompt) ---
 $env.DOTCLI_JOB_ID = null
 

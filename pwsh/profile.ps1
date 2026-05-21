@@ -33,6 +33,11 @@ if ([IO.File]::Exists($gitGtrScript)) {
     $alias:gtr = 'git-gtr'
 }
 
+$chromeYatcyScript = "$Dot\bin\chrome-yatcy.ps1"
+if ([IO.File]::Exists($chromeYatcyScript)) {
+    function chrome-yatcy { & $chromeYatcyScript @args }
+}
+
 function admin { start wezterm -Verb RunAs -Arg 'start','--cwd',$PWD }
 function vf { v (f @args) }
 function y {
