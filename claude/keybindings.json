@@ -8,6 +8,13 @@
         "ctrl+u": "scroll:halfPageUp",
         "ctrl+d": "scroll:halfPageDown"
       }
+    },
+    {
+      "context": "Chat",
+      "bindings": {
+        "alt+v": null,
+        "alt+i": "chat:imagePaste"
+      }
     }
   ]
 }
