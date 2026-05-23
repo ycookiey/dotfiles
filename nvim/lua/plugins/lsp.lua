@@ -1,7 +1,7 @@
 return {
   {
     "neovim/nvim-lspconfig",
-    event = "VeryLazy",
+    event = { "BufReadPre", "BufNewFile" },
     dependencies = {
       "hrsh7th/nvim-cmp",
       "hrsh7th/cmp-nvim-lsp",
@@ -12,7 +12,9 @@ return {
     },
     config = function()
       local capabilities = require("cmp_nvim_lsp").default_capabilities()
-      local lspconfig = require("lspconfig")
+
+      -- 全 LSP 共通: nvim-cmp の補完 capability を付与
+      vim.lsp.config("*", { capabilities = capabilities })
 
       -- LSPキーマップ（LSP接続時のみ有効）
       vim.api.nvim_create_autocmd("LspAttach", {
@@ -26,10 +28,28 @@ return {
         end,
       })
 
-      -- TODO: 使う言語のLSPをここに追加
-      -- lspconfig.lua_ls.setup({ capabilities = capabilities })
-      -- lspconfig.ts_ls.setup({ capabilities = capabilities })
-      -- lspconfig.pyright.setup({ capabilities = capabilities })
+      -- Python: basedpyright（補完・型・定義ジャンプ）+ ruff（lint・整形・import整理）
+      -- どちらも uv tool で導入: uv tool install basedpyright ruff
+      -- nvim-lspconfig がサーバーのデフォルト(cmd/root/filetypes)を vim.lsp.config に登録するので、ここでは上書き設定のみ
+      vim.lsp.config("basedpyright", {
+        settings = {
+          basedpyright = {
+            analysis = {
+              -- 競プロ向け: 本質的なエラーのみ。strict すぎる警告を抑制
+              typeCheckingMode = "basic",
+              diagnosticMode = "openFilesOnly",
+              autoImportCompletions = true,
+            },
+          },
+        },
+      })
+      vim.lsp.config("ruff", {
+        on_attach = function(client)
+          -- hover は basedpyright に任せ、衝突を避ける
+          client.server_capabilities.hoverProvider = false
+        end,
+      })
+      vim.lsp.enable({ "basedpyright", "ruff" })
 
       -- 補完
       local cmp = require("cmp")
@@ -59,6 +79,18 @@ return {
           { name = "buffer" },
           { name = "path" },
         }),
+      })
+
+      -- 保存時に ruff でフォーマット（Python）
+      vim.api.nvim_create_autocmd("BufWritePre", {
+        pattern = "*.py",
+        callback = function(args)
+          vim.lsp.buf.format({
+            bufnr = args.buf,
+            async = false,
+            filter = function(c) return c.name == "ruff" end,
+          })
+        end,
       })
     end,
   },

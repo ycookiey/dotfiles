@@ -99,6 +99,12 @@ if (Get-Command mise -ea 0) {
     mise install --yes
 }
 
+# Phase 3.5: uv tools (CLI tools via uv -- non-fatal)
+if (Get-Command uv -ea 0) {
+    Write-Host "`nInstalling uv tools..." -ForegroundColor Cyan
+    & $pwsh -NoProfile -ExecutionPolicy Bypass -File "$Dir\install\uv-tools.ps1"
+}
+
 # Phase 4: large apps (non-fatal)
 & $pwsh -NoProfile -ExecutionPolicy Bypass -File "$Dir\install\scoop.ps1" -OnlyLarge
 

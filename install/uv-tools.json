@@ -1,0 +1,7 @@
+{
+  "tools": [
+    "basedpyright",
+    "ruff",
+    "aider-chat"
+  ]
+}
