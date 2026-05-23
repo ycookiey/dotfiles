@@ -27,8 +27,16 @@ const browser = await chromium.launch();
 const context = await browser.newContext({ deviceScaleFactor: SCALE });
 const page = await context.newPage();
 
-// SPA hydration後まで待つ。`load` だと描画前で計測値がブレる
-await page.goto(url, { waitUntil: "networkidle" });
+// SPA hydration後まで待つ。`load` だと描画前で計測値がブレる。
+// networkidle は dev サーバの定期 fetch / 初回チャンクコンパイルで到達しないことがあるため
+// timeout を延ばしつつ、未達なら domcontentloaded + selector 出現で代替する。
+try {
+    await page.goto(url, { waitUntil: "networkidle", timeout: 120000 });
+} catch {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 120000 });
+    await page.waitForSelector(selector, { timeout: 60000 });
+    await page.waitForTimeout(1500);
+}
 
 // rect は要素を内側に含む clip 矩形(x/y/width/height)に正規化して返す
 function toClip(rect) {
