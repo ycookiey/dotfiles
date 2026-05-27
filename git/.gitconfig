@@ -9,7 +9,7 @@
 	# 改行コードの自動変換（Windows環境）
 	autocrlf = true
 	# エディタ設定
-	editor = code --wait
+	editor = nvim
 	# ファイル名の大文字小文字を区別
 	ignorecase = false
 
