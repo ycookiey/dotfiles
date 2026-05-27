@@ -1,11 +1,12 @@
-# sync-skills.ps1 — install/skills.json で宣言された外部skillを skills/<name>/ に取り込む
+# sync-external-skills.ps1 — install/skills.json で宣言された外部skillを skills/<name>/ に取り込む
 # 冪等。upstream追従は再実行。ローカル改変は上書きされる（宣言された外部skillは自前改変不可として扱う）
+# 注: skillのsymlink同期は ywatchy が担当。本スクリプトは skills.json 記載の「外部リポジトリ製skill」取得専用。
 param([string]$Dot = (Split-Path $PSScriptRoot))
 
 $manifest = "$Dot\install\skills.json"
 if (!(Test-Path $manifest)) { return }
 if (!(Get-Command gh -ea 0)) {
-    Write-Host "sync-skills: gh CLI not found, skipping" -Fo Yellow
+    Write-Host "sync-external-skills: gh CLI not found, skipping" -Fo Yellow
     return
 }
 
@@ -35,9 +36,9 @@ foreach ($s in $spec.skills) {
         Sync-SkillDir $s.repo $s.path $s.ref $staging
         if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
         Move-Item $staging $dest
-        Write-Host "sync-skills: $($s.name) <- $($s.repo)/$($s.path)@$($s.ref)" -Fo Green
+        Write-Host "sync-external-skills: $($s.name) <- $($s.repo)/$($s.path)@$($s.ref)" -Fo Green
     } catch {
         if (Test-Path $staging) { Remove-Item $staging -Recurse -Force -ea 0 }
-        Write-Host "sync-skills: failed $($s.name): $_" -Fo Red
+        Write-Host "sync-external-skills: failed $($s.name): $_" -Fo Red
     }
 }
