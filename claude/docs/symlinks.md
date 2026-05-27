@@ -33,3 +33,7 @@ setup.ps1 で管理。追加・変更は setup.ps1 の mkl で行う（直接コ
 ## マルチアカウント (~/.claude-*)
 
 ~/.claude-* ディレクトリが存在する場合、~/.claude/ 配下の各エントリが自動ミラーリングされる。除外: .credentials*, .statusline_debug.json, settings.json, keybindings.json（settings.json と keybindings.json は個別にマージ型で管理）
+
+## 書込時の注意
+
+~/.claude 配下は symlink。symlink越しの Write/新規作成は拒否される。書込前に `readlink -f <対象>` で実体パス（dotfiles 配下）を解決し、その絶対パスで Edit/Write する。上表が主な実体マッピング。
