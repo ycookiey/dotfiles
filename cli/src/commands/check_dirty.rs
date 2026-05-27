@@ -35,8 +35,11 @@ fn try_run() -> Option<String> {
             let head_blob = cas_hash::head_blob_hash_from_git(Path::new(&file_path));
             cas_db::insert_entry(&*tx, &normalized_path, session_id, head_blob.as_deref(), Some(&current_blob), None).ok()?;
 
+            // 現在 dirty（HEAD と作業ツリーに差）でなければ、他セッションの編集は
+            // コミット済みで脅威がない。クリーンなファイルでは警告しない。
+            let dirty = head_blob.as_deref() != Some(current_blob.as_str());
             let other_wrote = cas_db::other_session_wrote(&*tx, &normalized_path, session_id).ok()?;
-            if other_wrote {
+            if dirty && other_wrote {
                 Some(format!(
                     "Another agent session has written to `{}`. Re-read it before editing to avoid clobbering their changes. (No need to run git status — this warning targets only this file.)",
                     normalized_path
