@@ -1,5 +1,6 @@
 gui:
   skipRewordInEditorWarning: true
+  promptToReturnFromSubprocess: false
 os:
   edit: "nvim {{filename}}"
   editAtLine: "nvim +{{line}} {{filename}}"
