@@ -238,10 +238,10 @@ try {
 
     # 外部skill 同期 (skills.json)
     try {
-        & "$ScriptDir\install\sync-skills.ps1" -Dot $ScriptDir
+        & "$ScriptDir\install\sync-external-skills.ps1" -Dot $ScriptDir
         "$(Get-Date) - External skills synced" >> $LogFile
     } catch {
-        "$(Get-Date) - Warning: sync-skills.ps1 failed: $_" >> $LogFile
+        "$(Get-Date) - Warning: sync-external-skills.ps1 failed: $_" >> $LogFile
     }
 
     # Rust CLIs — 初回ビルド＆エイリアス生成
