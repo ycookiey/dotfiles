@@ -115,6 +115,13 @@ enum Commands {
     },
     /// Format string-dup JSON output (stdin)
     StringDupFormat,
+    /// Scan for duplicate array/object data literals (single-source constant candidates)
+    LiteralDup {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Format literal-dup JSON output (stdin)
+    LiteralDupFormat,
     /// Git prompt info: dirty/updated check for background job
     GitPrompt {
         /// Path to git repository
@@ -245,6 +252,8 @@ fn main() {
         Commands::DupScanFormat => commands::dup_scan_format::run(),
         Commands::StringDup { args } => commands::string_dup::run(&args),
         Commands::StringDupFormat => commands::string_dup_format::run(),
+        Commands::LiteralDup { args } => commands::literal_dup::run(&args),
+        Commands::LiteralDupFormat => commands::literal_dup_format::run(),
         Commands::GitPrompt { path } => commands::git_prompt::run(&path),
         Commands::CheckDirty => commands::check_dirty::run(),
         Commands::SendKey { args } => commands::send_key::run(&args),

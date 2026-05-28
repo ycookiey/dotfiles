@@ -32,9 +32,17 @@ dotcli dup-scan --gap 3 --top 10 | dotcli dup-scan-format
 dotcli string-dup --top 10 | dotcli string-dup-format
 # 類似 (Tailwindの細部差等) も拾う場合
 dotcli string-dup --similarity jaccard --threshold 0.7 --top 10 | dotcli string-dup-format
+
+# (4) 配列/オブジェクトのデータリテラル重複（定数配列・設定オブジェクトの単一ソース化候補）
+#   dup-scan は token 構造のみ (内容無視) のため ['hp','atk',...] 等の短い定数配列を
+#   min_tokens/min_lines 閾値で取りこぼす。literal-dup は内容まで同一のリテラルを
+#   saved_chars (= 文字数 × (出現-1)) 順で拾い、短い高頻度も長い低頻度も両軸で評価する。
+dotcli literal-dup --top 10 | dotcli literal-dup-format
+# 2 箇所重複や短い配列まで拾う場合
+dotcli literal-dup --min-occurrences 2 --min-elements 3 --top 10 | dotcli literal-dup-format
 ```
 
-対象は `git ls-files` に含まれるリポジトリ内ファイルのみ。token-audit / dup-scan / string-dup がリポジトリ外パスを返したら除外。
+対象は `git ls-files` に含まれるリポジトリ内ファイルのみ。token-audit / dup-scan / string-dup / literal-dup がリポジトリ外パスを返したら除外。
 
 ### split/move スコアリング（token-audit失敗/空なら行数のみ）
 
@@ -68,6 +76,18 @@ dotcli string-dup --similarity jaccard --threshold 0.7 --top 10 | dotcli string-
 |---|---|---|---|---|
 | 1 | exact | 64 | 4 | "flex items-center gap-2 px-4 py-2 ..." |
 | 2 | similar | ~50 | 6 | 4 variants sharing `flex items-center` base |
+
+**データリテラル重複 (`literal-dup`)**:
+- 内容まで同一の配列/オブジェクトリテラル (定数配列・設定オブジェクト)。`saved_chars`(= 文字数 × (出現-1)) 降順。
+- dup-scan (token 構造のみ・内容無視) と string-dup (単一文字列) の死角 = 「短い定数配列/オブジェクトの広域分散」(例 `['hp','atk',...]`) を拾う。
+- `kind`: array / object。`elements` 要素数、`occurrence_count` 出現数。
+- 共通化先: 型定義元 (例 core-interface) や constants module に単一定義し import 統一。
+- 注意: 並びの意味が異なるもの (WASM index 対応・レーダー表示順等) は内容が一致しても統合不可 → 各 occurrence を Read で文脈確認してから。`{describe,it,expect}` 等の import 分割代入はノイズ (共通化対象外)。
+
+| # | kind | elems | occ | saved | 内容 |
+|---|---|---|---|---|---|
+| 1 | array | 18 | 8 | 1064 | ['normal','fire','water',...] (型定義へ集約) |
+| 2 | array | 6 | 19 | 234 | ['hp','atk','def','spa','spd','spe'] |
 
 ## ワークフロー
 
