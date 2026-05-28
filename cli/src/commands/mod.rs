@@ -12,6 +12,8 @@ pub mod cg;
 pub mod cursor;
 pub mod dup_scan;
 pub mod dup_scan_format;
+pub mod literal_dup;
+pub mod literal_dup_format;
 pub mod frun;
 pub mod grf;
 pub mod locked;

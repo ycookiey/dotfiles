@@ -96,6 +96,7 @@ pub fn format(v: &Value) -> String {
         let gap_tokens = as_u64(c.get("gap_tokens").unwrap_or(&Value::Null));
         let lines = as_u64(c.get("line_count").unwrap_or(&Value::Null));
         let occ_count = as_u64(c.get("occurrence_count").unwrap_or(&Value::Null));
+        let saved_tokens = as_u64(c.get("saved_tokens").unwrap_or(&Value::Null));
         let match_type = c
             .get("match_type")
             .and_then(|x| x.as_str())
@@ -103,7 +104,7 @@ pub fn format(v: &Value) -> String {
 
         let header = if gap_tokens > 0 {
             format!(
-                "[#{}] ({}) {} match + {} gap = {} tokens, {} lines, {} occurrences\n",
+                "[#{}] ({}) {} match + {} gap = {} tokens, {} lines, {} occurrences, saved {}\n",
                 idx + 1,
                 match_type,
                 fmt_u64_commas(match_tokens),
@@ -111,14 +112,16 @@ pub fn format(v: &Value) -> String {
                 fmt_u64_commas(tokens),
                 fmt_u64_commas(lines),
                 occ_count,
+                fmt_u64_commas(saved_tokens),
             )
         } else {
             format!(
-                "[#{}] {} tokens, {} lines, {} occurrences\n",
+                "[#{}] {} tokens, {} lines, {} occurrences, saved {}\n",
                 idx + 1,
                 fmt_u64_commas(tokens),
                 fmt_u64_commas(lines),
                 occ_count,
+                fmt_u64_commas(saved_tokens),
             )
         };
         out.push_str(&header);

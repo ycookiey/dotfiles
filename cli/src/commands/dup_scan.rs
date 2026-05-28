@@ -14,7 +14,7 @@ const DEFAULT_MIN_TOKENS: usize = 30;
 const DEFAULT_MIN_LINES: usize = 3;
 const DEFAULT_TOP: usize = 50;
 
-const DEFAULT_EXTS: &[&str] = &[
+pub(crate) const DEFAULT_EXTS: &[&str] = &[
     "rs", "ts", "tsx", "js", "jsx", "mjs", "cjs",
     "py", "ps1", "psm1", "sh", "bash",
     "go", "java", "kt", "swift",
@@ -142,7 +142,7 @@ fn parse_args(args: &[String]) -> Args {
 // File discovery (respects .gitignore via `ignore` crate)
 // ============================================================================
 
-fn walk_files(
+pub(crate) fn walk_files(
     root: &Path,
     exts: &[String],
     excludes: &[String],
@@ -803,7 +803,7 @@ fn build_clusters(
             let (ext_len, gaps) = extend_right(files, &valid, min_tokens, max_gap);
             let match_tokens = ext_len - gaps;
 
-            let occurrences: Vec<Occurrence> = valid
+            let mut occurrences: Vec<Occurrence> = valid
                 .iter()
                 .map(|&(fi, s)| {
                     let f = &files[fi];
@@ -812,6 +812,27 @@ fn build_clusters(
                     Occurrence { file_idx: fi, start_line, end_line }
                 })
                 .collect();
+
+            // 同一ファイル内で重なる/隣接する occurrence を集約し、スライディングウィンドウ
+            // による過剰カウントを除去する。連続領域の構文的繰り返し (JSX/StyleSheet 定型等)
+            // は1件に畳まれ、離散したリテラル重複 (例: ['hp','atk',...]) は本来の出現数を保つ。
+            occurrences.sort_by(|a, b| {
+                a.file_idx.cmp(&b.file_idx).then(a.start_line.cmp(&b.start_line))
+            });
+            let mut merged: Vec<Occurrence> = Vec::with_capacity(occurrences.len());
+            for occ in occurrences {
+                if let Some(last) = merged.last_mut() {
+                    if last.file_idx == occ.file_idx && occ.start_line <= last.end_line + 1 {
+                        last.end_line = last.end_line.max(occ.end_line);
+                        continue;
+                    }
+                }
+                merged.push(occ);
+            }
+            let occurrences = merged;
+            if occurrences.len() < 2 {
+                return None;
+            }
 
             let line_count = (occurrences[0].end_line - occurrences[0].start_line + 1) as usize;
             if line_count < min_lines {
@@ -833,11 +854,15 @@ fn build_clusters(
         })
         .collect();
 
-    // Sort: prefer longer exact match, then more occurrences, then fewer gaps.
+    // Sort by "saved tokens" = match_tokens × (occurrences - 1): the total token volume
+    // removable by consolidating this duplicate. Surfaces both "short but high-frequency"
+    // (e.g. ['hp','atk',...]) and "long but low-frequency" (large data defs) on the same
+    // footing, while short+rare noise sinks. Tie-break: longer match, then fewer gaps.
     clusters.sort_by(|a, b| {
-        b.match_tokens
-            .cmp(&a.match_tokens)
-            .then_with(|| b.occurrences.len().cmp(&a.occurrences.len()))
+        let sa = a.match_tokens.saturating_mul(a.occurrences.len().saturating_sub(1));
+        let sb = b.match_tokens.saturating_mul(b.occurrences.len().saturating_sub(1));
+        sb.cmp(&sa)
+            .then_with(|| b.match_tokens.cmp(&a.match_tokens))
             .then_with(|| a.gap_tokens.cmp(&b.gap_tokens))
     });
     clusters
@@ -864,6 +889,7 @@ fn cluster_to_json(c: &Cluster, files: &[FileTokens], root: &Path) -> Value {
         "gap_tokens": c.gap_tokens,
         "line_count": c.line_count,
         "occurrence_count": c.occurrences.len(),
+        "saved_tokens": c.match_tokens.saturating_mul(c.occurrences.len().saturating_sub(1)),
         "occurrences": c.occurrences.iter().map(|o| json!({
             "file": display_path(&files[o.file_idx].path, root),
             "start_line": o.start_line,
