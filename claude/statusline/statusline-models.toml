@@ -1,42 +1,6 @@
-[[model]]
-name = ["Opus 4.7"]
-display = "🅾 4.7"
-color = "207,144,82"
-
-[[model]]
-name = ["Opus 4.6"]
-display = "🅾 4.6"
-color = "207,144,82"
-
-[[model]]
-name = ["Sonnet 4.6"]
-display = "🆂 4.6"
-color = "180,130,100"
-
-[[model]]
-name = ["Haiku 4.5"]
-display = "🅷 4.5"
-color = "120,180,120"
-
-[[model]]
-name = ["Opus 4.7 (1M context)"]
-display = "🅾 4.7⁺"
-color = "207,144,82"
-
-[[model]]
-name = ["Opus 4.6 (1M context)"]
-display = "🅾 4.6⁺"
-color = "207,144,82"
-
-[[model]]
-name = ["Sonnet 4.6 (1M context)"]
-display = "🆂 4.6⁺"
-color = "180,130,100"
-
-[[model]]
-name = ["Haiku 4.5 (1M context)"]
-display = "🅷 4.5⁺"
-color = "120,180,120"
+# Anthropic モデル (Opus/Sonnet/Haiku N.N) は main.rs の anthropic_badge() が
+# パターン解析で自動表示するため、ここへの追記は不要。
+# それ以外のモデル/プロバイダのみ定義する。
 
 [[model]]
 name = ["glm-5.1", "glm-5.1[1m]"]

@@ -241,7 +241,51 @@ fn fmt_badge(display: &str, color: &str) -> String {
     format!("{}{display}{RST} ", fmt_color(color))
 }
 
+/// 最初に現れる `N.N` 形式のバージョン文字列を抽出
+fn extract_version(s: &str) -> Option<String> {
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i].is_ascii_digit() {
+            let start = i;
+            while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
+                i += 1;
+            }
+            let cand: String = chars[start..i].iter().collect();
+            if cand.contains('.') {
+                return Some(cand);
+            }
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
+/// Anthropic モデル名 (`Opus 4.8`, `Sonnet 4.6 (1M context)` 等) を
+/// バッジ表示と色へパターン変換する。命名規則が安定している前提で
+/// toml への都度追記を不要にするためのもの。非該当なら None。
+fn anthropic_badge(name: &str) -> Option<(String, String)> {
+    let lower = name.to_lowercase();
+    let (sym, color) = if lower.contains("opus") {
+        ("\u{1F17E}", "207,144,82") // 🅾
+    } else if lower.contains("sonnet") {
+        ("\u{1F182}", "180,130,100") // 🆂
+    } else if lower.contains("haiku") {
+        ("\u{1F177}", "120,180,120") // 🅷
+    } else {
+        return None;
+    };
+    let ver = extract_version(name)?;
+    let plus = if lower.contains("1m") { "\u{207A}" } else { "" }; // ⁺
+    Some((format!("{sym} {ver}{plus}"), color.to_string()))
+}
+
 fn model_short_with_rules(display_name: &str, rules: &[ModelRule]) -> String {
+    // Anthropic モデルはパターン解析で自動生成（toml 追記不要）
+    if let Some((disp, color)) = anthropic_badge(display_name) {
+        return format!("{}{disp}{RST}", fmt_color(&color));
+    }
     if let Some(rule) = match_model_rule(display_name, rules) {
         let color = fmt_color(&rule.color);
         format!("{color}{}{RST}", rule.display)
