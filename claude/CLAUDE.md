@@ -20,6 +20,7 @@
 ファイルは ~/.claude/docs/ にある。
 
 - PowerShellコーディング → powershell.md
+- Bash/shスクリプト(Git Bash・grep/locale罠) → bash.md
 - Cloudflare作業 → cloudflare.md
 - モバイル開発 → mobile-dev.md
 - Scoopバケット（yscoopy）リリース手順 → yscoopy.md
