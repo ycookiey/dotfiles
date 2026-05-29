@@ -98,11 +98,8 @@ vim.keymap.set("n", "<A-l>", function()
   local result = toggle_checkbox(vim.api.nvim_get_current_line())
   if result then
     vim.api.nvim_set_current_line(result)
-  else
-    -- user-var経由でWezTermにペイン移動を要求（プロセス起動不要）
-    vim.api.nvim_chan_send(2, "\x1b]1337;SetUserVar=pane_right=MQ==\x07")
   end
-end, { desc = "Toggle markdown checkbox / pane right" })
+end, { desc = "Toggle markdown checkbox" })
 
 vim.keymap.set("v", "<A-l>", function()
   local start_line = vim.fn.line("v")
@@ -114,6 +111,14 @@ vim.keymap.set("v", "<A-l>", function()
     if result then vim.fn.setline(lnum, result) end
   end
 end, { desc = "Toggle markdown checkboxes (visual)" })
+
+-- 行/選択範囲を上下移動 (VSCode Alt+↑/↓ 相当, LazyVim流)
+vim.keymap.set("n", "<A-j>", "<cmd>execute 'move .+' . v:count1<cr>==", { desc = "Move Down" })
+vim.keymap.set("i", "<A-j>", "<esc><cmd>m .+1<cr>==gi", { desc = "Move Down" })
+vim.keymap.set("v", "<A-j>", ":<C-u>execute \"'<,'>move '>+\" . v:count1<cr>gv=gv", { desc = "Move Down" })
+vim.keymap.set("n", "<A-k>", "<cmd>execute 'move .-' . (v:count1 + 1)<cr>==", { desc = "Move Up" })
+vim.keymap.set("i", "<A-k>", "<esc><cmd>m .-2<cr>==gi", { desc = "Move Up" })
+vim.keymap.set("v", "<A-k>", ":<C-u>execute \"'<,'>move '<-\" . (v:count1 + 1)<cr>gv=gv", { desc = "Move Up" })
 
 -- vim-pandoc の .md 乗っ取りを無効化（ftdetect が lazy.nvim 起動時に先行 source されるため、ここで設定する必要がある）
 vim.g["pandoc#filetypes#pandoc_markdown"] = 0
