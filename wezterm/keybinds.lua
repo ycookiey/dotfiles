@@ -13,21 +13,6 @@ local function is_nushell(pane)
   return name == "nu.exe" or name == "nu"
 end
 
-local function is_nvim(pane)
-  local name = fg_name(pane)
-  if name == "nvim.exe" or name == "nvim" then return true end
-  -- フォールバック: タイトルで判定
-  local title = (pane:get_title() or ""):lower()
-  return title:find("nvim") ~= nil
-end
-
--- nvimからのペイン移動要求を処理（user-var経由）
-wezterm.on("user-var-changed", function(window, pane, name, value)
-  if name == "pane_right" then
-    window:perform_action(act.ActivatePaneDirection("Right"), pane)
-  end
-end)
-
 -- Show which key table is active in the status area
 wezterm.on("update-right-status", function(window, pane)
   local name = window:active_key_table()
@@ -297,21 +282,11 @@ return {
     },
     -- ペインを閉じる
     { key = "x", mods = "ALT", action = act({ CloseCurrentPane = { confirm = true } }) },
-    -- ペイン移動
-    { key = "h", mods = "ALT", action = act.ActivatePaneDirection("Left") },
-    {
-      key = "l",
-      mods = "ALT",
-      action = wezterm.action_callback(function(window, pane)
-        if is_nvim(pane) then
-          window:perform_action(act.SendKey({ key = "l", mods = "ALT" }), pane)
-        else
-          window:perform_action(act.ActivatePaneDirection("Right"), pane)
-        end
-      end),
-    },
-    { key = "k", mods = "ALT", action = act.ActivatePaneDirection("Up") },
-    { key = "j", mods = "ALT", action = act.ActivatePaneDirection("Down") },
+    -- ペイン移動 (Alt+矢印。Alt+hjkl は nvim の編集操作用に解放)
+    { key = "LeftArrow", mods = "ALT", action = act.ActivatePaneDirection("Left") },
+    { key = "RightArrow", mods = "ALT", action = act.ActivatePaneDirection("Right") },
+    { key = "UpArrow", mods = "ALT", action = act.ActivatePaneDirection("Up") },
+    { key = "DownArrow", mods = "ALT", action = act.ActivatePaneDirection("Down") },
     -- ペインズーム
     { key = "z", mods = "ALT", action = act.TogglePaneZoomState },
     -- フォントサイズ
