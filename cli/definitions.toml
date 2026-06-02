@@ -184,6 +184,12 @@ modifies_shell = true
 enabled = true
 
 [[command]]
+name = "vf"
+subcommand = "vf"
+modifies_shell = false
+enabled = true
+
+[[command]]
 name = "grf"
 subcommand = "grf"
 modifies_shell = false
