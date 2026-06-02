@@ -59,6 +59,11 @@ enum Commands {
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
     },
+    /// fd + fzf → open in nvim
+    Vf {
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
+    },
     /// gh repo list + fzf
     Grf {
         #[arg(trailing_var_arg = true)]
@@ -230,6 +235,7 @@ fn main() {
         Commands::ClaudeGlm { args } => commands::cg::run(&args),
         Commands::YaziCd { args } => commands::y::run(&args),
         Commands::Zf { args } => commands::zf::run(&args),
+        Commands::Vf { args } => commands::vf::run(&args),
         Commands::Grf { args } => commands::grf::run_print(&args),
         Commands::Grfo { args } => commands::grf::run_open(&args),
         Commands::Grfc { args } => commands::grf::run_clone(&args),
