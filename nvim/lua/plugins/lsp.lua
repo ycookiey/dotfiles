@@ -16,6 +16,9 @@ return {
       -- 全 LSP 共通: nvim-cmp の補完 capability を付与
       vim.lsp.config("*", { capabilities = capabilities })
 
+      -- 診断を virtual lines で常時表示 (全診断を各箇所に複数行展開)
+      vim.diagnostic.config({ virtual_lines = true, virtual_text = false })
+
       -- LSPキーマップ（LSP接続時のみ有効）
       vim.api.nvim_create_autocmd("LspAttach", {
         callback = function(ev)
