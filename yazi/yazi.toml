@@ -2,6 +2,17 @@
 edit = [
   { run = 'nvim "%*"', block = true },
 ]
+browser = [
+  { run = 'vivaldi "%1"', orphan = true, desc = "Browser", for = "windows" },
+]
+
+[open]
+prepend_rules = [
+  # HTML/SVG等はブラウザを先頭に
+  { url = "*.{html,htm,svg,xhtml,mht}", use = [ "browser", "edit", "reveal" ] },
+  # テキスト系のメニューにブラウザを追加
+  { mime = "text/*", use = [ "edit", "browser", "reveal" ] },
+]
 
 [preview]
 image_preview_method = "iterm2"
