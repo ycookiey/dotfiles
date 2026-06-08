@@ -66,6 +66,24 @@ def sort-by-frecency [entries: list<any>, cwd: string] {
         | reject _score
 }
 
+# 実行に使うパッケージマネージャを検出する。
+# 優先順: package.json の packageManager フィールド → lockfile → pnpm(既定)
+def detect-pm [] {
+    let pkg = (try { open package.json } catch { null })
+    if $pkg != null {
+        let pm_field = (try { $pkg | get packageManager } catch { null })
+        if $pm_field != null {
+            # "bun@1.3.10" / "pnpm@9.0.0+sha512..." → "bun" / "pnpm"
+            return ($pm_field | split row '@' | first)
+        }
+    }
+    if (('bun.lock' | path exists) or ('bun.lockb' | path exists)) { return 'bun' }
+    if ('pnpm-lock.yaml' | path exists) { return 'pnpm' }
+    if ('yarn.lock' | path exists) { return 'yarn' }
+    if ('package-lock.json' | path exists) { return 'npm' }
+    'pnpm'
+}
+
 def run-task [] {
     mut entries = []
 
@@ -120,12 +138,22 @@ def run-task [] {
 
     record-usage $cwd $choice.display
 
-    print $"=> ($choice.display)"
-    if $choice.scope == "root" {
-        ^pnpm run $choice.script
-    } else if $choice.scope == "just" {
+    if $choice.scope == "just" {
+        print $"=> ($choice.display)"
         ^just $choice.script
+        return
+    }
+
+    let pm = (detect-pm)
+    print $"=> ($choice.display)  [($pm)]"
+    if $choice.scope == "root" {
+        ^$pm run $choice.script
     } else {
-        ^pnpm --filter $choice.scope run $choice.script
+        # workspace filter: pnpm/bun は --filter、npm は -w、yarn は workspace
+        match $pm {
+            "npm" => { ^npm -w $choice.scope run $choice.script }
+            "yarn" => { ^yarn workspace $choice.scope run $choice.script }
+            _ => { ^$pm --filter $choice.scope run $choice.script }
+        }
     }
 }
