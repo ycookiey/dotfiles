@@ -10,6 +10,9 @@
       "Id": "Anthropic.Claude"
     },
     {
+      "Id": "AntibodySoftware.WizTree"
+    },
+    {
       "Id": "Anysphere.Cursor"
     },
     {
@@ -31,10 +34,13 @@
       "Id": "GitHub.GitHubDesktop"
     },
     {
-      "Id": "Google.Antigravity"
+      "Id": "Google.AntigravityIDE"
     },
     {
       "Id": "Google.JapaneseIME"
+    },
+    {
+      "Id": "Google.PlayGames"
     },
     {
       "Id": "Henry++.simplewall"
