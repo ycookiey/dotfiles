@@ -67,6 +67,19 @@ python ~/.claude/skills/search-sessions/history.py read SESSION_ID [--role ROLE]
 2. `read` でそのセッションの内容を確認
 3. 大きなセッションは `--tail` で末尾だけ読む
 
+## 結果の提示
+
+ユーザに `list` / `search` / `read` の結果を提示する際は、各セッションの再開コマンド `c r <session_id>` を必ず併記する。ユーザがコピペで即resume可能にするため。
+
+例:
+
+```
+- proj-foo / 2026-06-10 13:42 / "Fix login bug"
+  resume: c r 01234567-89ab-cdef-0123-456789abcdef
+```
+
+複数件並べる場合は各行に1個ずつ。`c r` は `--dangerously-skip-permissions` 付き、`c rs` は無し版。権限なしで開きたい場合のみ `c rs <id>` を案内。
+
 ## 注意
 
 - 出力はJSON形式
