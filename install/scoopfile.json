@@ -223,6 +223,10 @@
       "Source": "main"
     },
     {
+      "Name": "r",
+      "Source": "main"
+    },
+    {
       "Name": "rclone",
       "Source": "main"
     },
@@ -273,6 +277,10 @@
     {
       "Name": "sysinternals",
       "Source": "extras"
+    },
+    {
+      "Name": "tree-sitter",
+      "Source": "main"
     },
     {
       "Name": "ungoogled-chromium",
