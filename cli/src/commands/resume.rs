@@ -26,6 +26,80 @@ struct ScanResult {
     no_last_ts: usize,
 }
 
+pub(crate) fn is_session_id(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    if bytes.len() != 36 {
+        return false;
+    }
+    for (i, b) in bytes.iter().enumerate() {
+        match i {
+            8 | 13 | 18 | 23 => {
+                if *b != b'-' {
+                    return false;
+                }
+            }
+            _ => {
+                if !b.is_ascii_hexdigit() {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+pub fn resume_by_id(session_id: &str, dangerously_skip_permissions: bool) -> ShellAction {
+    let cwd = find_session_cwd(session_id);
+
+    let mut action = ShellAction {
+        exec: Some(ExecCommand {
+            program: "claude".into(),
+            args: {
+                let mut a = vec!["--resume".into(), session_id.into()];
+                if dangerously_skip_permissions {
+                    a.push("--dangerously-skip-permissions".into());
+                }
+                a
+            },
+        }),
+        ..Default::default()
+    };
+    match cwd {
+        Some(c) => action.cd = Some(c),
+        None => action.messages.push(Message {
+            text: format!("Session {session_id} not found locally; resuming without cd"),
+            level: MessageLevel::Info,
+        }),
+    }
+    action
+}
+
+fn find_session_cwd(session_id: &str) -> Option<String> {
+    let projects_dir = dirs::home_dir()?.join(".claude").join("projects");
+    let target = format!("{session_id}.jsonl");
+    for e in fs::read_dir(&projects_dir).ok()?.flatten() {
+        let p = e.path();
+        if !p.is_dir() {
+            continue;
+        }
+        let jsonl = p.join(&target);
+        if !jsonl.is_file() {
+            continue;
+        }
+        let data = fs::read_to_string(&jsonl).ok()?;
+        for line in data.lines().take(20) {
+            let Ok(v) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
+            if let Some(c) = v.get("cwd").and_then(|x| x.as_str()) {
+                return Some(c.to_string());
+            }
+        }
+        return None;
+    }
+    None
+}
+
 pub fn select(query: &[String], dangerously_skip_permissions: bool) -> ShellAction {
     use crate::commands::titles;
     use std::collections::HashMap;

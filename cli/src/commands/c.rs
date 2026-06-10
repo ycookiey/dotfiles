@@ -96,10 +96,15 @@ pub fn run(args: &[String]) {
     }
 
     // r / rs → fzf session picker + cd + claude --resume
+    // r <session-id> → direct resume by UUID (skip fzf)
     if matches!(claude_args.first().map(|s| s.as_str()), Some("r" | "rs")) {
         let skip_perms = claude_args[0] != "rs";
         let query: Vec<String> = claude_args[1..].to_vec();
-        let mut action = resume::select(&query, skip_perms);
+        let mut action = if query.len() == 1 && resume::is_session_id(&query[0]) {
+            resume::resume_by_id(&query[0], skip_perms)
+        } else {
+            resume::select(&query, skip_perms)
+        };
         action.set_env.extend(env);
         action.unset_env = unset_env;
         action.messages.extend(messages);
