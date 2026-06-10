@@ -241,7 +241,7 @@ fn fmt_badge(display: &str, color: &str) -> String {
     format!("{}{display}{RST} ", fmt_color(color))
 }
 
-/// 最初に現れる `N.N` 形式のバージョン文字列を抽出
+/// 最初に現れる数字列（`N.N` または `N`）を抽出
 fn extract_version(s: &str) -> Option<String> {
     let chars: Vec<char> = s.chars().collect();
     let mut i = 0;
@@ -251,13 +251,9 @@ fn extract_version(s: &str) -> Option<String> {
             while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
                 i += 1;
             }
-            let cand: String = chars[start..i].iter().collect();
-            if cand.contains('.') {
-                return Some(cand);
-            }
-        } else {
-            i += 1;
+            return Some(chars[start..i].iter().collect());
         }
+        i += 1;
     }
     None
 }
@@ -273,6 +269,8 @@ fn anthropic_badge(name: &str) -> Option<(String, String)> {
         ("\u{1F182}", "180,130,100") // 🆂
     } else if lower.contains("haiku") {
         ("\u{1F177}", "120,180,120") // 🅷
+    } else if lower.contains("fable") {
+        ("\u{1F175}", "180,130,210") // 🅵
     } else {
         return None;
     };
