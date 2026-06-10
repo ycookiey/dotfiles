@@ -8,7 +8,7 @@ pub fn run(args: &[String]) {
     env.insert("CLAUDE_CODE_MAX_OUTPUT_TOKENS".into(), "4096".into());
     env.insert(
         "ANTHROPIC_MODEL".into(),
-        "global.anthropic.claude-opus-4-5-20251101-v1:0".into(),
+        "global.anthropic.claude-opus-4-7[1m]".into(),
     );
 
     let mut claude_args: Vec<String> = Vec::new();
