@@ -576,6 +576,15 @@ fn cache_rate_limits(raw: &str) {
 }
 
 fn main() {
+    // Claude Code が in-flight 実行をキャンセルした際、Windows では
+    // 孫プロセスとして取り残されることがあり、stdin の EOF が来ず
+    // read_to_string で永遠にブロックしてゾンビ化する。
+    // 正常実行は数ms〜3秒(GLM API)なので 10秒で強制終了する。
+    std::thread::spawn(|| {
+        std::thread::sleep(std::time::Duration::from_secs(10));
+        std::process::exit(2);
+    });
+
     let mut input_str = String::new();
     let _ = io::stdin().read_to_string(&mut input_str);
     let j: Input = serde_json::from_str(&input_str).unwrap_or_default();
