@@ -27,6 +27,12 @@ struct Input {
     rate_limits: Option<RateLimits>,
     transcript_path: Option<String>,
     cost: Option<Cost>,
+    effort: Option<Effort>,
+}
+
+#[derive(Deserialize, Default)]
+struct Effort {
+    level: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -291,6 +297,20 @@ fn model_short_with_rules(display_name: &str, rules: &[ModelRule]) -> String {
         // 未知モデル
         format!("\x1b[38;2;150;150;150m❓ {display_name}\x1b[0m")
     }
+}
+
+/// effort.level → 色付きラベル。effort 非対応モデル(フィールド absent)は呼ばれない。
+/// ultracode は xhigh として報告される(Claude Code 仕様)
+fn effort_badge(level: &str) -> String {
+    let (label, rgb) = match level {
+        "low" => ("L", "255,220,50"),
+        "medium" => ("M", "80,200,120"),
+        "high" => ("H", "80,160,255"),
+        "xhigh" => ("XH", "190,120,255"),
+        "max" => ("MX", "255,80,80"),
+        other => return format!(" \x1b[38;2;150;150;150m{other}{RST}"),
+    };
+    format!(" {}{label}{RST}", fmt_color(rgb))
 }
 
 fn match_provider_rule<'a>(name: &str, rules: &'a [ProviderRule]) -> Option<&'a ProviderRule> {
@@ -633,10 +653,18 @@ fn main() {
     let aw = display_width(&add_str).max(display_width(&in_str));
     let sw = display_width(&sub_str).max(display_width(&out_str));
 
-    // Line 1: model {gap} $cost | +add | -sub
-    // Line 2: cx_stat           | ▼in  | ▲out
+    // Effort
+    let effort_str = j
+        .effort
+        .as_ref()
+        .and_then(|e| e.level.as_deref())
+        .map(effort_badge)
+        .unwrap_or_default();
+
+    // Line 1: model effort acc {gap} $cost | +add | -sub
+    // Line 2: cx_stat                      | ▼in  | ▲out
     // Gap fills so that $cost right edge = cx_stat right edge
-    let model_part = format!("{provider_badge}{model}{acc_str}");
+    let model_part = format!("{provider_badge}{model}{effort_str}{acc_str}");
     let cost_part = format!("{YELLOW}${usd:.1}{RST}");
     let model_w = display_width(&model_part);
     let cost_w = display_width(&cost_part);
