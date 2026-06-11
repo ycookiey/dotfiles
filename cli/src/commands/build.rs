@@ -287,75 +287,34 @@ pub fn run() {
         eprintln!("Error: dotfiles directory not found");
         std::process::exit(1);
     });
+    let cargo_bin = cargo_bin_dir().unwrap_or_else(|| {
+        eprintln!("Error: cargo bin directory not found");
+        std::process::exit(1);
+    });
 
     let cargo = which_cargo();
 
-    // On Windows, a running exe can't be overwritten.
-    // Build self (cli) last via cargo build, then copy over the locked binary.
-    let self_project = CRATES.iter().find(|c| c.path == "cli");
-    let other_projects: Vec<_> = CRATES.iter().filter(|c| c.path != "cli").collect();
-
     let mut failed = Vec::new();
-
-    // Build non-self projects normally
-    for crate_info in &other_projects {
-        if !build_project(&cargo, &dotfiles, crate_info) {
+    for crate_info in CRATES {
+        if !build_project(&cargo, &dotfiles, &cargo_bin, crate_info) {
             failed.push(crate_info.path);
-        }
-    }
-
-    // Build self: use `cargo build --release` + manual copy
-    if let Some(crate_info) = self_project {
-        let project_dir = dotfiles.join(crate_info.path);
-        if project_dir.join("Cargo.toml").exists() {
-            eprint!("  build {} ... ", crate_info.path);
-            let status = Command::new(&cargo)
-                .args(["build", "--release"])
-                .current_dir(&project_dir)
-                .status();
-
-            match status {
-                Ok(s) if s.success() => {
-                    // Copy built binary over the running one
-                    let src = project_dir.join("target/release/dotcli.exe");
-                    let dst = std::env::current_exe().unwrap();
-                    // Rename current exe out of the way, then copy new one
-                    let tmp = dst.with_extension("old");
-                    let _ = std::fs::rename(&dst, &tmp);
-                    match std::fs::copy(&src, &dst) {
-                        Ok(_) => {
-                            let _ = std::fs::remove_file(&tmp);
-                            eprintln!("ok");
-                            if let Some(post) = crate_info.post {
-                                post(&dotfiles);
-                            }
-                        }
-                        Err(e) => {
-                            // Restore old binary
-                            let _ = std::fs::rename(&tmp, &dst);
-                            eprintln!("FAILED (copy: {e})");
-                            failed.push(crate_info.path);
-                        }
-                    }
-                }
-                _ => {
-                    eprintln!("FAILED");
-                    failed.push(crate_info.path);
-                }
-            }
         }
     }
 
     if failed.is_empty() {
         eprintln!("All projects built successfully");
-    }
-    if !failed.is_empty() {
+    } else {
         eprintln!("Failed: {}", failed.join(", "));
         std::process::exit(1);
     }
 }
 
-fn build_project(cargo: &str, dotfiles: &Path, crate_info: &Crate) -> bool {
+// On Windows, a running exe can't be overwritten (cargo install's final move
+// fails with os error 5), but it can be renamed. So: build in the project's
+// target dir, rename the live exe out of the way, then copy the new one in.
+// Applies to all crates: dotcli is always running during dotb, and
+// claude-statusline runs every second via statusLine.refreshInterval.
+fn build_project(cargo: &str, dotfiles: &Path, cargo_bin: &Path, crate_info: &Crate) -> bool {
     let project_dir = dotfiles.join(crate_info.path);
     if !project_dir.join("Cargo.toml").exists() {
         eprintln!("  skip {} (not found)", crate_info.path);
@@ -364,21 +323,43 @@ fn build_project(cargo: &str, dotfiles: &Path, crate_info: &Crate) -> bool {
 
     eprint!("  build {} ... ", crate_info.path);
     let status = Command::new(cargo)
-        .args(["install", "--path"])
-        .arg(&project_dir)
-        .arg("--quiet")
+        .args(["build", "--release", "--quiet"])
+        .current_dir(&project_dir)
         .status();
+    if !matches!(status, Ok(s) if s.success()) {
+        eprintln!("FAILED");
+        return false;
+    }
 
-    match status {
-        Ok(s) if s.success() => {
+    // Workspace members (e.g. cli/pdfview) emit to the workspace root's
+    // target dir, so search ancestors for the built exe.
+    let Some(src) = project_dir
+        .ancestors()
+        .map(|d| d.join(format!("target/release/{}.exe", crate_info.bin_name)))
+        .find(|p| p.exists())
+    else {
+        eprintln!("FAILED (built exe not found)");
+        return false;
+    };
+    let dst = cargo_bin.join(format!("{}.exe", crate_info.bin_name));
+    let old = dst.with_extension("old");
+    let renamed = dst.exists() && std::fs::rename(&dst, &old).is_ok();
+    match std::fs::copy(&src, &dst) {
+        Ok(_) => {
+            // Deleting .old fails while a process still holds it; leave it,
+            // the next build's rename overwrites it.
+            let _ = std::fs::remove_file(&old);
             eprintln!("ok");
             if let Some(post) = crate_info.post {
                 post(dotfiles);
             }
             true
         }
-        _ => {
-            eprintln!("FAILED");
+        Err(e) => {
+            if renamed {
+                let _ = std::fs::rename(&old, &dst);
+            }
+            eprintln!("FAILED (copy: {e})");
             false
         }
     }
