@@ -13,6 +13,7 @@
 - 指示が曖昧で誤った方向に進むリスクがあれば推測せず質問。候補があればAskUserQuestionでもよい
 - 類似ファイル作成はcp/mv + Edit
 - 変更を元に戻すにはgit checkout（Editで逆変換しない）
+- CLAUDE.md は ~/.config/git/ignore で除外
 - 資料/出力を head/prefix の部分読みで結論しない。該当語を grep か全体を読んで確認(特に長文・節構成)
 
 # 参照ドキュメント
@@ -21,7 +22,8 @@
 ファイルは ~/.claude/docs/ にある。
 
 - PowerShellコーディング → powershell.md
-- Bash/shスクリプト(Git Bash・grep/locale罠) → bash.md
+- Bash/shスクリプト(Git Bash・grep/locale・パス変換罠) → bash.md
+- Git操作のWindows罠(symlink/実行ビット/再初期化) → git.md
 - Cloudflare作業 → cloudflare.md
 - モバイル開発 → mobile-dev.md
 - Scoopバケット（yscoopy）リリース手順 → yscoopy.md
