@@ -28,5 +28,6 @@
   "autoMemoryEnabled": false,
   "skipDangerousModePermissionPrompt": true,
   "showClearContextOnPlanAccept": true,
+  "wheelScrollAccelerationEnabled": false,
   "hooks": {}
 }
