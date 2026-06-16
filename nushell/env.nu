@@ -4,6 +4,8 @@ $env.STARSHIP_CONFIG = 'C:\Main\Project\dotfiles\starship.toml'
 $env.STARSHIP_EXE = ($env.USERPROFILE | path join 'scoop\apps\starship\current\starship.exe')
 $env.YAZI_FILE_ONE = ($env.USERPROFILE | path join 'scoop\apps\git\current\usr\bin\file.exe')
 $env.DOT = 'C:\Main\Project\dotfiles'
+$env.EDITOR = 'nvim'
+$env.VISUAL = 'nvim'
 
 # pnpm/npm が裏で cmd.exe 経由で bash を解決すると WSL bash がヒットする問題対策。
 # script-shell を Git Bash に固定する。
