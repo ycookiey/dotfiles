@@ -12,8 +12,7 @@
   },
   "statusLine": {
     "type": "command",
-    "command": "claude-statusline",
-    "refreshInterval": 1
+    "command": "claude-statusline"
   },
   "enabledPlugins": {
     "github@claude-plugins-official": true,
