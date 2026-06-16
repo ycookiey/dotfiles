@@ -1,17 +1,95 @@
 use crate::protocol::{ExecCommand, Message, MessageLevel, ShellAction};
 use rayon::prelude::*;
+use serde::Deserialize;
 use serde_json::Value;
 use std::env;
-use std::fs;
-use std::io::Write;
+use std::fs::{self, File};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+// jsonl 1行を型付き deserialize するための最小スキーマ。
+// serde_json::Value より速く、simd_json::serde::from_slice と組み合わせて使う。
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct LineMeta {
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    cwd: Option<String>,
+    #[serde(default)]
+    timestamp: Option<String>,
+    #[serde(rename = "type", default)]
+    typ: Option<String>,
+    #[serde(default)]
+    is_meta: Option<bool>,
+    #[serde(default)]
+    custom_title: Option<String>,
+    #[serde(default)]
+    message: Option<LineMessage>,
+}
+
+#[derive(Deserialize, Default)]
+struct LineMessage {
+    #[serde(default)]
+    role: Option<String>,
+    #[serde(default)]
+    content: Option<LineContent>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum LineContent {
+    Text(String),
+    Array(Vec<ContentItem>),
+}
+
+#[derive(Deserialize, Default)]
+struct ContentItem {
+    #[serde(default)]
+    text: Option<String>,
+}
+
+/// LineMessage から user メッセージ本文を抽出（既存 extract_user_content の typed版）
+fn line_user_content(msg: &LineMessage) -> Option<String> {
+    let content = msg.content.as_ref()?;
+    let raw = match content {
+        LineContent::Text(s) => s.clone(),
+        LineContent::Array(items) => {
+            let mut out = String::new();
+            for item in items {
+                if let Some(t) = &item.text {
+                    if !out.is_empty() {
+                        out.push(' ');
+                    }
+                    out.push_str(t);
+                }
+            }
+            if out.is_empty() {
+                return None;
+            }
+            out
+        }
+    };
+    let cleaned = strip_json_blobs(&raw);
+    if cleaned.trim().is_empty() {
+        None
+    } else {
+        Some(cleaned)
+    }
+}
+
+fn parse_line(buf: &[u8]) -> Option<LineMeta> {
+    let mut copy = buf.to_vec();
+    simd_json::serde::from_slice(&mut copy).ok()
+}
 
 pub(crate) const HIGHLIGHT_TOP_N: usize = 5;
 pub(crate) const GREEN: &str = "\x1b[32m";
 pub(crate) const DIM: &str = "\x1b[2m";
 pub(crate) const RESET: &str = "\x1b[0m";
 
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub(crate) struct SessionInfo {
     pub(crate) session_id: String,
     pub(crate) cwd: String,
@@ -19,6 +97,7 @@ pub(crate) struct SessionInfo {
     pub(crate) title: Option<String>,
     pub(crate) latest_message: String,
     pub(crate) project: String,
+    pub(crate) path: PathBuf,
 }
 
 struct ScanResult {
@@ -174,23 +253,11 @@ pub fn select(query: &[String], dangerously_skip_permissions: bool) -> ShellActi
     }
     push_rest_with_groups(&mut lines, &rest, proj_width, &cached_titles, now_epoch, None);
 
-    // Collect uncached sessions for background generation
-    let home = dirs::home_dir().expect("no home dir");
-    let projects_dir = home.join(".claude").join("projects");
-    let all_jsonl = collect_session_jsonl(&projects_dir);
+    // Collect uncached sessions for background generation (reuse path from SessionInfo)
     let needs_gen: Vec<(PathBuf, String)> = sessions
         .iter()
         .filter(|s| s.title.is_none() && !cached_titles.contains_key(&s.session_id))
-        .filter_map(|s| {
-            all_jsonl
-                .iter()
-                .find(|p| {
-                    p.file_stem()
-                        .map(|f| f.to_string_lossy().contains(&s.session_id))
-                        .unwrap_or(false)
-                })
-                .map(|p| (p.clone(), s.session_id.clone()))
-        })
+        .map(|s| (s.path.clone(), s.session_id.clone()))
         .collect();
 
     // Allocate fzf listen port and tmp file for reload
@@ -260,6 +327,7 @@ pub fn select(query: &[String], dangerously_skip_permissions: bool) -> ShellActi
             title: s.title.clone(),
             latest_message: s.latest_message.clone(),
             project: s.project.clone(),
+            path: s.path.clone(),
         })
         .collect();
     let bg_cwd = cwd_now.clone();
@@ -333,7 +401,92 @@ pub fn select(query: &[String], dangerously_skip_permissions: bool) -> ShellActi
     }
 }
 
+// ── Scan cache ──
+// 全 jsonl の全文 parse は ~150ms かかる。だが 1 回の `c r` で更新される
+// セッションは普段 1〜2 件。なので (path, mtime) を照合して、mtime 未変更分は
+// cache から SessionInfo を流用、変更/新規分のみ再 parse する。
+
+const SCAN_CACHE_VERSION: u32 = 1;
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ScanCache {
+    version: u32,
+    entries: Vec<ScanCacheEntry>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ScanCacheEntry {
+    path: PathBuf,
+    mtime_ns: u128,
+    info: SessionInfo,
+}
+
+fn scan_cache_path() -> Option<PathBuf> {
+    Some(
+        dirs::home_dir()?
+            .join(".cache")
+            .join("dotcli")
+            .join("sessions-scan.json"),
+    )
+}
+
+fn mtime_ns(path: &Path) -> Option<u128> {
+    let modified = fs::metadata(path).ok()?.modified().ok()?;
+    modified
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_nanos())
+}
+
+fn read_scan_cache() -> std::collections::HashMap<PathBuf, (u128, SessionInfo)> {
+    use std::collections::HashMap;
+    let Some(p) = scan_cache_path() else { return HashMap::new(); };
+    let Ok(data) = fs::read_to_string(&p) else { return HashMap::new(); };
+    let Ok(cache): Result<ScanCache, _> = serde_json::from_str(&data) else {
+        return HashMap::new();
+    };
+    if cache.version != SCAN_CACHE_VERSION {
+        return HashMap::new();
+    }
+    cache
+        .entries
+        .into_iter()
+        .map(|e| (e.path, (e.mtime_ns, e.info)))
+        .collect()
+}
+
+fn write_scan_cache(
+    sessions: &[SessionInfo],
+    mtimes: &std::collections::HashMap<PathBuf, u128>,
+) {
+    let Some(p) = scan_cache_path() else { return };
+    let Some(dir) = p.parent() else { return };
+    let _ = fs::create_dir_all(dir);
+    let entries: Vec<ScanCacheEntry> = sessions
+        .iter()
+        .filter_map(|s| {
+            let mt = mtimes.get(&s.path)?;
+            Some(ScanCacheEntry {
+                path: s.path.clone(),
+                mtime_ns: *mt,
+                info: s.clone(),
+            })
+        })
+        .collect();
+    let cache = ScanCache {
+        version: SCAN_CACHE_VERSION,
+        entries,
+    };
+    let Ok(data) = serde_json::to_string(&cache) else { return };
+    let tmp = p.with_extension("json.tmp");
+    if fs::write(&tmp, &data).is_ok() {
+        let _ = fs::rename(&tmp, &p);
+    }
+}
+
 fn scan_sessions() -> ScanResult {
+    use std::collections::HashMap;
+
     let projects_dir = match dirs::home_dir() {
         Some(h) => h.join(".claude").join("projects"),
         None => return ScanResult { sessions: Vec::new(), no_last_ts: 0 },
@@ -343,19 +496,49 @@ fn scan_sessions() -> ScanResult {
     }
 
     let paths: Vec<PathBuf> = collect_session_jsonl(&projects_dir);
-    let results: Vec<Result<SessionInfo, bool>> =
-        paths.par_iter().map(|p| parse_session(p)).collect();
+
+    // 1. 並列で (path, mtime_ns) を集める
+    let current: Vec<(PathBuf, u128)> = paths
+        .par_iter()
+        .filter_map(|p| Some((p.clone(), mtime_ns(p)?)))
+        .collect();
+    let current_map: HashMap<PathBuf, u128> =
+        current.iter().cloned().collect();
+
+    // 2. cache を読む
+    let cache = read_scan_cache();
+
+    // 3. hit / miss 振り分け
+    let mut hits: Vec<SessionInfo> = Vec::new();
+    let mut misses: Vec<PathBuf> = Vec::new();
+    for (path, mt) in &current {
+        match cache.get(path) {
+            Some((cached_mt, info)) if cached_mt == mt => hits.push(info.clone()),
+            _ => misses.push(path.clone()),
+        }
+    }
+
+    // 4. miss のみ parse
     let mut no_last_ts: usize = 0;
-    let mut sessions: Vec<SessionInfo> = Vec::with_capacity(results.len());
-    for r in results {
+    let parsed: Vec<Result<SessionInfo, bool>> =
+        misses.par_iter().map(|p| parse_session(p)).collect();
+    for r in parsed {
         match r {
-            Ok(s) => sessions.push(s),
+            Ok(s) => hits.push(s),
             Err(true) => no_last_ts += 1,
             Err(false) => {}
         }
     }
 
+    let mut sessions = hits;
     sessions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+
+    // 5. dirty なら書き戻し（新規 parse があった、または cache のエントリ数が現状と違う）
+    let dirty = !misses.is_empty() || cache.len() != current_map.len();
+    if dirty {
+        write_scan_cache(&sessions, &current_map);
+    }
+
     ScanResult { sessions, no_last_ts }
 }
 
@@ -384,42 +567,75 @@ pub(crate) fn collect_session_jsonl(projects_dir: &Path) -> Vec<PathBuf> {
     out
 }
 
+/// セッションファイルは大きい場合 80MB に達するので、先頭/末尾だけ部分読みする。
+/// HEAD: session_id, cwd 抽出用。TAIL: title/timestamp/最新メッセージ抽出用。
+const HEAD_BYTES: u64 = 128 * 1024;
+const TAIL_BYTES: u64 = 512 * 1024;
+
+/// 部分読みで (head, tail) のバイト列を返す。ファイルが (HEAD + TAIL) 以下なら全文を head に入れて tail は空。
+/// 部分境界の改行で切る（中途半端なバイトを捨てる）。
+fn read_head_and_tail(path: &Path) -> Result<(Vec<u8>, Vec<u8>), bool> {
+    let mut f = File::open(path).map_err(|_| false)?;
+    let len = f.metadata().map_err(|_| false)?.len();
+
+    if len <= HEAD_BYTES + TAIL_BYTES {
+        let mut data = Vec::with_capacity(len as usize);
+        f.read_to_end(&mut data).map_err(|_| false)?;
+        return Ok((data, Vec::new()));
+    }
+
+    let mut head = vec![0u8; HEAD_BYTES as usize];
+    f.read_exact(&mut head).map_err(|_| false)?;
+    let last_nl = head.iter().rposition(|&b| b == b'\n').unwrap_or(0);
+    head.truncate(last_nl);
+
+    let tail_off = len - TAIL_BYTES;
+    f.seek(SeekFrom::Start(tail_off)).map_err(|_| false)?;
+    let mut tail = vec![0u8; TAIL_BYTES as usize];
+    f.read_exact(&mut tail).map_err(|_| false)?;
+    let first_nl = tail.iter().position(|&b| b == b'\n').unwrap_or(tail.len());
+    let start = (first_nl + 1).min(tail.len());
+    tail.drain(..start);
+
+    Ok((head, tail))
+}
+
 /// Returns Ok(session) on success, Err(true) if only last_timestamp was missing,
 /// Err(false) for other parse failures.
 fn parse_session(path: &Path) -> Result<SessionInfo, bool> {
-    let data = fs::read_to_string(path).map_err(|_| false)?;
-    let lines: Vec<&str> = data.lines().collect();
-    if lines.is_empty() {
+    let (head_buf, tail_buf) = read_head_and_tail(path)?;
+    let head_lines: Vec<&[u8]> = head_buf.split(|&b| b == b'\n').filter(|s| !s.is_empty()).collect();
+    if head_lines.is_empty() {
         return Err(false);
     }
 
     let mut session_id: Option<String> = None;
     let mut cwd: Option<String> = None;
 
-    for line in lines.iter().take(10) {
-        let v: Value = serde_json::from_str(line).map_err(|_| false)?;
-        if session_id.is_none()
-            && let Some(sid) = v.get("sessionId").and_then(|x| x.as_str())
-        {
-            session_id = Some(sid.to_string());
+    for line in head_lines.iter().take(10) {
+        let meta = parse_line(line).ok_or(false)?;
+        if session_id.is_none() {
+            if let Some(sid) = &meta.session_id {
+                session_id = Some(sid.clone());
+            }
         }
-        if v.get("type").and_then(|t| t.as_str()) != Some("user") {
+        if meta.typ.as_deref() != Some("user") {
             continue;
         }
-        if v.get("isMeta").and_then(|m| m.as_bool()) == Some(true) {
+        if meta.is_meta == Some(true) {
             continue;
         }
-        let msg = match v.get("message") {
+        let msg = match meta.message {
             Some(m) => m,
             None => continue,
         };
-        if msg.get("role").and_then(|r| r.as_str()) != Some("user") {
+        if msg.role.as_deref() != Some("user") {
             continue;
         }
         if cwd.is_none() {
-            cwd = v.get("cwd").and_then(|c| c.as_str()).map(|s| s.to_string());
-            if let Some(sid) = v.get("sessionId").and_then(|x| x.as_str()) {
-                session_id = Some(sid.to_string());
+            cwd = meta.cwd;
+            if let Some(sid) = meta.session_id {
+                session_id = Some(sid);
             }
         }
         if cwd.is_some() && session_id.is_some() {
@@ -430,6 +646,10 @@ fn parse_session(path: &Path) -> Result<SessionInfo, bool> {
     let session_id = session_id.ok_or(false)?;
     let cwd = cwd.ok_or(false)?;
 
+    // 小ファイル時は tail が空 → head を末尾走査の対象にする
+    let tail_for_rev: &[u8] = if tail_buf.is_empty() { &head_buf } else { &tail_buf };
+    let lines: Vec<&[u8]> = tail_for_rev.split(|&b| b == b'\n').filter(|s| !s.is_empty()).collect();
+
     let mut title: Option<String> = None;
     let mut last_timestamp: Option<String> = None;
     let mut message_parts: Vec<String> = Vec::new();
@@ -437,31 +657,27 @@ fn parse_session(path: &Path) -> Result<SessionInfo, bool> {
     const MIN_MSG_LEN: usize = 40;
     const MAX_MSG_LEN: usize = 120;
     const MSG_SEP: &str = " / ";
-    for line in lines.iter().rev() {
-        let Ok(v) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
+    // custom-title はセッション末尾近くにしか付かないので探索は末尾 N 行のみ。
+    // これがないと、custom-title 無しセッション(全体の~91%)で全行 JSON parse が走る。
+    const TITLE_SCAN_LINES: usize = 100;
+    for (idx, line) in lines.iter().rev().enumerate() {
+        let Some(meta) = parse_line(line) else { continue };
         if last_timestamp.is_none() {
-            last_timestamp = v
-                .get("timestamp")
-                .and_then(|t| t.as_str())
-                .map(|s| s.to_string());
+            last_timestamp = meta.timestamp;
         }
-        if title.is_none()
-            && v.get("type").and_then(|t| t.as_str()) == Some("custom-title")
+        if idx < TITLE_SCAN_LINES
+            && title.is_none()
+            && meta.typ.as_deref() == Some("custom-title")
         {
-            title = v
-                .get("customTitle")
-                .and_then(|t| t.as_str())
-                .map(|s| s.to_string());
+            title = meta.custom_title;
         }
         if accumulated_len < MIN_MSG_LEN
-            && v.get("type").and_then(|t| t.as_str()) == Some("user")
-            && v.get("isMeta").and_then(|m| m.as_bool()) != Some(true)
+            && meta.typ.as_deref() == Some("user")
+            && meta.is_meta != Some(true)
         {
-            if let Some(msg) = v.get("message") {
-                if msg.get("role").and_then(|r| r.as_str()) == Some("user") {
-                    if let Some(text) = extract_user_content(msg) {
+            if let Some(msg) = &meta.message {
+                if msg.role.as_deref() == Some("user") {
+                    if let Some(text) = line_user_content(msg) {
                         if !is_noise_user_content(&text) {
                             let cleaned = strip_xml_tags(&text);
                             if !cleaned.is_empty() {
@@ -476,9 +692,9 @@ fn parse_session(path: &Path) -> Result<SessionInfo, bool> {
                 }
             }
         }
-        if title.is_some()
-            && last_timestamp.is_some()
+        if last_timestamp.is_some()
             && accumulated_len >= MIN_MSG_LEN
+            && idx >= TITLE_SCAN_LINES
         {
             break;
         }
@@ -500,6 +716,7 @@ fn parse_session(path: &Path) -> Result<SessionInfo, bool> {
         title,
         latest_message,
         project,
+        path: path.to_path_buf(),
     })
 }
 
