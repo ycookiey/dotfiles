@@ -579,9 +579,9 @@ fn main() {
     // Claude Code が in-flight 実行をキャンセルした際、Windows では
     // 孫プロセスとして取り残されることがあり、stdin の EOF が来ず
     // read_to_string で永遠にブロックしてゾンビ化する。
-    // 正常実行は数ms〜3秒(GLM API)なので 10秒で強制終了する。
+    // 正常実行は数ms〜3秒(GLM API timeout=3s)なので 5秒で強制終了する。
     std::thread::spawn(|| {
-        std::thread::sleep(std::time::Duration::from_secs(10));
+        std::thread::sleep(std::time::Duration::from_secs(5));
         std::process::exit(2);
     });
 
