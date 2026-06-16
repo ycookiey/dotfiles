@@ -28,7 +28,7 @@ setup.ps1 で管理。追加・変更は setup.ps1 の mkl で行う（直接コ
 | ~/.claude/rules/ | dotfiles/claude/rules/ |
 | ~/.claude/docs/ | dotfiles/claude/docs/ |
 | ~/.claude/agents/ | dotfiles/claude/agents/ |
-| ~/.claude/skills/<name> | dotfiles/skills/<name> (urleader等。setup.ps1で個別symlinkとして管理) |
+| ~/.claude/skills/<name> | dotfiles/skills/<name> ※例外的にywatchyが個別管理（setup.ps1管理外）。詳細は ywatchy.md |
 
 ## マルチアカウント (~/.claude-*)
 

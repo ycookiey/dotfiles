@@ -28,6 +28,7 @@
 - Cloudflare作業 → cloudflare.md
 - モバイル開発 → mobile-dev.md
 - Scoopバケット（yscoopy）リリース手順 → yscoopy.md
+- skill自動symlink/sync ツール ywatchy → ywatchy.md
 - シンボリックリンク構成確認・変更 → symlinks.md
 - 環境を横断して再現したい変更（アプリ・設定等） → bootstrap.md
 - MCP サーバー管理 → mcp.md
