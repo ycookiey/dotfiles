@@ -24,3 +24,9 @@ esac
 ```bash
 grep -qiF -- "$pat" "$f"; case $? in 0) 一致 ;; 1) 不一致 ;; *) エラー処理 ;; esac
 ```
+
+## MSYS パス変換が `/X` 形式オプションを破壊
+
+- Git Bash は `/` 始まりの引数を POSIX→Windows パスへ自動変換 → `iscc /DName=val` 等の Windows 形式オプションが壊れる(例: ISCC「You may not specify more than one script filename」)
+- 回避: `MSYS2_ARG_CONV_EXCL="/D" cmd ...`(複数prefixは `;` 区切り、全除外は `*`)
+- 全除外時は引数内のパスを自前で Windows 形式に(`cygpath -w`)
