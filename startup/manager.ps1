@@ -19,8 +19,8 @@ function Write-Log {
 }
 
 function Start-Unelevated([scriptblock]$Launch) {
-    $aliasDir = "$PSScriptRoot\..\pwsh"
-    $inner = ". '$aliasDir\aliases.ps1'; . '$aliasDir\generated-aliases.ps1'; " + $Launch.ToString().Trim()
+    $dotRoot = "$PSScriptRoot\.."
+    $inner = ". '$dotRoot\pwsh\aliases.ps1'; . '$dotRoot\generated-aliases.ps1'; " + $Launch.ToString().Trim()
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($inner))
     & runas /trustlevel:0x20000 "pwsh -NoProfile -W Hidden -NonInteractive -EncodedCommand $encoded"
 }
