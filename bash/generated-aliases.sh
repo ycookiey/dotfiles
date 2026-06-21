@@ -50,7 +50,7 @@ claude-reauth() { pwsh -NoProfile -File 'C:/Main/Project/dotfiles/bin/claude-rea
 
 # --- Launchers ---
 kindle() { explorer.exe 'kindle:'; }
-dis() { explorer.exe 'discord:'; }
+dis() { pwsh -NoProfile -Command 'Start-Process -FilePath "$env:USERPROFILE\scoop\apps\discord\current\discord-portable.exe"'; }
 slk() { explorer.exe 'slack:'; }
 obsd() { explorer.exe 'obsidian:'; }
 viv() { pwsh -NoProfile -Command 'Start-Process -FilePath '\''vivaldi'\'''; }

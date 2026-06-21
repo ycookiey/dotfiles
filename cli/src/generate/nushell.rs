@@ -90,6 +90,17 @@ pub fn generate(defs: &Definitions, dotfiles_dir: &Path) -> String {
                             .collect::<Vec<_>>()
                             .join(" ");
                         format!("([$env.ProgramFiles {segments}] | path join)")
+                    } else if raw_path.contains("{USERPROFILE}") {
+                        let rest = raw_path
+                            .replace("{USERPROFILE}\\", "")
+                            .replace("{USERPROFILE}", "");
+                        let segments = rest
+                            .split('\\')
+                            .filter(|s| !s.is_empty())
+                            .map(|s| format!("\"{s}\""))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        format!("([$env.USERPROFILE {segments}] | path join)")
                     } else if raw_path.contains('\\') {
                         // nushell の "" 内では \ がエスケープ扱いになるため
                         // path join でセグメント結合する
