@@ -193,6 +193,33 @@ end)
 
 
 ----------------------------------------------------
+-- マウス設定
+----------------------------------------------------
+-- 通常左クリック: 選択範囲があれば確定、なければハイパーリンクを開く
+-- mouse_reporting=true 版はアプリ(reedline等)がマウスを掴んでいる時用。
+-- これがないと SHIFT+クリックでしか開けない (WezTermのbypass_mouse_reporting_modifiers仕様)。
+config.mouse_bindings = {
+  {
+    event = { Up = { streak = 1, button = "Left" } },
+    mods = "NONE",
+    mouse_reporting = false,
+    action = wezterm.action_callback(function(window, pane)
+      if window:get_selection_text_for_pane(pane) ~= "" then
+        window:perform_action(wezterm.action.CompleteSelection("ClipboardAndPrimarySelection"), pane)
+      else
+        window:perform_action(wezterm.action.OpenLinkAtMouseCursor, pane)
+      end
+    end),
+  },
+  {
+    event = { Up = { streak = 1, button = "Left" } },
+    mods = "NONE",
+    mouse_reporting = true,
+    action = wezterm.action.OpenLinkAtMouseCursor,
+  },
+}
+
+----------------------------------------------------
 -- keybinds
 ----------------------------------------------------
 config.disable_default_key_bindings = true
