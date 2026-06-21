@@ -74,8 +74,8 @@ platform = "windows"
 
 [[launcher]]
 name = "dis"
-type = "uri"
-uri = "discord:"
+type = "exe"
+path = '{USERPROFILE}\scoop\apps\discord\current\discord-portable.exe'
 platform = "windows"
 
 [[launcher]]

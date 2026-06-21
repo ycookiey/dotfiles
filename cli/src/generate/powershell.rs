@@ -81,7 +81,8 @@ pub fn generate(defs: &Definitions, dotfiles_dir: &Path) -> String {
                         .path
                         .as_ref()
                         .unwrap()
-                        .replace("{PROGRAM_FILES}", "$env:ProgramFiles");
+                        .replace("{PROGRAM_FILES}", "$env:ProgramFiles")
+                        .replace("{USERPROFILE}", "$env:USERPROFILE");
                     if l.args.is_empty() {
                         writeln!(out, "function {name} {{ start \"{path}\" }}", name = l.name,)
                             .unwrap();

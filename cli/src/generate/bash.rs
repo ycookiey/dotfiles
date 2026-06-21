@@ -82,9 +82,13 @@ pub fn generate(defs: &Definitions, dotfiles_dir: &Path) -> String {
                 }
                 LauncherType::Exe => {
                     let raw_path = l.path.as_ref().unwrap();
-                    let path_part = if raw_path.contains("{PROGRAM_FILES}") {
-                        // PS double-quoted to expand $env:ProgramFiles
-                        let p = raw_path.replace("{PROGRAM_FILES}", "$env:ProgramFiles");
+                    let has_env_var = raw_path.contains("{PROGRAM_FILES}")
+                        || raw_path.contains("{USERPROFILE}");
+                    let path_part = if has_env_var {
+                        // PS double-quoted to expand $env: variables
+                        let p = raw_path
+                            .replace("{PROGRAM_FILES}", "$env:ProgramFiles")
+                            .replace("{USERPROFILE}", "$env:USERPROFILE");
                         format!("\"{}\"", p.replace('"', "`\""))
                     } else {
                         format!("'{}'", ps_squote_inner(raw_path))
