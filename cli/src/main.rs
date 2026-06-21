@@ -155,6 +155,8 @@ enum Commands {
         #[command(subcommand)]
         action: CasAction,
     },
+    /// MCP server (stdio) that captures Windows window screenshots by title
+    McpScreenshot,
     /// Show a desktop notification popup (Win32)
     Notify {
         /// Notification title
@@ -263,6 +265,7 @@ fn main() {
         Commands::GitPrompt { path } => commands::git_prompt::run(&path),
         Commands::CheckDirty => commands::check_dirty::run(),
         Commands::SendKey { args } => commands::send_key::run(&args),
+        Commands::McpScreenshot => commands::mcp_screenshot::run(),
         Commands::Notify {
             title,
             message,

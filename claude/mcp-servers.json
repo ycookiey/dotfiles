@@ -14,5 +14,9 @@
   "pencil": {
     "command": "{LOCALAPPDATA}/Programs/Pencil/resources/app.asar.unpacked/out/mcp-server-windows-x64.exe",
     "args": ["--app", "desktop"]
+  },
+  "screenshot": {
+    "command": "dotcli",
+    "args": ["mcp-screenshot"]
   }
 }
