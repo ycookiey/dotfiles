@@ -4,6 +4,7 @@
 
 - 作業開始前に何をするか簡潔に示す(1-2行)
 - シェルはGit Bash。Windowsパスは Unix形式で /c/path。Edit/Read は C:\path
+- 対話 shell は nushell。launcher 検証時優先
 - 未完成の実装にはTODOコメント必須
 - IMPORTANT: コミットメッセージにAIツール名や Co-Authored-By を入れない
 - ハマった問題: まず汎用的な学びを抽出し ~/.claude/docs/ に具体的ファイルで記録
