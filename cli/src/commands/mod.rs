@@ -17,6 +17,7 @@ pub mod literal_dup_format;
 pub mod frun;
 pub mod grf;
 pub mod locked;
+pub mod mcp_screenshot;
 pub mod proxy;
 pub mod resume;
 pub mod send_key;
