@@ -333,7 +333,8 @@ mod tests {
 }
 
 const LAUNCH_HELPER: &str = r#"def _dotcli_launch [program: string, ...args: string] {
-    job spawn { ^$program ...$args } | ignore
+    # cmd /c start で完全 detach (job spawn は nushell session 配下で子プロセス kill される)
+    ^cmd /c start "" $program ...$args
 }
 "#;
 
