@@ -35,6 +35,7 @@
 - MCP サーバー管理 → mcp.md
 - Agent teamタスク → agent-team.md
 - ASCII図の整列 → ascii-diagram.md
+- upstream 投稿 → oss-contribute.md
 
 # 自己改善
 
