@@ -95,3 +95,13 @@ Step 1(環境横断 vs プロジェクト固有)を独断で決めつけず、**
 ## 書込先のsymlink注意(重要)
 
 `~/.claude` 配下はsymlinkでWrite拒否される。書込前に `readlink -f <対象>` で実体パス(dotfiles配下)を解決してからEdit/Writeする。実体マッピングは `~/.claude/docs/symlinks.md` 参照。
+
+## Phase 5: 構造点検
+
+書込完了後に確認:
+
+- `~/.claude/docs/` 配下を ls
+- CLAUDE.md「参照ドキュメント」節に列挙されていない docs を集計 (= 補助 docs。grep 発見運用前提の症状ベース/ad-hoc 問題対処系)
+- 補助 docs が 3件以上なら CLAUDE.md の二段参照化を提案 (主参照節 + 補助 docs index/節)
+
+補助 docs は発見経路が grep のみで発見性が落ちる。一定数超えで index 経由の経路整備が要る。
