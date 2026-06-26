@@ -175,7 +175,8 @@ junction_one_dir() {
   local src_win dst_win
   src_win=$(cygpath -w "$REPO_ROOT/$src_dir" 2>/dev/null || echo "$REPO_ROOT/$src_dir")
   dst_win=$(cygpath -w "$dst" 2>/dev/null || echo "$dst")
-  if ! cmd //c mklink //J "$dst_win" "$src_win" >/dev/null 2>&1; then
+  # </dev/null で stdin を遮断 (cmd //c が outer read loop の stdin を吸い込んで allowlist の残り行を消費するのを防ぐ)
+  if ! cmd //c mklink //J "$dst_win" "$src_win" </dev/null >/dev/null 2>&1; then
     echo "WARN: junction failed for $src_dir, falling back to copy" >&2
     copy_one_dir "$src_dir"
     return 0
