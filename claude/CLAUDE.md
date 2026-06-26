@@ -26,7 +26,7 @@
 
 - PowerShellコーディング → powershell.md
 - Bash/shスクリプト(Git Bash・grep/locale・パス変換罠) → bash.md
-- Git操作のWindows罠(symlink/実行ビット/再初期化) → git.md
+- Git操作の罠(symlink/実行ビット/再初期化/rebase) → git.md
 - Cloudflare作業 → cloudflare.md
 - モバイル開発 → mobile-dev.md
 - Scoopバケット（yscoopy）リリース手順 → yscoopy.md
