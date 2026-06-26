@@ -135,16 +135,35 @@ cleanup_worktree() {
   if git -C "$REPO_ROOT" worktree remove "$WT_DIR" --force 2>/dev/null; then
     return 0
   fi
-  echo "[merge-back] worktree remove failed (likely Windows MAX_PATH); retrying with long-path prefix" >&2
+  echo "[merge-back] worktree remove failed (likely Windows MAX_PATH or open file handle); retrying with long-path prefix" >&2
   # 二重防衛: リトライ削除 (Remove-Item -Recurse / rm -rf) が junction を辿らない
   # よう、再帰削除の直前にも junction を確実に剥がす。
   unjunction_worktree "$WT_DIR"
   local wt_win
   wt_win=$(cygpath -w "$WT_DIR" 2>/dev/null || echo "$WT_DIR")
+  # Windows では node_modules 長パス + 直前操作のファイルハンドル開放遅延で初回 Remove-Item が
+  # しばしば失敗する。短い backoff で 3 回まで再試行し、それでも残るなら git 側 prune だけ
+  # 行って物理 dir 残置を許容する (git 管理上は clean、次回 gc/手動削除で対処)。
+  local removed=0
   if command -v powershell.exe >/dev/null 2>&1; then
-    powershell.exe -NoProfile -Command "Remove-Item -LiteralPath '\\\\?\\$wt_win' -Recurse -Force -ErrorAction Stop"
+    for attempt in 1 2 3; do
+      if powershell.exe -NoProfile -Command "Remove-Item -LiteralPath '\\\\?\\$wt_win' -Recurse -Force -ErrorAction Stop" >/dev/null 2>&1; then
+        removed=1
+        break
+      fi
+      [[ $attempt -lt 3 ]] && sleep 2
+    done
   else
-    rm -rf "$WT_DIR"
+    for attempt in 1 2 3; do
+      if rm -rf "$WT_DIR" 2>/dev/null && [[ ! -e "$WT_DIR" ]]; then
+        removed=1
+        break
+      fi
+      [[ $attempt -lt 3 ]] && sleep 2
+    done
+  fi
+  if [[ "$removed" -ne 1 ]]; then
+    echo "[merge-back] WARN: worktree dir physical remove failed after 3 attempts (git side will be pruned, dir remains for manual cleanup)" >&2
   fi
   git -C "$REPO_ROOT" worktree prune
 }
