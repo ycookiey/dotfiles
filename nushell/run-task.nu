@@ -84,6 +84,20 @@ def detect-pm [] {
     'pnpm'
 }
 
+# Windows では `^pnpm` 等が PATH 解決で .cmd shim を選ぶことがあり、
+# .cmd は cmd.exe 上で動くため Ctrl+C で「Terminate batch job (Y/N)?」が
+# nushell の入力を奪う。bash 経由で起動すると node 系の sh/bash shim が
+# 解決されて cmd.exe を踏まない。bun / just は native .exe shim なので不要。
+# 既知の制約: bash exec 境界で MSYS のパス変換が走るため、`--filter ./pkg`
+# のようなパス風引数は書き換わる可能性がある。
+def pm-exec [pm: string, args: list<string>] {
+    if $nu.os-info.name == 'windows' and ($pm in ['pnpm' 'npm' 'yarn']) {
+        ^bash -c '"$@"' -- $pm ...$args
+    } else {
+        run-external $pm ...$args
+    }
+}
+
 def run-task [] {
     mut entries = []
 
@@ -147,13 +161,13 @@ def run-task [] {
     let pm = (detect-pm)
     print $"=> ($choice.display)  [($pm)]"
     if $choice.scope == "root" {
-        ^$pm run $choice.script
+        pm-exec $pm [run $choice.script]
     } else {
         # workspace filter: pnpm/bun は --filter、npm は -w、yarn は workspace
         match $pm {
-            "npm" => { ^npm -w $choice.scope run $choice.script }
-            "yarn" => { ^yarn workspace $choice.scope run $choice.script }
-            _ => { ^$pm --filter $choice.scope run $choice.script }
+            "npm" => { pm-exec $pm [-w $choice.scope run $choice.script] }
+            "yarn" => { pm-exec $pm [workspace $choice.scope run $choice.script] }
+            _ => { pm-exec $pm [--filter $choice.scope run $choice.script] }
         }
     }
 }
