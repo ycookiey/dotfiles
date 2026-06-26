@@ -38,6 +38,10 @@
 - ASCII図の整列 → ascii-diagram.md
 - upstream 投稿 → oss-contribute.md
 
+# 補助ドキュメント
+
+症状・トピックに当たった時に grep → docs/INDEX.md
+
 # 自己改善
 
 以下のシグナルを検知したら、学びの永続化を skill `meta-update` で提案する。
