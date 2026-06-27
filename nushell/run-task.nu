@@ -84,15 +84,31 @@ def detect-pm [] {
     'pnpm'
 }
 
+# bash 単引用符 escape: 中の ' を '\'' に置換し、全体を ' で囲む。
+# bash に単一 string を `-c` で渡すための前処理 (pm-exec 参照)。
+def _bash_squote [s: string] {
+    "'" + ($s | str replace --all "'" "'\\''") + "'"
+}
+
 # Windows では `^pnpm` 等が PATH 解決で .cmd shim を選ぶことがあり、
 # .cmd は cmd.exe 上で動くため Ctrl+C で「Terminate batch job (Y/N)?」が
 # nushell の入力を奪う。bash 経由で起動すると node 系の sh/bash shim が
 # 解決されて cmd.exe を踏まない。bun / just は native .exe shim なので不要。
 # 既知の制約: bash exec 境界で MSYS のパス変換が走るため、`--filter ./pkg`
 # のようなパス風引数は書き換わる可能性がある。
+#
+# 過去に `^bash -c '"$@"' -- $pm ...$args` を使っていたが、nushell 0.110 の
+# Windows external argv quoting が `'"$@"'` 内の `"` を CreateProcess 経由で
+# 適切に escape しきれず、bash 側 `-c` script で `unexpected EOF` になるケース
+# があった (interactive nushell + WezTerm 経路で発火)。 bash に渡す引数から
+# `"` を排除するため、nushell 側で各 token を bash 単引用符 escape し、
+# `-c` には escape 済の単一 string を渡す形に変更。
+# 将来 nushell upgrade 時、上記 quoting bug が修正されていれば従来の
+# `'"$@"'` 経路に戻すと若干 fast (escape ロジック不要) になる。
 def pm-exec [pm: string, args: list<string>] {
     if $nu.os-info.name == 'windows' and ($pm in ['pnpm' 'npm' 'yarn']) {
-        ^bash -c '"$@"' -- $pm ...$args
+        let cmd = ([$pm, ...$args] | each { |a| _bash_squote $a } | str join ' ')
+        ^bash -c $cmd
     } else {
         run-external $pm ...$args
     }
