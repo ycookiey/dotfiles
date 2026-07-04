@@ -33,6 +33,9 @@ vim.opt.title = true
 vim.opt.number = true
 vim.opt.relativenumber = true
 
+-- 折り返し無効
+vim.opt.wrap = false
+
 -- インデント（スペース2つ）
 vim.opt.expandtab = true
 vim.opt.tabstop = 2
