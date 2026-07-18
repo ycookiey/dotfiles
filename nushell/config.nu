@@ -1,4 +1,5 @@
 # config.nu — nushell 設定
+# user コマンド追加は cli/definitions.toml (dotcli generate)。ここは nushell 固有(env/hooks/直操作 def)。
 
 $env.config.show_banner = "short"
 
