@@ -47,6 +47,7 @@ toggle-theme() { pwsh -NoProfile -File 'C:/Main/Project/dotfiles/bin/toggle-them
 audio() { pwsh -NoProfile -File 'C:/Main/Project/dotfiles/bin/switch-audio.ps1' "$@"; }
 ycusage() { pwsh -NoProfile -File 'C:/Main/Project/dotfiles/bin/ycusage.ps1' "$@"; }
 claude-reauth() { pwsh -NoProfile -File 'C:/Main/Project/dotfiles/bin/claude-reauth.ps1' "$@"; }
+bwup() { pwsh -NoProfile -File 'C:/Main/Project/dotfiles/bin/bwup.ps1' "$@"; }
 
 # --- Launchers ---
 kindle() { explorer.exe 'kindle:'; }
