@@ -1,3 +1,5 @@
+# user コマンド追加は cli/definitions.toml (dotcli generate)。ここは install/setup 用内部 alias。
+
 $alias:tp = 'Test-Path'
 $alias:sc = 'Set-Content'
 function wh { Write-Host @args }
