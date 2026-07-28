@@ -26,6 +26,8 @@ struct LineMeta {
     #[serde(default)]
     custom_title: Option<String>,
     #[serde(default)]
+    ai_title: Option<String>,
+    #[serde(default)]
     message: Option<LineMessage>,
 }
 
@@ -95,6 +97,8 @@ pub(crate) struct SessionInfo {
     pub(crate) cwd: String,
     pub(crate) timestamp: String,
     pub(crate) title: Option<String>,
+    #[serde(default)]
+    pub(crate) ai_title: Option<String>,
     pub(crate) latest_message: String,
     pub(crate) project: String,
     pub(crate) path: PathBuf,
@@ -180,9 +184,6 @@ fn find_session_cwd(session_id: &str) -> Option<String> {
 }
 
 pub fn select(query: &[String], dangerously_skip_permissions: bool) -> ShellAction {
-    use crate::commands::titles;
-    use std::collections::HashMap;
-
     let scan = scan_sessions();
     let sessions = scan.sessions;
     if sessions.is_empty() {
@@ -199,14 +200,6 @@ pub fn select(query: &[String], dangerously_skip_permissions: bool) -> ShellActi
     let cwd_now = env::current_dir()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
-
-    // Load cached AI titles
-    let cached_titles: HashMap<String, String> = sessions
-        .iter()
-        .filter_map(|s| {
-            titles::read_cached_title(&s.session_id).map(|t| (s.session_id.clone(), t))
-        })
-        .collect();
 
     // Partition: pwd-match (up to N) first, then the rest
     let mut pwd_group: Vec<(usize, &SessionInfo)> = Vec::new();
@@ -228,16 +221,8 @@ pub fn select(query: &[String], dangerously_skip_permissions: bool) -> ShellActi
 
     let mut lines: Vec<String> = Vec::with_capacity(sessions.len());
     for &(i, s) in &pwd_group {
-        lines.push(format_line(
-            i,
-            s,
-            proj_width,
-            GREEN,
-            cached_titles.get(&s.session_id).map(|t| t.as_str()),
-            false,
-        ));
+        lines.push(format_line(i, s, proj_width, GREEN));
     }
-    // 現在時刻（epoch秒）
     let now_epoch = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -251,31 +236,11 @@ pub fn select(query: &[String], dangerously_skip_permissions: bool) -> ShellActi
         );
         lines.push(sep);
     }
-    push_rest_with_groups(&mut lines, &rest, proj_width, &cached_titles, now_epoch, None);
-
-    // Collect uncached sessions for background generation (reuse path from SessionInfo)
-    let needs_gen: Vec<(PathBuf, String)> = sessions
-        .iter()
-        .filter(|s| s.title.is_none() && !cached_titles.contains_key(&s.session_id))
-        .map(|s| (s.path.clone(), s.session_id.clone()))
-        .collect();
-
-    // Allocate fzf listen port and tmp file for reload
-    let fzf_port = titles::allocate_port();
-    let tmp_path = env::temp_dir().join(format!("dotcli-fzf-{}.tmp", std::process::id()));
+    push_rest_with_groups(&mut lines, &rest, proj_width, now_epoch);
 
     let q = query.join(" ");
     let mut cmd = Command::new("fzf");
-    cmd.args([
-        "-d",
-        "\t",
-        "--with-nth",
-        "2..",
-        "--no-sort",
-        "--ansi",
-        "--listen-unsafe",
-        &fzf_port.to_string(),
-    ]);
+    cmd.args(["-d", "\t", "--with-nth", "2..", "--no-sort", "--ansi"]);
     if scan.no_last_ts > 0 {
         let header = format!("⚠ {} sessions skipped (no last timestamp)", scan.no_last_ts);
         cmd.args(["--header", &header]);
@@ -303,49 +268,9 @@ pub fn select(query: &[String], dangerously_skip_permissions: bool) -> ShellActi
         let _ = stdin.write_all(lines.join("\n").as_bytes());
     }
 
-    // Prevent child processes (e.g. MistralServer) from inheriting the stdout
-    // pipe handle. Without this, PowerShell's pipeline never sees EOF because
-    // the inherited handle keeps the pipe open after dotcli exits.
-    #[cfg(windows)]
-    unsafe {
-        use std::os::windows::io::AsRawHandle;
-        unsafe extern "system" {
-            fn SetHandleInformation(hObject: isize, dwMask: u32, dwFlags: u32) -> i32;
-        }
-        let handle = std::io::stdout().as_raw_handle() as isize;
-        SetHandleInformation(handle, 1 /* HANDLE_FLAG_INHERIT */, 0);
-    }
-
-    // Spawn background title generation thread
-    let bg_tmp = tmp_path.clone();
-    let bg_sessions: Vec<SessionInfo> = sessions
-        .iter()
-        .map(|s| SessionInfo {
-            session_id: s.session_id.clone(),
-            cwd: s.cwd.clone(),
-            timestamp: s.timestamp.clone(),
-            title: s.title.clone(),
-            latest_message: s.latest_message.clone(),
-            project: s.project.clone(),
-            path: s.path.clone(),
-        })
-        .collect();
-    let bg_cwd = cwd_now.clone();
-    std::thread::spawn(move || {
-        titles::background_generate(titles::BgGenParams {
-            needs_gen,
-            sessions: bg_sessions,
-            fzf_port,
-            tmp_path: bg_tmp,
-            proj_width,
-            cwd_now: bg_cwd,
-        });
-    });
-
     let output = match fzf.wait_with_output() {
         Ok(o) => o,
         Err(e) => {
-            let _ = fs::remove_file(&tmp_path);
             return ShellAction {
                 messages: vec![Message {
                     text: format!("fzf failed: {e}"),
@@ -356,8 +281,6 @@ pub fn select(query: &[String], dangerously_skip_permissions: bool) -> ShellActi
             };
         }
     };
-
-    let _ = fs::remove_file(&tmp_path);
 
     if !output.status.success() {
         return ShellAction {
@@ -406,7 +329,7 @@ pub fn select(query: &[String], dangerously_skip_permissions: bool) -> ShellActi
 // セッションは普段 1〜2 件。なので (path, mtime) を照合して、mtime 未変更分は
 // cache から SessionInfo を流用、変更/新規分のみ再 parse する。
 
-const SCAN_CACHE_VERSION: u32 = 1;
+const SCAN_CACHE_VERSION: u32 = 2;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct ScanCache {
@@ -611,15 +534,22 @@ fn parse_session(path: &Path) -> Result<SessionInfo, bool> {
 
     let mut session_id: Option<String> = None;
     let mut cwd: Option<String> = None;
+    let mut ai_title: Option<String> = None;
 
-    for line in head_lines.iter().take(10) {
-        let meta = parse_line(line).ok_or(false)?;
+    for line in head_lines.iter() {
+        let Some(meta) = parse_line(line) else { continue };
         if session_id.is_none() {
             if let Some(sid) = &meta.session_id {
                 session_id = Some(sid.clone());
             }
         }
+        if ai_title.is_none() && meta.typ.as_deref() == Some("ai-title") {
+            ai_title = meta.ai_title.clone();
+        }
         if meta.typ.as_deref() != Some("user") {
+            if cwd.is_some() && session_id.is_some() && ai_title.is_some() {
+                break;
+            }
             continue;
         }
         if meta.is_meta == Some(true) {
@@ -638,7 +568,7 @@ fn parse_session(path: &Path) -> Result<SessionInfo, bool> {
                 session_id = Some(sid);
             }
         }
-        if cwd.is_some() && session_id.is_some() {
+        if cwd.is_some() && session_id.is_some() && ai_title.is_some() {
             break;
         }
     }
@@ -670,6 +600,9 @@ fn parse_session(path: &Path) -> Result<SessionInfo, bool> {
             && meta.typ.as_deref() == Some("custom-title")
         {
             title = meta.custom_title;
+        }
+        if ai_title.is_none() && meta.typ.as_deref() == Some("ai-title") {
+            ai_title = meta.ai_title;
         }
         if accumulated_len < MIN_MSG_LEN
             && meta.typ.as_deref() == Some("user")
@@ -714,6 +647,7 @@ fn parse_session(path: &Path) -> Result<SessionInfo, bool> {
         cwd,
         timestamp,
         title,
+        ai_title,
         latest_message,
         project,
         path: path.to_path_buf(),
@@ -725,10 +659,8 @@ pub(crate) fn format_line(
     s: &SessionInfo,
     proj_width: usize,
     color: &str,
-    ai_title: Option<&str>,
-    generating: bool,
 ) -> String {
-    let title = s.title.as_deref().or(ai_title);
+    let title = s.title.as_deref().or(s.ai_title.as_deref());
     let msg = s.latest_message.replace('\t', " ").replace('\n', " ");
     let ts = format_timestamp(&s.timestamp);
 
@@ -738,9 +670,6 @@ pub(crate) fn format_line(
         let t = truncate_str(&t, TITLE_WIDTH);
         let pad = TITLE_WIDTH.saturating_sub(t.chars().count());
         format!("{t}{:pad$}  {DIM}{msg}{RESET}", "")
-    } else if generating {
-        let pad = TITLE_WIDTH.saturating_sub(1);
-        format!("…{:pad$}  {DIM}{msg}{RESET}", "")
     } else {
         msg
     };
@@ -826,35 +755,6 @@ pub(crate) fn strip_json_blobs(s: &str) -> String {
         }
     }
     parts.join("\n")
-}
-
-pub(crate) fn extract_user_content(msg: &Value) -> Option<String> {
-    let content = msg.get("content")?;
-    let raw = if let Some(s) = content.as_str() {
-        s.to_string()
-    } else if let Some(arr) = content.as_array() {
-        let mut out = String::new();
-        for item in arr {
-            if let Some(t) = item.get("text").and_then(|t| t.as_str()) {
-                if !out.is_empty() {
-                    out.push(' ');
-                }
-                out.push_str(t);
-            }
-        }
-        if out.is_empty() {
-            return None;
-        }
-        out
-    } else {
-        return None;
-    };
-    let cleaned = strip_json_blobs(&raw);
-    if cleaned.trim().is_empty() {
-        None
-    } else {
-        Some(cleaned)
-    }
 }
 
 /// "2026-04-03T11:05:19.155Z" → " 4/ 3 20:05" (UTC+9)
@@ -1039,9 +939,7 @@ pub(crate) fn push_rest_with_groups(
     lines: &mut Vec<String>,
     rest: &[(usize, &SessionInfo)],
     proj_width: usize,
-    cached_titles: &std::collections::HashMap<String, String>,
     now_epoch: i64,
-    generating_sid: Option<&str>,
 ) {
     let mut current_group = "";
     for &(i, s) in rest {
@@ -1052,17 +950,7 @@ pub(crate) fn push_rest_with_groups(
             }
             current_group = group;
         }
-        let generating = generating_sid == Some(s.session_id.as_str())
-            && s.title.is_none()
-            && !cached_titles.contains_key(&s.session_id);
-        lines.push(format_line(
-            i,
-            s,
-            proj_width,
-            "",
-            cached_titles.get(&s.session_id).map(|t| t.as_str()),
-            generating,
-        ));
+        lines.push(format_line(i, s, proj_width, ""));
     }
     if !current_group.is_empty() {
         lines.push(format!("{}\t{}{}── {} ──{}", usize::MAX, GREEN, DIM, current_group, RESET));
@@ -1095,137 +983,3 @@ pub(crate) fn truncate_message(s: String, max: usize) -> String {
     out
 }
 
-// ── Title input extraction ──
-
-#[allow(dead_code)]
-pub(crate) struct TitleInput {
-    pub session_id: String,
-    pub first_message: String,
-    pub first_assistant: String,
-    pub latest_message: String,
-    pub latest_assistant: String,
-}
-
-pub(crate) fn extract_title_input(path: &Path) -> Option<TitleInput> {
-    let data = fs::read_to_string(path).ok()?;
-    let lines: Vec<&str> = data.lines().collect();
-
-    let mut session_id: Option<String> = None;
-    let mut first_message: Option<String> = None;
-    let mut first_assistant: Option<String> = None;
-
-    // Forward pass: first 50 lines
-    for line in lines.iter().take(50) {
-        let Ok(v) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
-        if session_id.is_none() {
-            if let Some(sid) = v.get("sessionId").and_then(|x| x.as_str()) {
-                session_id = Some(sid.to_string());
-            }
-        }
-        let typ = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
-        if first_message.is_none() && typ == "user" {
-            if v.get("isMeta").and_then(|m| m.as_bool()) == Some(true) {
-                continue;
-            }
-            if let Some(msg) = v.get("message") {
-                if msg.get("role").and_then(|r| r.as_str()) == Some("user") {
-                    if let Some(text) = extract_user_content(msg) {
-                        if !is_noise_user_content(&text) {
-                            let cleaned = strip_xml_tags(&text);
-                            if !cleaned.is_empty() {
-                                first_message = Some(truncate_message(cleaned, 200));
-                            }
-                        }
-                    }
-                }
-            }
-        } else if first_message.is_some() && first_assistant.is_none() && typ == "assistant" {
-            if let Some(text) = extract_assistant_text(&v) {
-                first_assistant = Some(text);
-            }
-        }
-        if first_assistant.is_some() {
-            break;
-        }
-    }
-
-    let session_id = session_id?;
-    let first_message = first_message?;
-    let first_assistant = first_assistant.unwrap_or_else(|| "(なし)".into());
-
-    // Reverse pass: latest messages
-    let mut latest_message: Option<String> = None;
-    let mut latest_assistant: Option<String> = None;
-
-    for line in lines.iter().rev() {
-        let Ok(v) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
-        let typ = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
-        if latest_message.is_none() && typ == "user" {
-            if v.get("isMeta").and_then(|m| m.as_bool()) == Some(true) {
-                continue;
-            }
-            if let Some(msg) = v.get("message") {
-                if msg.get("role").and_then(|r| r.as_str()) == Some("user") {
-                    if let Some(text) = extract_user_content(msg) {
-                        if !is_noise_user_content(&text) {
-                            let cleaned = strip_xml_tags(&text);
-                            if !cleaned.is_empty() {
-                                latest_message = Some(truncate_message(cleaned, 200));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if latest_assistant.is_none() && typ == "assistant" {
-            if let Some(text) = extract_assistant_text(&v) {
-                latest_assistant = Some(text);
-            }
-        }
-        if latest_message.is_some() && latest_assistant.is_some() {
-            break;
-        }
-    }
-
-    Some(TitleInput {
-        session_id,
-        first_message,
-        first_assistant,
-        latest_message: latest_message.unwrap_or_else(|| "(なし)".into()),
-        latest_assistant: latest_assistant.unwrap_or_else(|| "(なし)".into()),
-    })
-}
-
-fn extract_assistant_text(v: &Value) -> Option<String> {
-    let content = v.get("message")?.get("content")?;
-    let raw = if let Some(s) = content.as_str() {
-        s.to_string()
-    } else if let Some(arr) = content.as_array() {
-        let mut out = String::new();
-        for item in arr {
-            if item.get("type").and_then(|t| t.as_str()) == Some("text") {
-                if let Some(t) = item.get("text").and_then(|t| t.as_str()) {
-                    if !out.is_empty() {
-                        out.push(' ');
-                    }
-                    out.push_str(t);
-                }
-            }
-        }
-        if out.is_empty() {
-            return None;
-        }
-        out
-    } else {
-        return None;
-    };
-    let cleaned = strip_xml_tags(&raw);
-    if cleaned.is_empty() {
-        return None;
-    }
-    Some(truncate_message(cleaned, 200))
-}

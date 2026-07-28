@@ -92,11 +92,6 @@ enum Commands {
         #[arg(default_value = ".")]
         path: String,
     },
-    /// AI title generation
-    Titles {
-        #[command(subcommand)]
-        action: TitlesAction,
-    },
     /// PostToolUse hook: log tool calls for token audit
     TokenAuditHook,
     /// Format token-audit JSON output with bar charts
@@ -175,12 +170,6 @@ enum Commands {
 }
 
 #[derive(Subcommand)]
-enum TitlesAction {
-    /// Generate titles for all uncached sessions
-    Build,
-}
-
-#[derive(Subcommand)]
 enum CasAction {
     /// Delete old journal entries
     Gc {
@@ -250,9 +239,6 @@ fn main() {
         }
         Commands::Frun => commands::frun::run(),
         Commands::Locked { path } => commands::locked::run(&path),
-        Commands::Titles { action } => match action {
-            TitlesAction::Build => commands::titles::build(),
-        },
         Commands::TokenAuditHook => commands::token_audit_hook::run(),
         Commands::TokenAuditFormat => commands::token_audit_format::run(),
         Commands::TokenAudit { args } => commands::token_audit::run(&args),

@@ -110,7 +110,6 @@ pub fn run(args: &[String]) {
         action.messages.extend(messages);
         let code = action.exit_code;
         action.print();
-        // Background title generation thread may still be running; force exit
         std::process::exit(code);
     }
 
