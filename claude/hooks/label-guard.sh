@@ -5,6 +5,12 @@
 
 set -uo pipefail
 
+# Force UTF-8 locale so grep treats multi-byte characters as characters, not
+# bytes. Under LC_ALL=C, the character class [αβγδεζ] degrades to a set of
+# raw bytes (CE B1..B6) that match countless Japanese characters, causing
+# massive false positives on any Japanese response.
+export LC_ALL=C.UTF-8
+
 input=$(cat)
 text=$(printf '%s' "$input" | jq -r '.last_assistant_message // empty')
 
@@ -45,6 +51,12 @@ if [ ${#violations[@]} -eq 0 ]; then
 fi
 
 joined=$(IFS=", "; printf '%s' "${violations[*]}")
+
+# Debug: dump the raw hook input on every block so false positives can be
+# inspected after the fact. Overwrites the previous block's dump.
+log_dir="${HOME}/.claude/logs"
+mkdir -p "$log_dir" 2>/dev/null
+printf '%s' "$input" > "$log_dir/label-guard-last-block.json"
 
 jq -n --arg reason "Forbidden label style detected in your previous response: ${joined}. Rewrite that response now, replacing the offending labels with A, B, C, ... . Deliver only the corrected response." '{
   decision: "block",

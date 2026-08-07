@@ -15,6 +15,12 @@ case $'\n'"$(locale -a 2>/dev/null)"$'\n' in
 esac
 ```
 
+## multi-byte 文字クラスの byte 化 (silent false positive)
+
+- Cロケールでは `[αβγδεζ]` 等の multi-byte char class が UTF-8 バイト列 (CE B1..B6) から成る byte class に degrade → 日本語テキストのバイトに誤マッチ
+- SIGABRT ではなく silent な誤検知。hook などバックエンドで走る script では発火するまで気付かない
+- 回避は上と同じく冒頭で UTF-8 locale 強制
+
 ## grep 終了コードを誤解しない
 
 - exit: `0`=マッチ / `1`=非マッチ / **`≥2`=エラー**(クラッシュは 128+signal。SIGABRT=134)
