@@ -28,5 +28,17 @@
   "skipDangerousModePermissionPrompt": true,
   "showClearContextOnPlanAccept": true,
   "wheelScrollAccelerationEnabled": false,
-  "hooks": {}
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/label-guard.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
 }
