@@ -36,3 +36,10 @@ js
 
 - Direct Uploads で作成したプロジェクトは後から GitHub 連携に変更不可。最初からダッシュボードで GitHub 連携で作成する必要がある。
 - wrangler.toml を Pages で認識させるには pages_build_output_dir が必須。
+
+### Vite プラグイン(@cloudflare/vite-plugin): dev の transformIndexHtml に絶対パス
+
+- 症状: 自作 Vite プラグインの `transformIndexHtml` でページ判定 → dev のみ `Error: Unexpected error. Failed to load "/index.html"`(真因は cause 側でログに出ない)
+- 原因: dev は HTML 返却時 `viteDevServer.transformIndexHtml(<HTML の絶対パス>, html)` を呼ぶ → `ctx.filename` が root 配下前提と不一致。`path.relative(root, ctx.filename)` で判定不可
+- 対処: `ctx.filename` を `/` 区切りに正規化 → ページ HTML の相対パスと末尾一致で判定。build 時は影響なし
+- 確認版: @cloudflare/vite-plugin 1.60.2 / Vite 8.3
