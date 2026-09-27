@@ -8,3 +8,4 @@ CLAUDE.md「参照ドキュメント」節の主要 docs と異なり起動前�
 - ローカル port 予約表 → ports.md
 - Scoop + PortableApps wrapper 起動 → scoop-portable.md
 - Claude Code Task 機能 → task.md
+- Claude in Chrome の操作が効かない(送信無反応・blur 不発は hidden タブ、古い ref、非 ASCII 入力) → claude-in-chrome-hidden-tab.md
