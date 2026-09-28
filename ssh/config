@@ -1,7 +1,16 @@
 # SSH config — シンボリックリンクで $HOME\.ssh\config にリンクされる
 
 Host github.com
-    HostName github.com
+    # ISP / router / firewall が outbound TCP 22 を落とす環境で SSH が
+    # 通らないため、GitHub 公式の SSH-over-HTTPS エンドポイントに寄せる
+    # (ssh.github.com:443 — HTTPS と同じ port で常時開いている)。
+    # 認証は通常の SSH と同じ、既存の id_ed25519 がそのまま使える。
+    HostName ssh.github.com
+    Port 443
+    # setup.ps1 で `github.com` 名義で known_hosts に事前登録している
+    # GitHub 公式 fingerprint を、`ssh.github.com` への接続でも使い回す。
+    # HostName を上書きしても host key の検証は github.com として行う。
+    HostKeyAlias github.com
     User git
     IdentityFile ~/.ssh/id_ed25519
     IdentitiesOnly yes
