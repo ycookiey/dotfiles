@@ -43,3 +43,10 @@ js
 - 原因: dev は HTML 返却時 `viteDevServer.transformIndexHtml(<HTML の絶対パス>, html)` を呼ぶ → `ctx.filename` が root 配下前提と不一致。`path.relative(root, ctx.filename)` で判定不可
 - 対処: `ctx.filename` を `/` 区切りに正規化 → ページ HTML の相対パスと末尾一致で判定。build 時は影響なし
 - 確認版: @cloudflare/vite-plugin 1.60.2 / Vite 8.3
+
+### D1: SQLite より SQL の上限が低い
+
+- GLOB / LIKE: 型が長いと `LIKE or GLOB pattern too complex` で失敗(`[0-9]` を 20 個並べた日時の型で発生)。複合 SELECT: 項が多いと `too many terms in compound SELECT`(`UNION ALL` 10 項で発生)
+- 罠: CHECK 内の GLOB は CREATE TABLE では通り、行を入れた時点で初めて失敗 → テーブルの migration だけ流しても気づけない。行を入れる migration かテストまで流して確かめる
+- 日時の形式の CHECK は GLOB を使わず整形し直して比較: `coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', col) = col, 0) OR coalesce(strftime('%Y-%m-%dT%H:%M:%fZ', col) = col, 0)`。`T` や `Z` のない値、時差付き、2 月 30 日も断る(`coalesce` がないと NULL で CHECK が素通り)
+- 確認環境: wrangler 4 のローカル D1(workerd)

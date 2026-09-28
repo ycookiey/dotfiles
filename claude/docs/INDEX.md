@@ -9,3 +9,5 @@ CLAUDE.md「参照ドキュメント」節の主要 docs と異なり起動前�
 - Scoop + PortableApps wrapper 起動 → scoop-portable.md
 - Claude Code Task 機能 → task.md
 - Claude in Chrome の操作が効かない(送信無反応・blur 不発は hidden タブ、古い ref、非 ASCII 入力) → claude-in-chrome-hidden-tab.md
+- drizzle-kit の SQLite / D1 migration(テーブル作り直しで列欠落・子行消失) → drizzle.md
+- pnpm(Windows で `link:` の区切りがバックスラッシュになる) → pnpm.md

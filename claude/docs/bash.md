@@ -41,3 +41,8 @@ grep -qiF -- "$pat" "$f"; case $? in 0) 一致 ;; 1) 不一致 ;; *) エラー�
 
 - 現象: `pnpm dev` 等を run_in_background で起動 → TaskStop 後も node 子プロセスが port を掴み続け、次回起動が別 port にずれる
 - 停止後の確認: `Get-NetTCPConnection -LocalPort <port> -State Listen` → OwningProcess の CommandLine を `Get-CimInstance Win32_Process -Filter "ProcessId=<pid>"` で確認 → 自分が起動したものだけ `Stop-Process -Id <pid> -Force`
+
+## ツール入力の `\uXXXX` は文字に復号される
+
+- 症状: Bash の heredoc や Edit の文字列に書いた `\u0020` が、送信時に実際の文字(空白など)へ変わる。正規表現の `\uXXXX` エスケープをそのまま書けない(Edit は「old と new が同一」エラー、python は想定外の文字で置換)
+- 対処: python で `chr(92) + "u0020"` のように組み立てて書き、`od -c` で確認する
