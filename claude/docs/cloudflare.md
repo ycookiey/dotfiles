@@ -68,6 +68,13 @@ js
 - `namespace_id` は account 内で一意の整数で、counter を共有する → env(preview/prod)ごとに別 ID を `env.<name>` にも書き、build 出力の wrangler.json で確認
 - 確認版: wrangler 4.142
 
+### 秘密の値の登録(`wrangler secret put`)
+
+- 値を会話に出さない: stdin に流す(`… | wrangler secret put <名前>`)。wrangler は末尾の空白・改行を削る(`trimEnd`、4.142 で確認)
+- クリップボードから流すコマンドを user にコピーさせない: コマンドのコピーでクリップボードが上書きされ、コマンド文字列が値として登録された(実例: token が 401)。手順: user が値をコピー → agent が形(長さ・空白・ASCII)だけを出して確認 → agent が `powershell -NoProfile -Command "(Get-Clipboard -Raw).Trim()" | …` で流す。または user 自身の terminal で対話入力
+- agent が作れる値(署名鍵等)は生成して直接流す: `node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64url'))" | wrangler secret put <名前>`
+- 複数 env の config では `--env=""`(top-level)か `--env <名前>` を明示(なしだと警告)
+
 ## cf CLI(2026-09-28 open beta、npm `cf`)
 
 - 確認版 1.0.0-beta.5。`npm i -g cf`(Node 22+)。wrangler は beta 終了後 18 か月保守
