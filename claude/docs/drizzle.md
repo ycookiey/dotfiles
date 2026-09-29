@@ -8,3 +8,9 @@
 - 対策: 生成 SQL を必ず読む。新規列は SELECT 側で値を与える、FK は全テーブル作り直し後まで OFF、手修正は先頭コメントに明記
 - 検証: 旧 migration まで適用 → 行を入れる → 新 migration 適用 → 行が残ることをテスト
 - D1: FK を OFF にできない → データ入り D1 で作り直し migration を流す前に local D1 で行が残るか確認(回避手順は未確立)
+
+## D1 の batch に `db.run(sql)` を入れられない
+
+- 症状: ``db.batch([db.run(sql`…`), …])`` → `TypeError: Cannot read properties of undefined (reading 'bind')`(drizzle-orm 0.45 の d1 session)
+- 対処: 条件付きの挿入は ``db.insert(table).select(sql`SELECT … WHERE EXISTS (…)`)`` で書く。挿入の列はテーブル定義順(列の並びに SELECT をそろえる)
+- 応用: 版の照合を batch 1 回で行うには、一意 ID の行を「条件が合うときだけ」先に挿入し、後続の update を `exists(その行)` で絞る。あとで行の有無を読めば、適用されたか判定できる
