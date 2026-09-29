@@ -1,4 +1,4 @@
-# Claude in Chrome: hidden タブ・stale ref・blur 不発・非 ASCII 入力の落とし穴
+# Claude in Chrome: hidden タブ・stale ref・blur 不発・非 ASCII 入力・遅延読み込み停止・大量データ回収の落とし穴
 
 ブラウザ自動化で送信ボタンが反応しないとき、原因は 2 つある。タブが hidden であるか、read_page で取った ref が古いか。前者はユーザーにタブを 1 度切り替えてもらうしかなく、後者は貼り付け後に ref を取り直せば直る。
 
@@ -67,6 +67,25 @@ computer left_click ref_30 → "Clicked on element ref_30" と返るが送信さ
 Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v)
 el.dispatchEvent(new Event('input', { bubbles: true }))
 ```
+
+## 症状 5: hidden タブでは遅延読み込み・タイマーが止まる
+
+- スクロールで古い履歴を読み込む画面(チャット等)は、hidden タブではスクロールしても読み込まれない(IntersectionObserver / rAF 系が動かない)
+- `setTimeout` は間引かれる。状態だけ変わり DOM が変わらない更新では MutationObserver が発火しない → 待ちがタイムアウトまで延びる
+- 待機: `MessageChannel` の 1 タスクごとに条件をポーリング(postMessage は間引かれない)
+
+```js
+const tick = () => new Promise((r) => { const c = new MessageChannel(); c.port1.onmessage = () => r(); c.port2.postMessage(null) })
+```
+
+- 移動: SPA は `history.pushState({}, '', url)` + `dispatchEvent(new PopStateEvent('popstate', { state: {} }))` で再読み込みなし。URL で位置を指定できる画面(例: Discord のメッセージ ID)は、スクロールの代わりに URL 移動で読み込ませる
+- 構造化データ: 要素の `__reactFiber…` キーの `memoizedProps` を `.return` で親へたどると、画面が持つデータ(本文・日時・添付等)が取れる。実例: life の skill `discord-channel-log`
+
+## 大量データの回収
+
+- `javascript_tool` の戻り値は約 1,000〜1,500 字で `[TRUNCATED]`
+- 大きいデータ: ページに `<article>`(表示状態)を足して文字列を入れ → `get_page_text` で読む(12K 字超でも切れなかった)。読んだら要素を消す
+- `get_page_text` は空白を詰める(全角スペース・NBSP も半角 1 つ、連続空白も 1 つ) → 空白は目印(例 `⟦u3000⟧`)に置き換えて渡し、受け側で戻す。受け取った文字列をツール入力に書き写すとバックスラッシュのエスケープが化ける(bash.md)ので、バックスラッシュも目印にする
 
 ## 検証手順
 

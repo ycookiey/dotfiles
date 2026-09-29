@@ -46,3 +46,9 @@ grep -qiF -- "$pat" "$f"; case $? in 0) 一致 ;; 1) 不一致 ;; *) エラー�
 
 - 症状: Bash の heredoc や Edit の文字列に書いた `\u0020` が、送信時に実際の文字(空白など)へ変わる。正規表現の `\uXXXX` エスケープをそのまま書けない(Edit は「old と new が同一」エラー、python は想定外の文字で置換)
 - 対処: python で `chr(92) + "u0020"` のように組み立てて書き、`od -c` で確認する
+- `\\` が `\` 1 本になる件(上の「`\\` が縮む」)も同時に当たる。python の文字列に `"\\n"` と書くと改行 1 文字になり、パッチの照合が失敗した。`javascript_tool` では `\d` `\/` `\s` `\w` `\]` はそのまま届いた
+
+## Windows: http.server を配るフォルダの中から起動すると、そのフォルダを消せない
+
+- 症状: `cd dir && python -m http.server` の実行中、`dir` を削除すると EPERM(プロセスの作業フォルダがロックする)。生成し直す処理(`rmSync(dir)` 等)が失敗する
+- 対処: 別の場所から `python -m http.server <port> --directory <dir>` で配る
