@@ -135,4 +135,3 @@ Array.from(document.querySelectorAll('model-response ol li')).map(li => li.textC
 - **クリップボードは他の操作で上書きされる。** 貼り付け直前にクリップボードへ載せ、貼り付け後は `input_len` で長さを検証する。想定と違う長さなら別の内容が入っている
 - **`computer` の `wait` は最大 10 秒。** それ以上待つ場合は複数回に分ける
 - **Chrome 拡張は長時間の操作で切断されることがある。** `tabs_context_mcp` がタイムアウトを返し始めたら、ブラウザ側の再接続が必要
-- **Git Bash の `/tmp` は Windows の Python から見えない。** ファイル受け渡しは Windows パスに統一するか、同じシェル内で完結させる

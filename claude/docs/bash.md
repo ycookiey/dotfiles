@@ -52,3 +52,8 @@ grep -qiF -- "$pat" "$f"; case $? in 0) 一致 ;; 1) 不一致 ;; *) エラー�
 
 - 症状: `cd dir && python -m http.server` の実行中、`dir` を削除すると EPERM(プロセスの作業フォルダがロックする)。生成し直す処理(`rmSync(dir)` 等)が失敗する
 - 対処: 別の場所から `python -m http.server <port> --directory <dir>` で配る
+
+## Windows の python を Git Bash から使うときの食い違い
+
+- `/tmp` が別の場所: Git Bash の `/tmp` = `%TEMP%`(`C:\Users\<user>\AppData\Local\Temp`)、Windows の python の `/tmp` = `C:\tmp`。受け渡しは Windows パス(`C:/...`、scratchpad 等)で書く
+- text mode の書込は改行を CRLF に変える: `Path.write_text` / `open(p, "w")` は `\n` を `\r\n` で書く。LF のファイルを置換すると全行 CRLF になる(git の警告「CRLF will be replaced by LF」で気づく)。`read_bytes().decode()` → `write_bytes(s.encode())`、または `open(p, "w", newline="")` を使う。確認は `git ls-files --eol <path>` の `w/lf`
