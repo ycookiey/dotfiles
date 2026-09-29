@@ -23,8 +23,14 @@ const TILE_WARN = 9;
 
 const jsonPath = resolve(`${basename}.json`);
 
+// ビューポート(CSS px、"幅x高さ")。スマホ幅での折り返し・重なりの確認用。未指定は Playwright 既定(1280x720)
+const VIEWPORT = (() => {
+    const m = /^(\d+)x(\d+)$/u.exec(process.env.UI_CHECK_VIEWPORT ?? "");
+    return m ? { width: Number(m[1]), height: Number(m[2]) } : undefined;
+})();
+
 const browser = await chromium.launch();
-const context = await browser.newContext({ deviceScaleFactor: SCALE });
+const context = await browser.newContext({ deviceScaleFactor: SCALE, ...(VIEWPORT ? { viewport: VIEWPORT } : {}) });
 const page = await context.newPage();
 
 // SPA hydration後まで待つ。`load` だと描画前で計測値がブレる。
@@ -56,7 +62,7 @@ async function shootClip(outBase, clip) {
 
     if (cols === 1 && rows === 1) {
         const p = resolve(`${outBase}.png`);
-        await page.screenshot({ path: p, clip });
+        await page.screenshot({ path: p, clip, fullPage: true });
         paths.push(p);
     } else {
         if (cols * rows > TILE_WARN) {
@@ -74,7 +80,7 @@ async function shootClip(outBase, clip) {
                 const h = Math.min(tileCss, bottom - y);
                 if (w <= 0 || h <= 0) continue;
                 const p = resolve(`${outBase}-r${r + 1}c${c + 1}.png`);
-                await page.screenshot({ path: p, clip: { x, y, width: w, height: h } });
+                await page.screenshot({ path: p, clip: { x, y, width: w, height: h }, fullPage: true });
                 paths.push(p);
             }
         }

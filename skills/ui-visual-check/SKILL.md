@@ -22,6 +22,7 @@ description: UI要素の整列・余白・font-size等を視覚＋実測値で�
 
 要素が大きい場合（実ピクセル = CSS寸法 × 3 が上限超過）、`PNG:`/`GUIDE:` 行が複数出力され `<basename>[-guides]-r<行>c<列>.png` に縦横分割される（`TILES:` / `GUIDE_TILES: 行x列`）。各系統を左上→右下の順に Read で開く。`warn:` が出たら範囲が広すぎるので、より具体的なセレクタの再指定を検討する。
 閾値は `UI_CHECK_MAX_EDGE`（既定1500px）、DPIは `UI_CHECK_SCALE`（既定3）で調整可。
+ビューポートは `UI_CHECK_VIEWPORT=幅x高さ`（CSS px、例 `375x812`。既定は Playwright の 1280x720）で指定し、スマホ幅での折り返しや重なりを確認する。ビューポートより長い要素も切らずに撮る。
 
 before/after 比較したい場合は output_basename を変えて 2 回実行し、両方を Read で並べる。
 
