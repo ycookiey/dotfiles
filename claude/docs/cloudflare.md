@@ -60,6 +60,14 @@ js
 - 日時の形式の CHECK は GLOB を使わず整形し直して比較: `coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', col) = col, 0) OR coalesce(strftime('%Y-%m-%dT%H:%M:%fZ', col) = col, 0)`。`T` や `Z` のない値、時差付き、2 月 30 日も断る(`coalesce` がないと NULL で CHECK が素通り)
 - 確認環境: wrangler 4 のローカル D1(workerd)
 
+### Workers Rate Limiting binding(`ratelimits`)
+
+- Free plan で動いた(公式に記載なし、2026-09-30 実測)。period は 10/60 秒のみ、location ごとに数え、反映が遅れる
+- local(wrangler dev・Vite plugin、miniflare 5.20260926.0-alpha)では `limit()` が 500 `internal error` → local では binding を呼ばない switch(`.dev.vars`)を用意
+- deploy 直後は効かない: 最初の 30 回は全部通り、1〜2 分後から 429 が混ざる。以後も上限の数倍が通る → 確認は時間を置いて繰り返す。正確な quota には使えない
+- `namespace_id` は account 内で一意の整数で、counter を共有する → env(preview/prod)ごとに別 ID を `env.<name>` にも書き、build 出力の wrangler.json で確認
+- 確認版: wrangler 4.142
+
 ## cf CLI(2026-09-28 open beta、npm `cf`)
 
 - 確認版 1.0.0-beta.5。`npm i -g cf`(Node 22+)。wrangler は beta 終了後 18 か月保守
@@ -69,3 +77,6 @@ js
 - D1: `cf d1 create --name <名前> --primary-location-hint apac`。location は作成時のみ指定可。wrangler deploy の自動作成は依頼元の近く(CI なら GitHub runner)→ 日本向けは手で作り `database_id` を config に書く
 - `cf d1 migrations apply <DB ID>`: ID のみ(名前・binding 不可)。記録 table は wrangler 互換
 - 罠: `cf migrate` は wrangler の env を `switch (ctx.mode)` に変換。Vite build の既定 mode は `production` → env 名 `production` は指定なしで選ばれる → 本番の env は `prod` 等にする(migrate も警告)。migrate の出力は TODO(`migrations_dir` 等)を埋めるまで throw する
+- 罠(Windows): wrangler に委譲する cf build/dev/deploy が `spawn EFTYPE`(`cf-wrangler.js` を node を介さず spawn。cloudflare/cf#19、2026-09-30 時点 Open)。回避: `cf deploy --prebuilt`(Build Output を cf 自身の認証で upload。dry-run のみ確認)。wrangler は cf の login を使えない(credential が別)
+- 非対話: `cf workers delete <名前>` は確認で Aborted → `--force`
+- cf は実行した dir に `.cloudflare/cache/cloudflare-account.json`(account 情報)を作る → git 作業ツリーの外(scratchpad 等)で実行するか、後で消す
