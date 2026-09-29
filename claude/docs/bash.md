@@ -39,8 +39,8 @@ grep -qiF -- "$pat" "$f"; case $? in 0) 一致 ;; 1) 不一致 ;; *) エラー�
 
 ## run_in_background の dev server は TaskStop 後も node が残ることがある
 
-- 現象: `pnpm dev` 等を run_in_background で起動 → TaskStop 後も node 子プロセスが port を掴み続け、次回起動が別 port にずれる
-- 停止後の確認: `Get-NetTCPConnection -LocalPort <port> -State Listen` → OwningProcess の CommandLine を `Get-CimInstance Win32_Process -Filter "ProcessId=<pid>"` で確認 → 自分が起動したものだけ `Stop-Process -Id <pid> -Force`
+- 現象: `pnpm dev` 等を run_in_background で起動 → TaskStop 後も node 子プロセスが port を掴み続け、次回起動が別 port にずれる。Cloudflare Vite plugin の dev server は、その node の子の `workerd.exe` も残る(workerd は dev server の port を掴まないので、port の確認では見つからない)
+- 停止後の確認: `Get-NetTCPConnection -LocalPort <port> -State Listen` → OwningProcess の CommandLine を `Get-CimInstance Win32_Process -Filter "ProcessId=<pid>"` で確認 → 自分が起動したものだけ `Stop-Process -Id <pid> -Force`。workerd は `Get-CimInstance Win32_Process -Filter "Name='workerd.exe'"` の ParentProcessId がその node なら、PID を並べて一緒に止める
 
 ## ツール入力の `\uXXXX` は文字に復号される
 
