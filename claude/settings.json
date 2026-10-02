@@ -29,6 +29,17 @@
   "showClearContextOnPlanAccept": true,
   "wheelScrollAccelerationEnabled": false,
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v ysidepaney >/dev/null 2>&1 && ysidepaney register; exit 0",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
