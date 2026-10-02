@@ -26,11 +26,11 @@ color: cyan
 
 ## 割当 dimension (1 invocation = 1 dimension)
 
-呼び出し prompt で明示的に指定された dimension を担当する。指定なしなら次の 10 default から caller が想定していると読み取れる 1 つを選び、reply の 最初に「dimension: X」と明記して合意を取る。
+呼び出し prompt で明示的に指定された dimension を担当する。指定なしなら次の 1〜10 から caller が想定していると読み取れる 1 つを選び、reply の 最初に「dimension: X」と明記して合意を取る。11 (Architecture) は明示指定されたときだけ担当する。
 
 割当外 dimension の findings は書かない。境界を跨ぐ finding は「参考: <他 dim>」だけ 1 行、詳細は書かない。
 
-## 10 default dimensions と built-in checklist
+## Dimensions と built-in checklist (1〜10 default、11 は明示指定時のみ)
 
 対応 dim の checklist だけ Phase 2 で参照する。checklist は網羅 goal ではなく漏らしやすい観点の reminder。
 
@@ -101,6 +101,32 @@ color: cyan
 - Server Component 適用性 (`"use client"` の必要性)
 - `useEffect` の乱用 (derived state / event handler で済むか)
 - `<img>` の loading / decoding / 実寸最適化
+
+### 11. Architecture (部品の分け方・つなぎ方)
+1〜10 は 1 file / 1 関数で閉じる defect を見る。11 は複数の file・package をまたぐ構造を見る。1 file で閉じる改善は書かない (1〜10 の担当)。ライブラリの単純な乗り換え・運用手順も対象外。
+- A. 境界: package / 層 (domain・application・adapter・UI) / 公開口 (root export・subpath) の切り方
+- B. 依存の向き: どれがどれを知ってよいか。逆向き・循環の依存、中心の層が外の仕組み (framework・I/O・runtime) を知っていないか
+- C. 責務の置き場所: 1 つの関心事 (設定・文言・検証・エラー通知・永続化等) が複数の層・package に散っていないか、変わる理由の違うものが 1 か所に同居していないか
+- D. 拡張点: 利用側ごとの差分 (設定・差し込み口・adapter) をどこで受けるか。利用側 (consumer) が library を迂回して自前で作り直している箇所、逆に利用側にあるが library に移すと他の利用側でも使える共通化候補
+- E. 実行環境への配置: どのコードがどこで動くか (browser / server / edge function / 外部 process)。秘密値が client に入り得る経路、環境をまたぐ型・schema の共有
+
+兆候 (根拠に使う): 1 つの変更が複数 package に波及 / 利用側が library を迂回 / 決定記録 (ADR 等) と実装の食い違い / 逆向き・循環の依存 / 変わる理由の違うものの同居。
+
+決定記録 (ADR 等) が project にあれば、該当する決定を読んでから書く。決定を覆す提案は「ADR NNNN の見直し」と明記し、決定後に出てきた新しい事実を理由として示す。決定に実装が追いついていないだけなら、提案ではなく食い違いの finding として書く。
+
+11 の finding は 5 elements の代わりに次の形で書く (欠けたら書かない):
+
+```
+### [HIGH|MEDIUM|LOW] <一行タイトル>
+- 観点: Architecture / <A〜E>
+- 現状: <今の構成。依存や配置は ASCII 図か箇条書き>
+- 根拠: <実例の file:line、利用側の迂回箇所、決定記録の該当箇所>
+- 圧力: <放置すると何が起きるか。次に来る変更でどこが困るか>
+- 案: 2〜3 個。各案に「移す手順 / 費用 / 後戻りの難しさ」
+- 関連する決定: <ADR 番号と、覆す・補う・実装の遅れのどれか>
+```
+
+Severity は「後から変えるほど高くつくか」と「既に実害 (重複・迂回・事故の経路) が出ているか」で付ける。
 
 ## Project-specific rules の read 契約
 
