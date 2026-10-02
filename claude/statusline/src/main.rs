@@ -43,6 +43,8 @@ struct Model {
 #[derive(Deserialize, Default)]
 struct ContextWindow {
     used_percentage: Option<f64>,
+    context_window_size: Option<u64>,
+    total_input_tokens: Option<u64>,
     current_usage: Option<CurrentUsage>,
 }
 
@@ -150,6 +152,79 @@ fn elapsed_pct(resets_at: &Option<serde_json::Value>, window_secs: f64) -> i32 {
             ((window_secs - remaining) * 100.0 / window_secs).floor() as i32
         })
         .unwrap_or(0)
+}
+
+// ========================================
+// Auto-compact threshold
+// ========================================
+
+// Mirrors Claude Code's auto-compact threshold (extracted from v2.1.288):
+//   window    = context_window_size, capped by CLAUDE_CODE_AUTO_COMPACT_WINDOW
+//   effective = window - min(max_output_tokens, 20000)
+//   threshold = effective - 13000
+//               CLAUDE_AUTOCOMPACT_PCT_OVERRIDE can only lower it
+//               (min of effective * pct / 100 and the default)
+//   auto-compact disabled -> effective (where the blocking limit applies)
+// max_output_tokens is not passed to statuslines; every current model
+// exceeds 20000, so the full reserve is assumed.
+// TODO: settings-based sources are not visible here: `autoCompactWindow`
+// in settings.json, `autoCompactEnabled` toggled via /config, and
+// server-side window experiments. Those fall back to the formula above.
+const COMPACT_OUTPUT_RESERVE: u64 = 20_000;
+const COMPACT_BUFFER: u64 = 13_000;
+const COMPACT_WINDOW_MIN: u64 = 100_000;
+const COMPACT_WINDOW_MAX: u64 = 1_000_000;
+// Fallback when context_window_size is absent (200k window ratio)
+const COMPACT_THRESHOLD_RATIO: f64 = 0.835;
+
+fn env_truthy(name: &str) -> bool {
+    env::var(name)
+        .map(|v| matches!(v.trim().to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false)
+}
+
+fn env_positive_u64(name: &str) -> Option<u64> {
+    env::var(name)
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|&n| n > 0)
+}
+
+fn compact_threshold(context_window_size: u64) -> u64 {
+    let window = match env_positive_u64("CLAUDE_CODE_AUTO_COMPACT_WINDOW") {
+        Some(n) => context_window_size.min(n.clamp(COMPACT_WINDOW_MIN, COMPACT_WINDOW_MAX)),
+        None => context_window_size,
+    };
+    let effective = window.saturating_sub(COMPACT_OUTPUT_RESERVE);
+    if env_truthy("DISABLE_COMPACT") || env_truthy("DISABLE_AUTO_COMPACT") {
+        return effective;
+    }
+    let default = effective.saturating_sub(COMPACT_BUFFER);
+    let pct = env::var("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE")
+        .ok()
+        .and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|p| *p > 0.0 && *p <= 100.0);
+    match pct {
+        Some(p) => ((effective as f64 * p / 100.0).floor() as u64).min(default),
+        None => default,
+    }
+}
+
+/// Context usage relative to the auto-compact threshold (100 = compaction).
+fn context_pct(cw: &ContextWindow) -> Option<i32> {
+    let tokens = cw.total_input_tokens.filter(|_| cw.current_usage.is_some());
+    let pct = match cw.context_window_size.filter(|&n| n > 0) {
+        Some(size) => {
+            // used_percentage is integer-rounded; prefer exact tokens
+            let tokens = match tokens {
+                Some(t) => t as f64,
+                None => cw.used_percentage? * size as f64 / 100.0,
+            };
+            tokens * 100.0 / compact_threshold(size).max(1) as f64
+        }
+        None => cw.used_percentage? / COMPACT_THRESHOLD_RATIO,
+    };
+    Some(pct.min(100.0) as i32)
 }
 
 fn read_model_from_transcript(path: &str) -> Option<String> {
@@ -650,10 +725,9 @@ fn main() {
     let in_str = format!("{CYAN}\u{25bc}{}{RST}", fmt_num(in_tok));
     let sub_str = format!("{RED}-{}{RST}", fmt_num(removed));
     let out_str = format!("{MAGENTA}\u{25b2}{}{RST}", fmt_num(out_tok));
-    // Context window (normalize so auto-compact threshold ≈ 100%)
-    const COMPACT_THRESHOLD: f64 = 0.835;
-    let cx_stat = match j.context_window.as_ref().and_then(|c| c.used_percentage) {
-        Some(p) => stat("Cx", (p / 100.0 / COMPACT_THRESHOLD * 100.0).min(100.0) as i32),
+    // Context window (normalized so the auto-compact threshold = 100%)
+    let cx_stat = match j.context_window.as_ref().and_then(context_pct) {
+        Some(p) => stat("Cx", p),
         None if has_rl => stat("Cx", 0),
         None => format!("Cx{LOADING}"),
     };
