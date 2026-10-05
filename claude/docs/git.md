@@ -19,3 +19,9 @@
 - 通常運用: conflict 解決は `git add` → `git rebase --continue` のみ。手動 `git commit` を打たない。メッセージ変更は `--continue` 後に `git commit --amend`、または `.git/rebase-merge/message` を事前書き換え
 - 復旧(手動 commit 後): `git reset --soft HEAD~1` → `git commit -F .git/rebase-merge/message` → `git rebase --skip`(skip は「現 HEAD を採用して次へ」として作用し rewritten-list を進める)
 - 関連: `GIT_EDITOR=true` を `--continue` に渡すと commit-msg が空で abort、同じ誤エラーが出る。`GIT_EDITOR=:` も同様。メッセージ保持には `git commit -F .git/rebase-merge/message` を先に明示実行
+
+## push 前の検査は結果を見てから push(検査と push を 1 コマンドに繋げない)
+
+- 症状: 公開 repo への push 前に禁止語(実名・大会名等)を `git diff ... | grep` で検査したが、同じコマンドで `; git push` まで繋げたため、検査が hit しても push が進んで公開された
+- 対処: 検査と push を別コマンドに分け、結果を読んでから push。1 コマンドにするなら hit で止まる形 (`! git diff ... | grep -qiE '<語>' && git push`)
+- 漏れた後: 履歴から消すには force-push が要る。書き換えは、外部が commit ID で固定している commit(本番 deploy の ref 等)より後の範囲に限る(固定先が消えると deploy が壊れる)
