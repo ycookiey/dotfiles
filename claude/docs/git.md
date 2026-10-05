@@ -26,3 +26,9 @@
 - 対処: 検査と push を別コマンドに分け、結果を読んでから push。1 コマンドにするなら hit で止まる形 (`! git diff ... | grep -qiE '<語>' && git push`)
 - 禁止語は表記ゆれ(英字の綴り・区切り違い・カタカナ・略称)まで並べてから探す。実測: 英字の綴りだけで探しカタカナ表記を見落とし、履歴の書き換えが 2 回になった
 - 漏れた後: 履歴から消すには force-push が要る。書き換えは、外部が commit ID で固定している commit(本番 deploy の ref 等)より後の範囲に限る(固定先が消えると deploy が壊れる)
+
+## `git rm` の削除は即 stage され、別のファイルを指定した次の commit に混ざる
+
+- 現象: `git rm <a>` → 後で `git add <b> <c>` だけを指定して commit しても、index にある `<a>` の削除が一緒に入る(commit を分けるつもりが崩れる)
+- 対処: commit の直前に `git diff --cached --name-only` で中身を確かめる。commit を分けるなら、削除は作業ツリーで消し(`rm`)、入れたい commit で `git add <消したパス>` で stage する
+- 未 push なら作り直し可: `git reset --soft <base>` → `git reset`(index を空に)→ commit ごとに add し直す
