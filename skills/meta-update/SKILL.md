@@ -13,6 +13,7 @@ allowed-tools: Read, Write, Edit, Glob, Grep, AskUserQuestion
 - **提案のみ**: 勝手に書かない。記録先と内容を提示し承認を得てから反映
 - **コード・命名は変更しない**: 誤誘導の原因がコード構造/関数名/コメントの場合、改善は提案テキストに留める(プロダクト資産のため)
 - **遅延コミット**: 投機的に記録しない。実需(再発・明示要求)が確認できた学びのみ
+- **global CLAUDE.md は最後の手段**: `~/.claude/CLAUDE.md` は全会話に常時載る(1 行でも全セッションのコスト)。記録先は hook → docs → skill → project CLAUDE.md の順に検討し、それで足りない時だけ。候補に出すときは常時コストを明記し、推奨にしない
 
 ## Phase 0: 起動経路の判定
 
@@ -24,6 +25,8 @@ allowed-tools: Read, Write, Edit, Glob, Grep, AskUserQuestion
    - 運用タイミングの問題 → 振り返りチェック項目を追加
    - 判定基準の曖昧さ → 判定フローを具体化
 3. 検知ルール更新を本来の学び候補と並べて Phase 1 へ持ち越し
+
+meta-update の提案そのものへのユーザーの訂正(置き場所・方式への指摘)も行動指針シグナル。出し直しで終えず、その回の提案に規範の更新候補として含める。
 
 ## Phase 1: 抽出と除外
 
@@ -52,7 +55,8 @@ allowed-tools: Read, Write, Edit, Glob, Grep, AskUserQuestion
 |---|---|
 | 手順・ハマりどころ・ツール仕様・調査結果 | docs |
 | 繰り返す定型作業フロー | skill(新規作成 or 既存skill更新) |
-| 全体方針・判断基準・参照先の追加 | CLAUDE.md |
+| 既存の規則・docs があるのに読まれず効かなかった(見落とし・忘れ) | hook(該当操作の直前に PreToolUse 等で文脈へ注入。常時の文脈コストなし)。docs・CLAUDE.md への追記で済ませない |
+| 全体方針・判断基準・参照先の追加 | CLAUDE.md(原則「global CLAUDE.md は最後の手段」の条件のときだけ) |
 | コード構造・命名・コメントの誤誘導 | **提案のみ**(書込まず改善案を提示) |
 
 ### Step 3: ファイル特定(docs/skill 行きの場合)
@@ -71,7 +75,7 @@ Step 1(環境横断 vs プロジェクト固有)を独断で決めつけず、**
 
 選択肢テンプレ(4択):
 
-1. 環境横断: `~/.claude/CLAUDE.md` または `~/.claude/docs/<topic>.md` に追記
+1. 環境横断: `~/.claude/docs/<topic>.md`・hook・skill に追記(`~/.claude/CLAUDE.md` は原則「global CLAUDE.md は最後の手段」の条件のときだけ)
 2. プロジェクト固有: 対象プロジェクトの `CLAUDE.md`(`<cwd>/CLAUDE.md` など)に追記
 3. 文言を調整して追記(具体案をユーザーから受ける)
 4. 記録しない
