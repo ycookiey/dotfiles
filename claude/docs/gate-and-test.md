@@ -219,3 +219,5 @@ fixture drift 修正時、`as any` / assertion 削除 / cast 追加は「signal 
 - 手順: (1) 元 test の assertion を 1 つずつ列挙 (戻り値の形・保存された値・保存されない事実・版・時刻・履歴・event・順序) / (2) 移植先で同じ assertion を書く。保存結果は stub でなく実装 (in-memory 実装可) から読み戻す / (3) 照合は別 agent、差の報告は自分で code を読んで確認 / (4) 実装を故意に壊し (mutation) test が落ちるか確認
 - mutation の偽 caught: 壊し方で build 自体が失敗すると、build 成果物 (dist) 経由で import する test が読込で落ち「捕まえた」と誤判定。build が通る形で壊す (未使用 import を残さない等) か、src を直接読む test に限定
 - agent への完了条件は成果物の数でなく振る舞いの数 (assertion の対応・mutation 全数 caught)。章 2 (non-vacuous) の移植版
+- 照合の設定 = 移し元の実際の設定: 移し先に既定で無効の規則・設定があるとき、移し元が強制していた規則ごとに、移し元の実際の設定 (定義・config) で移し先の入口 (route 等) を通す test を書く。移し先の見本の設定での test だけでは、設定の入れ忘れを捕まえない
+  - 実例 (大会 app → kit): 移した test は kit の見本の定義 (「1 人 1 チーム」有効) で書き全件照合済み。app 自身の定義に kit の `uniquePlayers` を入れ忘れ (kit の既定は無効)、どの test も捕まえず、試験用サイトで 1 日弱 重複の申請が通った
