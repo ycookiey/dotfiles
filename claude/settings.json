@@ -67,6 +67,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "Read|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/settings-template-reminder.sh\"",
+            "timeout": 5
+          }
+        ]
       }
     ]
   }
