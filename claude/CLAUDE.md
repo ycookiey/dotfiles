@@ -6,7 +6,6 @@
 - シェルはGit Bash。Windowsパスは Unix形式で /c/path。Edit/Read は C:\path
 - 対話 shell は nushell。launcher 検証時優先
 - 未完成の実装にはTODOコメント必須
-- IMPORTANT: コミットメッセージにAIツール名や Co-Authored-By を入れない
 - コミットメッセージの言語・書式は初回コミットに倣う
 - ハマった問題: まず汎用的な学びを抽出し ~/.claude/docs/ に具体的ファイルで記録
 - 残る成果物すべて (コード/識別子/文書/コミット等) は今回の文脈に縛らず汎用形で書く

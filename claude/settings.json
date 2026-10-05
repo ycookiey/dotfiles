@@ -22,6 +22,11 @@
     "rust-analyzer-lsp@claude-plugins-official": true
   },
   "model": "claude-opus-5-5",
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  },
   "language": "日本語",
   "cleanupPeriodDays": 99999,
   "autoMemoryEnabled": false,
