@@ -14,3 +14,9 @@
 - 症状: ``db.batch([db.run(sql`…`), …])`` → `TypeError: Cannot read properties of undefined (reading 'bind')`(drizzle-orm 0.45 の d1 session)
 - 対処: 条件付きの挿入は ``db.insert(table).select(sql`SELECT … WHERE EXISTS (…)`)`` で書く。挿入の列はテーブル定義順(列の並びに SELECT をそろえる)
 - 応用: 版の照合を batch 1 回で行うには、一意 ID の行を「条件が合うときだけ」先に挿入し、後続の update を `exists(その行)` で絞る。あとで行の有無を読めば、適用されたか判定できる
+
+## generate の meta JSON が Prettier 未整形
+
+- drizzle-kit generate の `migrations/meta/_journal.json`・`NNNN_snapshot.json` は prettier の書式でない → CI の format:check で落ちる
+- 対処: 生成物は整形しない。`.prettierignore` に meta の dir(`migrations/meta`・`packages/*/drizzle/meta` 等)を入れ、generate の出力のまま commit
+  - generate の script に `&& prettier --write` を足す形は不可: CI の差の確認(`db:generate --name <x>`)の引数が末尾の prettier に渡って壊れる
