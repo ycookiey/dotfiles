@@ -52,6 +52,11 @@
             "type": "command",
             "command": "bash \"$HOME/.claude/hooks/label-guard.sh\"",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/language-guard.sh\"",
+            "timeout": 15
           }
         ]
       }
