@@ -32,3 +32,12 @@
 - 現象: `git rm <a>` → 後で `git add <b> <c>` だけを指定して commit しても、index にある `<a>` の削除が一緒に入る(commit を分けるつもりが崩れる)
 - 対処: commit の直前に `git diff --cached --name-only` で中身を確かめる。commit を分けるなら、削除は作業ツリーで消し(`rm`)、入れたい commit で `git add <消したパス>` で stage する
 - 未 push なら作り直し可: `git reset --soft <base>` → `git reset`(index を空に)→ commit ごとに add し直す
+
+## 他人の未コミットの変更がある file で、自分の編集だけを stage する
+
+- 状況: 同じ作業ツリーを別 session・別 tool も編集し、対象 file に他人の未コミットの変更がある。`git add <file>` は他人の変更も入れる。`git add -p` は対話で使えない
+- 手段: `git stage-own-edit begin <file>` → 任意の tool で編集 → `git stage-own-edit stage <file>`(dotfiles `bin/git-stage-own-edit`、PATH 上)
+  - begin 時点の写しと index を行で対応づけ、begin 以降に自分が変えた行だけを index に当てる。隣の行が他人の変更でも可。他人の行が上に増減していても自分の行の位置に当たる
+  - 自分の編集が、写しと index で違う行(他人の変更)に触れると拒否(exit 1、index は不変)。新規 file は対象外(`git add`)
+  - 改行は index の版に合わせる(autocrlf の CRLF 作業ツリー + LF の blob も可)
+- 後: `git diff --cached` で確認 → commit。test: `bash bin/tests/git-stage-own-edit.test.sh`

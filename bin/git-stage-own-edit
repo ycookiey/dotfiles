@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# Stage only your own edit of a file that also holds other people's
+# uncommitted changes (another session or tool editing the same working
+# tree), without `git add -p`.
+#
+#   git stage-own-edit begin <file>...   before editing: keep a copy of each file
+#   (edit the files with any tool)
+#   git stage-own-edit stage <file>...   put only the lines changed since `begin`
+#                                        into the index, then forget the copy
+#   git stage-own-edit abort <file>...   forget the copy
+#
+# `stage` maps the copy onto the index version line by line, so other
+# people's changes, even on the lines next to yours, stay unstaged. It
+# refuses (exit 1, index unchanged) when your edit touches a line that
+# differs between the copy and the index, since that line is not yours
+# alone. Line endings follow the index version (a CRLF working tree over
+# LF blobs under core.autocrlf is fine). The copies live in the repo's
+# git dir (`git rev-parse --git-path stage-own-edit`), per worktree.
+set -euo pipefail
+
+if [ $# -lt 2 ]; then
+  sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//' >&2
+  exit 2
+fi
+
+PYTHONIOENCODING=utf-8 exec python - "$@" <<'PY'
+import difflib
+import hashlib
+import os
+import subprocess
+import sys
+
+command, files = sys.argv[1], sys.argv[2:]
+
+
+top = None
+
+
+def git(*args, data=None):
+    # From the top of the worktree, so paths are the repository's paths.
+    result = subprocess.run(["git", *args], input=data, capture_output=True, cwd=top)
+    if result.returncode != 0:
+        sys.exit(f"git {' '.join(args)}: {result.stderr.decode(errors='replace').strip()}")
+    return result.stdout
+
+
+def fail(message):
+    print(f"git stage-own-edit: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+prefix = git("rev-parse", "--show-prefix").decode().strip()
+top = git("rev-parse", "--show-toplevel").decode().strip()
+store = os.path.join(top, git("rev-parse", "--git-path", "stage-own-edit").decode().strip())
+
+
+def repo_path(file):
+    path = os.path.normpath(os.path.join(prefix, file)).replace(os.sep, "/")
+    if path.startswith("../"):
+        fail(f"{file} is outside the repository")
+    return path
+
+
+def copy_of(path):
+    return os.path.join(store, hashlib.sha1(path.encode()).hexdigest())
+
+
+def lines_of(data):
+    text = data.decode("utf-8")
+    lines = text.split("\n")
+    has_final_newline = lines[-1] == ""
+    if has_final_newline:
+        lines.pop()
+    return [line.rstrip("\r") for line in lines], has_final_newline
+
+
+def staged_version(path):
+    entry = git("ls-files", "-s", "--", path).decode().split()
+    if not entry:
+        fail(f"{path} is not tracked; stage a new file with git add")
+    if entry[2] != "0":
+        fail(f"{path} has unresolved conflicts")
+    return entry[0], git("cat-file", "blob", entry[1])
+
+
+def stage(file):
+    path = repo_path(file)
+    copy = copy_of(path)
+    if not os.path.exists(copy):
+        fail(f"no copy of {path}; run `git stage-own-edit begin {file}` before editing")
+    with open(copy, "rb") as handle:
+        before, _ = lines_of(handle.read())
+    with open(file, "rb") as handle:
+        after, after_newline = lines_of(handle.read())
+    mode, blob = staged_version(path)
+    staged, _ = lines_of(blob)
+    crlf = b"\r\n" in blob
+
+    # Where each line of the copy sits in the index version, if it is there
+    # unchanged; lines that differ belong to someone else.
+    position = {}
+    for block in difflib.SequenceMatcher(None, before, staged, autojunk=False).get_matching_blocks():
+        for offset in range(block.size):
+            position[block.a + offset] = block.b + offset
+
+    edits = []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, before, after, autojunk=False).get_opcodes():
+        if tag == "equal":
+            continue
+        if tag == "insert":
+            if i1 > 0 and (i1 - 1) in position:
+                at = position[i1 - 1] + 1
+            elif i1 == 0:
+                at = 0
+            elif i1 < len(before) and i1 in position:
+                at = position[i1]
+            else:
+                fail(f"{path}: the lines around your insertion at line {i1 + 1} differ in the index")
+            edits.append((at, at, after[j1:j2]))
+            continue
+        targets = [position.get(i) for i in range(i1, i2)]
+        if None in targets or targets != list(range(targets[0], targets[0] + len(targets))):
+            fail(f"{path}: your edit at lines {i1 + 1}-{i2} touches lines that differ in the index (not yours alone)")
+        edits.append((targets[0], targets[-1] + 1, after[j1:j2]))
+
+    if not edits:
+        fail(f"{path}: nothing changed since begin")
+
+    result = list(staged)
+    for start, end, lines in sorted(edits, key=lambda edit: edit[0], reverse=True):
+        result[start:end] = lines
+    newline = "\r\n" if crlf else "\n"
+    text = newline.join(result) + (newline if after_newline or not result else "")
+    sha = git("hash-object", "-w", "--stdin", data=text.encode("utf-8")).decode().strip()
+    git("update-index", "--cacheinfo", f"{mode},{sha},{path}")
+    os.remove(copy)
+    sys.stdout.buffer.write(git("diff", "--cached", "--stat", "--", path))
+    sys.stdout.flush()
+
+
+if command == "begin":
+    os.makedirs(store, exist_ok=True)
+    for file in files:
+        path = repo_path(file)
+        staged_version(path)
+        with open(file, "rb") as source, open(copy_of(path), "wb") as target:
+            target.write(source.read())
+elif command == "stage":
+    for file in files:
+        stage(file)
+elif command == "abort":
+    for file in files:
+        copy = copy_of(repo_path(file))
+        if os.path.exists(copy):
+            os.remove(copy)
+else:
+    fail(f"unknown command {command}; use begin, stage or abort")
+PY
