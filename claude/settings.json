@@ -65,6 +65,24 @@
             "if": "Bash(git push *)",
             "command": "bash \"$HOME/.claude/hooks/push-check-reminder.sh\"",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "if": "Bash(cmd *)",
+            "command": "bash \"$HOME/.claude/hooks/cmd-switch-guard.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "if": "Bash(cmd.exe *)",
+            "command": "bash \"$HOME/.claude/hooks/cmd-switch-guard.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "if": "Bash(timeout *)",
+            "command": "bash \"$HOME/.claude/hooks/cmd-switch-guard.sh\"",
+            "timeout": 5
           }
         ]
       },

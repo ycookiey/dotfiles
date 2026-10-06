@@ -36,6 +36,7 @@ grep -qiF -- "$pat" "$f"; case $? in 0) 一致 ;; 1) 不一致 ;; *) エラー�
 - Git Bash は `/` 始まりの引数を POSIX→Windows パスへ自動変換 → `iscc /DName=val` 等の Windows 形式オプションが壊れる(例: ISCC「You may not specify more than one script filename」)
 - 回避: `MSYS2_ARG_CONV_EXCL="/D" cmd ...`(複数prefixは `;` 区切り、全除外は `*`)
 - 全除外時は引数内のパスを自前で Windows 形式に(`cygpath -w`)
+- 例: `cmd.exe /c <command>` の `/c` が `C:/` に変わり、cmd が対話の画面で起動して入力を待ち止まる → `cmd.exe //c ...`。hook `cmd-switch-guard.sh` が `/c` の形を止める
 
 ## run_in_background の dev server は TaskStop 後も node が残ることがある
 
