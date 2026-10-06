@@ -60,6 +60,11 @@ js
 - 日時の形式の CHECK は GLOB を使わず整形し直して比較: `coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', col) = col, 0) OR coalesce(strftime('%Y-%m-%dT%H:%M:%fZ', col) = col, 0)`。`T` や `Z` のない値、時差付き、2 月 30 日も断る(`coalesce` がないと NULL で CHECK が素通り)
 - 確認環境: wrangler 4 のローカル D1(workerd)
 
+### Cron Triggers: アカウントの枠が不足(2026-10)
+
+- 枠は少数(free は 1 アカウント 5 個)で、ycookiey のアカウントは既にほぼ使い切り。新しい定期実行を前提にした設計は避ける
+- 代わり: 利用者の操作(画面・コマンド)を契機にその場で処理する / 管理画面のボタン / 既存の定期実行に相乗り
+
 ### Workers Rate Limiting binding(`ratelimits`)
 
 - Free plan で動いた(公式に記載なし、2026-09-30 実測)。period は 10/60 秒のみ、location ごとに数え、反映が遅れる
