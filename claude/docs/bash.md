@@ -38,10 +38,13 @@ grep -qiF -- "$pat" "$f"; case $? in 0) 一致 ;; 1) 不一致 ;; *) エラー�
 - 全除外時は引数内のパスを自前で Windows 形式に(`cygpath -w`)
 - 例: `cmd.exe /c <command>` の `/c` が `C:/` に変わり、cmd が対話の画面で起動して入力を待ち止まる → `cmd.exe //c ...`。hook `cmd-switch-guard.sh` が `/c` の形を止める
 
-## run_in_background の dev server は TaskStop 後も node が残ることがある
+## dev server は PowerShell の tool で起動する(Git Bash の run_in_background だと TaskStop 後も残る)
 
-- 現象: `pnpm dev` 等を run_in_background で起動 → TaskStop 後も node 子プロセスが port を掴み続け、次回起動が別 port にずれる。Cloudflare Vite plugin の dev server は、その node の子の `workerd.exe` も残る(workerd は dev server の port を掴まないので、port の確認では見つからない)
-- 停止後の確認: `Get-NetTCPConnection -LocalPort <port> -State Listen` → OwningProcess の CommandLine を `Get-CimInstance Win32_Process -Filter "ProcessId=<pid>"` で確認 → 自分が起動したものだけ `Stop-Process -Id <pid> -Force`。workerd は `Get-CimInstance Win32_Process -Filter "Name='workerd.exe'"` の ParentProcessId がその node なら、PID を並べて一緒に止める
+- 現象: Git Bash の run_in_background で `pnpm dev` 等を起動 → TaskStop 後も node(vite)と、Cloudflare Vite plugin なら `workerd.exe` が残り port を掴み続ける。`--strictPort` の再起動が失敗、無指定なら別 port にずれる
+- 原因: npm の global の shim(`AppData/Roaming/npm/pnpm`、sh スクリプト)を Git Bash が MSYS の fork/exec で起動する所で Windows の親子のつながりが切れる(根元の `sh.exe` の ParentProcessId の process がもうない)。TaskStop は木をたどって止めるので、切れた先に届かない。bash が `node` を直接起動した場合はつながり、全部止まる(実測)
+- 対処: PowerShell の tool の run_in_background で起動(`Set-Location C:/path/app; pnpm dev --port <port> --strictPort *> <log>`)。claude.exe までつながり、TaskStop で workerd まで止まって port も空く(実測)。hook `devserver-launch-guard.sh` が、Bash の run_in_background での dev server の起動を止める
+- 残ったものの片付け: `Get-NetTCPConnection -LocalPort <port> -State Listen` の OwningProcess の CommandLine を `Get-CimInstance Win32_Process -Filter "ProcessId=<pid>"` で確認し、自分が起動したものだけ止める。つながりが切れた木は、切れた所の根元(親のない `sh.exe`)を `taskkill /PID <pid> /T /F` で止めると workerd まで止まる
+- 他の session の dev server が同じ PC で動いていることがある。CommandLine の path と port で自分のものか確かめてから止める
 
 ## ツール入力の `\uXXXX` は文字に復号される
 

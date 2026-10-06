@@ -83,6 +83,60 @@
             "if": "Bash(timeout *)",
             "command": "bash \"$HOME/.claude/hooks/cmd-switch-guard.sh\"",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "if": "Bash(pnpm *)",
+            "command": "bash \"$HOME/.claude/hooks/devserver-launch-guard.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "if": "Bash(npm *)",
+            "command": "bash \"$HOME/.claude/hooks/devserver-launch-guard.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "if": "Bash(yarn *)",
+            "command": "bash \"$HOME/.claude/hooks/devserver-launch-guard.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "if": "Bash(bun *)",
+            "command": "bash \"$HOME/.claude/hooks/devserver-launch-guard.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "if": "Bash(npx *)",
+            "command": "bash \"$HOME/.claude/hooks/devserver-launch-guard.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "if": "Bash(vite)",
+            "command": "bash \"$HOME/.claude/hooks/devserver-launch-guard.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "if": "Bash(vite *)",
+            "command": "bash \"$HOME/.claude/hooks/devserver-launch-guard.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "if": "Bash(wrangler *)",
+            "command": "bash \"$HOME/.claude/hooks/devserver-launch-guard.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "if": "Bash(next *)",
+            "command": "bash \"$HOME/.claude/hooks/devserver-launch-guard.sh\"",
+            "timeout": 5
           }
         ]
       },
