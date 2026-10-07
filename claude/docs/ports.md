@@ -8,6 +8,7 @@
 | port  | プロジェクト / 用途                          | 備考 |
 |-------|--------------------------------------------|------|
 | 3939  | AnalyzerCH / packages/web (Next.js dev)    | `scripts/dev-web.sh` |
+| 5197  | omega-summit-app (Vite dev)                | `vite.config.ts` の `server.port` |
 
 ## 避けるべき（フレームワークデフォルト）
 
