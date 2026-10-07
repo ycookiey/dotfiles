@@ -79,6 +79,12 @@
           },
           {
             "type": "command",
+            "if": "Bash(rm *)",
+            "command": "bash \"$HOME/.claude/hooks/rm-junction-guard.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
             "if": "Bash(cmd *)",
             "command": "bash \"$HOME/.claude/hooks/cmd-switch-guard.sh\"",
             "timeout": 5
