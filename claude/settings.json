@@ -73,6 +73,12 @@
           },
           {
             "type": "command",
+            "if": "Bash(git worktree remove *)",
+            "command": "bash \"$HOME/.claude/hooks/worktree-remove-reminder.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
             "if": "Bash(cmd *)",
             "command": "bash \"$HOME/.claude/hooks/cmd-switch-guard.sh\"",
             "timeout": 5
