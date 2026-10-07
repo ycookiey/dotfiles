@@ -79,6 +79,11 @@
           },
           {
             "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/set-e-reminder.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
             "if": "Bash(rm *)",
             "command": "bash \"$HOME/.claude/hooks/rm-junction-guard.sh\"",
             "timeout": 5
