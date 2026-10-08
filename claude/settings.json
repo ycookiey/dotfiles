@@ -172,6 +172,23 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/post-push-reminder.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/head-truncation-reminder.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }
