@@ -23,19 +23,19 @@ END {
 
 # Safety check: scan added lines only
 keywords='TODO|FIXME|console\.log|debugger|api_key|secret|token|password|credential|sk-|ghp_|AKIA|ycook'
-git diff HEAD -U0 --no-color 2>/dev/null | while IFS= read -r line; do
-  case "$line" in
-    +*)
-      [[ "$line" == +++* ]] && continue
-      matched=$(echo "$line" | grep -oE "$keywords" | head -1)
-      if [[ -n "$matched" ]]; then
-        clean="${line:1}"
-        clean="${clean#"${clean%%[![:space:]]*}"}"
-        echo "WARNING: Found '$matched' -> $clean"
-      fi
-      ;;
-  esac
-done
+# One awk pass: a per-line `echo | grep` spawns processes per added line and
+# took minutes on Git Bash for large diffs. Keywords go through ENVIRON so awk
+# does not apply escape processing (-v would turn `\.` into `.`).
+git diff HEAD -U0 --no-color 2>/dev/null | KW="$keywords" awk '
+  /^\+\+\+/ { next }
+  /^\+/ {
+    line = substr($0, 2)
+    if (match(line, ENVIRON["KW"])) {
+      found = substr(line, RSTART, RLENGTH)
+      sub(/^[[:space:]]+/, "", line)
+      print "WARNING: Found '\''" found "'\'' -> " line
+    }
+  }'
 
 # Show pre-commit hook (code lines only)
 hook_dir=$(git config --get core.hooksPath 2>/dev/null)
