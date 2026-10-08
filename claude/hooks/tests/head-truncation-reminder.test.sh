@@ -31,8 +31,12 @@ expect remind dash-n 'grep -rn x . | head -n 20' "$(lines 20)"
 expect remind dash-number 'grep -rn x . | cut -c1-150 | head -30' "$(lines 30)"
 expect pass under-limit 'grep -rn x . | head -30' "$(lines 12)"
 expect remind spaced-n 'git log --oneline | head -n5' "$(lines 5)"
-# Only the last head counts: the earlier one feeds a different command.
-expect pass last-head-short 'ls | head -2; grep -rn x . | head -40' "$(lines 12)"
+# A command of several statements: the output cannot be tied to one head.
+expect pass several-statements 'ls | head -2; grep -rn x . | head -40' "$(lines 40)"
+expect pass and-chain 'python -c "print(1)"; ls .claude/hooks | head' "$(lines 30)"
+# A leading cd is allowed: the rest is still one pipeline.
+expect remind cd-then-pipeline 'cd /c/repo && grep -rn x . | head -20' "$(lines 20)"
+expect remind cd-twice 'cd /c/a && cd b && git grep -n x | head' "$(lines 10)"
 expect pass no-head 'grep -rn x .' "$(lines 50)"
 expect pass head-on-file 'head -20 README.md' "$(lines 20)"
 expect pass tail-not-head 'git log | tail -5' "$(lines 5)"

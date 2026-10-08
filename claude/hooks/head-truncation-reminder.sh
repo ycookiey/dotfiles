@@ -6,6 +6,12 @@
 # 上限に届かなかったとき(全部出た)は何も出さない。止めはしない。
 input=$(cat)
 command=$(jq -r '.tool_input.command // ""' <<<"$input")
+# 出力がその head のものだと言えるのは、前の `cd <dir> &&` を除いて 1 つの
+# パイプのときだけ。文が続く command(`;`・`&&`・`||`・改行)は、出力の行数を
+# どの head にも結び付けられないので出さない(誤った知らせを避ける)。
+body=$(sed -E ':a; s/^[[:space:]]*cd[[:space:]]+[^;&|[:space:]]+[[:space:]]*&&//; ta' <<<"$command")
+[ "$(printf '%s' "$body" | grep -c '')" -le 1 ] || exit 0
+grep -Eq ';|&&|\|\|' <<<"$body" && exit 0
 # 最後のパイプの head と、その行数(-n N・-N・省略時は 10)。
 last=$(grep -Eo '\|[[:space:]]*head([[:space:]]+(-n[[:space:]]*[0-9]+|-[0-9]+))?' <<<"$command" | tail -n 1)
 [ -n "$last" ] || exit 0
