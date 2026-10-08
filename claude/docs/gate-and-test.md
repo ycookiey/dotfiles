@@ -21,6 +21,10 @@ CI/verify で走らせる自動 gate と unit/e2e test の設計で繰り返し�
 
 一般化: fix 対象経路の効果が反映される「単一書き込み点」の値を pin する。多段 effect の最終値でなく、fix が唯一書く中間点。
 
+同型: test 自身の teardown が判定対象を書く。判定は teardown 前の snapshot で行う。
+- 実例 (Textual TUI): 「q キーで終了 → Bot の shutdown が呼ばれる」test。harness の後片付けが app 実行中なら `_shutdown_and_exit()` を呼び、それが shutdown の呼出記録を足すため、q が効いていなくても PASS。snapshot 化で q が効かないことが判明 (既存の制約)
+- 確認: 判定値を teardown 前に copy、かつ「操作そのものの結果か」(app が操作で終了したか等) も併せて assert
+
 ## 3. fixture SOT 集約時: 既存 grep gate との衝突に注意
 
 hardcoded fixture (e2e URL token 等) を SOT 集約する際、既存の grep 型 gate (check-*-freshness.sh 等) の pattern が「path と literal が同一行に隣接」を前提にしていることが多い。

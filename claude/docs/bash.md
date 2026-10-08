@@ -46,6 +46,12 @@ grep -qiF -- "$pat" "$f"; case $? in 0) 一致 ;; 1) 不一致 ;; *) エラー�
 - 残ったものの片付け: `Get-NetTCPConnection -LocalPort <port> -State Listen` の OwningProcess の CommandLine を `Get-CimInstance Win32_Process -Filter "ProcessId=<pid>"` で確認し、自分が起動したものだけ止める。つながりが切れた木は、切れた所の根元(親のない `sh.exe`)を `taskkill /PID <pid> /T /F` で止めると workerd まで止まる
 - 他の session の dev server が同じ PC で動いていることがある。CommandLine の path と port で自分のものか確かめてから止める
 
+## Git Bash の `sed -i` が CRLF を LF に変える
+
+- 現象: CRLF のファイルに `sed -i` → 置換していない行も含めて全行 LF になる (GNU sed 4.9 で実測)
+- git 管理下 (autocrlf) は commit 時に正規化され差分にならない。問題になるのは CRLF 必須のファイル (.bat 等) と git 管理外のファイル
+- 対処: CRLF のファイルは Edit ツールで直す。`sed -i` を使ったら `unix2dos -q <file>` で戻す。確認は `file <file>` の「with CRLF line terminators」
+
 ## ツール入力の `\uXXXX` は文字に復号される
 
 - 症状: Bash の heredoc や Edit の文字列に書いた `\u0020` が、送信時に実際の文字(空白など)へ変わる。正規表現の `\uXXXX` エスケープをそのまま書けない(Edit は「old と new が同一」エラー、python は想定外の文字で置換)
