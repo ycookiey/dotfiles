@@ -228,4 +228,26 @@ config.key_tables = require("keybinds").key_tables
 
 config.wsl_domains = {}
 
+----------------------------------------------------
+-- セッション復元 (Alt+Shift+R)
+----------------------------------------------------
+-- 30 秒ごとに窓・タブ・ペイン配置を保存。Claude Code のペインは nushell 上で dotcli の `c r <id>` を実行して再開する
+-- (nu -e は実行後もシェルに残るので、Claude を終えてもペインは閉じない)
+-- WezTerm に渡した cwd が無視されることがあるため、どのペインも nushell で先に cd する
+require("session_restore").setup({
+  pane_args = function(cwd, session_id, delay_ms)
+    local cmds = {}
+    if cwd then table.insert(cmds, string.format("cd r#'%s'#", cwd)) end
+    if session_id then
+      table.insert(cmds, string.format("sleep %dms", delay_ms))
+      table.insert(cmds, "c r " .. session_id)
+    end
+    if #cmds == 0 then return nil end
+    return { "nu", "-e", table.concat(cmds, "; ") }
+  end,
+  retry_command = function(session_id)
+    return "c r " .. session_id
+  end,
+})
+
 return config

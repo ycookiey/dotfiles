@@ -75,3 +75,20 @@
 | `Ctrl++/-/0` | フォントサイズ 拡大/縮小/リセット |
 | `Ctrl+Shift+P` | コマンドパレット |
 | `Ctrl+Shift+R` | 設定再読み込み |
+| `Alt+Shift+R` | 前回の WezTerm の窓・タブ・分割ペインと Claude Code の会話を復元 |
+
+## セッション復元
+
+`session_restore.lua`。PC の再起動などで WezTerm が終わったあと、`Alt+Shift+R` で前回の状態を開き直す。
+
+- 窓の大きさ（最大化していたか、またはピクセルサイズ）も保存する。復元では先に窓を最大化またはそのサイズにし、大きさが変わってから分割を作る。大きさが変わらず何も起きないときは、もう一度押すとその場で作る
+- 30 秒ごとに、窓・タブ・分割ペインの配置と各ペインのフォルダを `~/.local/share/wezterm/session-snapshot-*.json` に保存（WezTerm のプロセスごとに 1 ファイル、新しい順に 10 個残す）
+- Claude Code が動いていたペインは、その会話を `c r <会話 ID>` で再開する（1 ペインごとに 1 秒ずらして起動）
+- 会話 ID は Claude Code の SessionStart hook（`claude/hooks/claude-pid-session.sh`）が `~/.local/state/claude-pid-sessions/<pid>.json` に記録したもの。無ければ Claude Code 本体の `~/.claude/sessions/<pid>.json` から取る
+- 復元するのは、すでに終了した WezTerm のうち最後に終わったもの（同時に終わったものが複数あればペインが最も多いもの）
+- 起動直後の 1 タブ 1 ペインの窓で押すと、その初期ペインは閉じる
+- 中身のまだ無い会話（`/clear` 直後など）はシェルだけ開く
+- 2 枚目以降の窓も、保存時に最大化していれば最大化する
+- どのペインも、開いたらまず保存時のフォルダへ `cd` する（WezTerm に渡したフォルダが使われないことがあるため）。nushell の設定で OSC 7 を有効にしてあり、WezTerm は `cd` 後のフォルダを保存する
+- 会話の記録ファイルがあるかは、`~/.claude*/projects/*/<会話 ID>.jsonl` を探して判定する（hook が受け取る記録ファイルのパスは、作業フォルダが変わった会話では実在しないため）
+- 復元の約 20 秒後に、会話を再開するはずのペインで Claude が動いているかを確かめる。10 秒後にもう一度確かめても動いていなければ、そのペインのシェルに `c r <会話 ID>` を打ち込んでやり直す。その 20 秒後も動いていなければ通知し、戻すコマンドを `~/.local/share/wezterm/session-restore-failed.txt` に書く

@@ -41,6 +41,11 @@
             "type": "command",
             "command": "command -v ysidepaney >/dev/null 2>&1 && ysidepaney register; exit 0",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/claude-pid-session.sh\"",
+            "timeout": 5
           }
         ]
       }

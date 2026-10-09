@@ -3,6 +3,11 @@
 
 $env.config.show_banner = "short"
 
+# 端末 (WezTerm) に今いるフォルダを OSC 7 で知らせる。Windows では既定で無効。
+# 無効だと端末はプロセスの作業フォルダを見るが、nushell は cd してもそれをすぐには変えない
+# (`nu -e "cd X"` の直後は起動時のフォルダのまま見えた)
+$env.config.shell_integration.osc7 = true
+
 # --- PATH ---
 $env.PATH = ($env.PATH | split row (char esep)
   | append 'C:\Main\Script\git-worktree-runner\bin'

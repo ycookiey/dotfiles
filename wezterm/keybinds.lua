@@ -289,6 +289,8 @@ return {
     { key = "DownArrow", mods = "ALT", action = act.ActivatePaneDirection("Down") },
     -- ペインズーム
     { key = "z", mods = "ALT", action = act.TogglePaneZoomState },
+    -- 前回の WezTerm の窓・タブ・ペインと Claude Code の会話を復元
+    { key = "R", mods = "ALT|SHIFT", action = require("session_restore").restore_action() },
     -- フォントサイズ
     { key = "+", mods = "CTRL", action = act.IncreaseFontSize },
     { key = "-", mods = "CTRL", action = act.DecreaseFontSize },
