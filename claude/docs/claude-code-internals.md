@@ -27,6 +27,9 @@
 - 直前の assistant 行の `message.model` と照合して、窓サイズ別に集計
 - 全 jsonl を python で走査すると 300 秒の timeout を超える → 先に `grep -rl '"trigger":"auto"'` で対象ファイルを絞る
 - `subagents/agent-*.jsonl` はサブエージェントの記録。メインセッションの挙動と区別する
+- 会話の記録は、会話を始めたフォルダの projects フォルダに置かれ続ける。会話の途中で作業フォルダが変わっても、記録は移らない (実測: repo A で始めて repo B に移った会話の記録が `C--Main-Project-A/` にあり、そこに追記され続けていた)
+- hook の入力の `transcript_path` は、その時点の作業フォルダから組み立てたパスで、実在しないことがある (実測: 上の会話を repo B で `--resume` したとき、`…-B/<id>.jsonl` を受け取ったが、そのファイルは無かった)。記録の有無は `~/.claude*/projects/*/<id>.jsonl` を探して判定する
+- 実行中の `claude.exe` は、自動更新で `claude.exe.old.<時刻>.<pid>` に改名される (実測)。プロセス名で Claude を見分けるときは前方一致にする
 
 ## 公式 docs で仕様を確かめる
 
