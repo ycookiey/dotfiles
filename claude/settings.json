@@ -84,6 +84,11 @@
           },
           {
             "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/crlf-write-reminder.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
             "if": "Bash(rm *)",
             "command": "bash \"$HOME/.claude/hooks/rm-junction-guard.sh\"",
             "timeout": 5

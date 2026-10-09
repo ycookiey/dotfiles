@@ -18,3 +18,8 @@
 - 対処: consumer の copy に揃える。TS は `compilerOptions.paths`、実行時は Vite・vitest の `resolve.dedupe`
 - link 先の d.ts は推論された型に深い path を出す(`import("hono/hono-base")`・`hono/utils/types`)→ `"hono": [".../dist/types/index.d.ts"]` に加え `"hono/*": [".../dist/types/*.d.ts", ".../dist/types/*/index.d.ts"]` の wildcard まで揃える。確認は `tsc --traceResolution | grep "Module name 'hono'"`
 - 不可: pnpm の injected(`file:` + `dependenciesMeta.injected`)は link 先の `workspace:*` 依存を解決できず install が失敗
+
+## `link:` の package を build し直すと、動いている Vite の dev server が壊れる
+
+- 現象: link 先を `rm -rf dist && tsc` 型の build で作り直すと、起動中の dev server(@cloudflare/vite-plugin の Worker 側)が `Failed to load url /@fs/.../dist/index.js ... Does the file exist?` → API が 500、画面は読み込み失敗(2026-10、vite 8 + @cloudflare/vite-plugin)
+- 対処: link 先の build の後は dev server を再起動。branch の切り替え・rebase で build し直したときも同じ
