@@ -14,3 +14,16 @@
 - 原因: Hyper-V / WSL / Docker 等が予約した除外ポート範囲(実測: 50998 が 50951-51050 内)。範囲は再起動で変わることがある
 - 確認: `netsh int ipv4 show excludedportrange protocol=tcp`
 - 固定ポートを選ぶ前に確認する(予約表 ports.md と併用)
+
+## WSL で動いているサーバーのポートが Windows の 127.0.0.1 でも塞がる
+
+- 現象: WSL(NAT、`.wslconfig` に networkingMode の指定なし)で 4300 番のサーバーが動いている間、Windows で同じ 4300 番に listen すると `EADDRINUSE 127.0.0.1:4300`(2026-10 実測)
+- 原因(推定): WSL2 の localhost 転送(`localhostForwarding` 既定 true)が、WSL 側で listen したポートを Windows の localhost にも開く
+- 影響: 同じ固定ポートを使うツールを WSL と Windows で同時に動かせない。相手が別 session だと気づきにくい
+- 対処: 片方のポートをずらす。または同時に動かさない(lock を共有する)
+
+## 短時間に大量のローカル接続を作ると TIME_WAIT が動的ポートを埋める
+
+- Windows は TIME_WAIT の再利用が効かず、待ち(既定 約 2 分)の間ポートを占有する。動的ポートは既定 16,384 個(49152-65535)
+- 実測: Vite dev + @cloudflare/vite-plugin に Playwright で数百ページを開くと、3〜4 分で `connect EADDRINUSE`。build + preview でも 1 回(約 100 秒)で TIME_WAIT が最大 約 10,700 個
+- 確認: `netstat -an | grep -c TIME_WAIT`。Linux(WSL)では起きない

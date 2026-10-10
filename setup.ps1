@@ -110,6 +110,9 @@ try {
     # Bash (Git Bash) — sources dotcli-generated aliases
     mkl "$HOME\.bashrc" "$ScriptDir\bash\.bashrc"
 
+    # WSL 2: memory の上限と cache の返し方(claude/docs/wsl.md)
+    mkl "$HOME\.wslconfig" "$ScriptDir\wsl\wslconfig"
+
     mkd "$HOME\.config"
     mkl "$HOME\.config\wezterm" "$ScriptDir\wezterm"
     mkd "$env:APPDATA\yazi\config"

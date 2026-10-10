@@ -63,6 +63,12 @@ grep -qiF -- "$pat" "$f"; case $? in 0) 一致 ;; 1) 不一致 ;; *) エラー�
 - 症状: `cd dir && python -m http.server` の実行中、`dir` を削除すると EPERM(プロセスの作業フォルダがロックする)。生成し直す処理(`rmSync(dir)` 等)が失敗する
 - 対処: 別の場所から `python -m http.server <port> --directory <dir>` で配る
 
+## `wsl.exe -- bash -c '...$VAR...'` が何も出さずに失敗する
+
+- 現象: Git Bash から `MSYS_NO_PATHCONV=1 wsl.exe -d <distro> -- bash -c '<$ を含むコマンド>'` が出力なしの exit 2 / 1。`$` を含まないコマンドは通る(2026-10 実測、原因は未確認)
+- 回避: コマンドを WSL 側のファイル(`//wsl.localhost/<distro>/home/<user>/x.sh`)に書き、`wsl.exe -d <distro> -- bash /home/<user>/x.sh` で実行する
+- WSL の出力を `| grep` などに通すと、終わるまで溜まって流れないことがある。結果は WSL 側のファイルに書いて読む
+
 ## Windows の python を Git Bash から使うときの食い違い
 
 - `/tmp` が別の場所: Git Bash の `/tmp` = `%TEMP%`(`C:\Users\<user>\AppData\Local\Temp`)、Windows の python の `/tmp` = `C:\tmp`。受け渡しは Windows パス(`C:/...`、scratchpad 等)で書く

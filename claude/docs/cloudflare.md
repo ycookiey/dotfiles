@@ -53,6 +53,22 @@ js
 - 確認: 出力の wrangler.json の `name` / `routes` / `d1_databases` / `targetEnvironment` を見る。`wrangler deploy --dry-run` は未ログインでも通る
 - 確認版: wrangler 4.142 / @cloudflare/vite-plugin 1.60
 
+### Vite プラグイン: 同じ root で dev / preview を複数同時に立てる
+
+- 症状: 2 つ目以降が `Error: listen EADDRINUSE: address already in use 127.0.0.1:9229`(または 9230)で落ちる。同時に起動すると取り合う
+- 原因: プラグインが Worker のデバッガ用ポート(`inspectorPort`、既定 9229 から)を各サーバーで取る
+- 対処: `cloudflare({ inspectorPort: false })`。ほかに分けるもの:
+  - ローカルの D1 などの状態: `persistState: { path }`(`<path>/v3/...` に置かれる。`wrangler d1 ... --persist-to` も同じ構造)。初期データは 1 つ作って `.wrangler/state` を複製する
+  - dev の依存キャッシュ: Vite の `cacheDir` をサーバーごとに分ける(同じフォルダへの同時書き込みを避ける)
+- `vite preview` も同じ設定(`persistState` / `.dev.vars`)を読む
+- 確認版: @cloudflare/vite-plugin 1.60.2 / Vite 8.3(2026-10、WSL で 8 台まで実測)
+
+### Vite + Playwright: 毎回新しいブラウザで開くなら dev より build が速い
+
+- dev はまとめていない module を 1 つずつ配るので、キャッシュのない新しい browser context では 1 回開くたびに数百の要求になる(実測: 1 回あたり約 330 件)
+- 画面を何十回も開き直す撮影・E2E では、`vite build` + `vite preview` のほうが大幅に速い(実測: 1,094 秒 → 約 330〜440 秒)
+- 差: `import.meta.env.DEV` の中だけで出る部品は build には出ない
+
 ### D1: SQLite より SQL の上限が低い
 
 - GLOB / LIKE: 型が長いと `LIKE or GLOB pattern too complex` で失敗(`[0-9]` を 20 個並べた日時の型で発生)。複合 SELECT: 項が多いと `too many terms in compound SELECT`(`UNION ALL` 10 項で発生)

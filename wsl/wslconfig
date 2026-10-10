@@ -1,0 +1,6 @@
+# WSL 2 VM settings, linked to ~/.wslconfig by setup.ps1. Takes effect after wsl --shutdown.
+# memory: file cache grows up to this cap and is taken from Windows (claude/docs/wsl.md).
+[wsl2]
+memory=16GB
+[experimental]
+autoMemoryReclaim=dropCache
