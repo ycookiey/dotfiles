@@ -67,3 +67,9 @@ grep -qiF -- "$pat" "$f"; case $? in 0) 一致 ;; 1) 不一致 ;; *) エラー�
 
 - `/tmp` が別の場所: Git Bash の `/tmp` = `%TEMP%`(`C:\Users\<user>\AppData\Local\Temp`)、Windows の python の `/tmp` = `C:\tmp`。受け渡しは Windows パス(`C:/...`、scratchpad 等)で書く
 - text mode の書込は改行を CRLF に変える: `Path.write_text` / `open(p, "w")` は `\n` を `\r\n` で書く。LF のファイルを置換すると全行 CRLF になる(git の警告「CRLF will be replaced by LF」で気づく)。`read_bytes().decode()` → `write_bytes(s.encode())`、または `open(p, "w", newline="")` を使う。確認は `git ls-files --eol <path>` の `w/lf`
+- `print` も stdout に `\r\n` を書く: bash の `while read a b` で読むと最後の変数の末尾に `\r` が残る(ファイル名なら ffmpeg が「出力の形式を選べない」で失敗)。読む側で `tr -d '\r' <file | while read …`、出す側で `sys.stdout.reconfigure(newline="\n")`
+
+## ファイルを変数で渡すコマンドは `"$f"` と引用する
+
+- 引用しない `$f` が空だと grep・sed・cat は引数なしになり、標準入力を待って止まる(Bash ツールでは時間切れまで返らない。`f=$(… | head -1)` が何も返さなかったときに起きた)
+- 引用すれば「ファイルが無い」で即座に失敗する。入力が要らないコマンドには `</dev/null` も付ける
