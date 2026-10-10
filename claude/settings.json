@@ -68,6 +68,16 @@
     ],
     "PreToolUse": [
       {
+        "matcher": "SendUserFile",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/sendfile-to-ysidepaney.sh\"",
+            "timeout": 15
+          }
+        ]
+      },
+      {
         "matcher": "Bash",
         "hooks": [
           {
