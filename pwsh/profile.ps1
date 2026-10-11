@@ -39,7 +39,6 @@ if ([IO.File]::Exists($chromeYatcyScript)) {
 }
 
 function admin { start wezterm -Verb RunAs -Arg 'start','--cwd',$PWD }
-function vf { v (f @args) }
 function y {
     $tmp = [IO.Path]::GetTempFileName()
     yazi @args --cwd-file=$tmp
