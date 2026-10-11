@@ -122,17 +122,24 @@ fn parse_resets_at(v: &serde_json::Value) -> Option<f64> {
     }
 }
 
+// "YYYY-MM-DDTHH:MM:SS[.fff][Z|±HH[:MM]]" → Unix seconds. No suffix means UTC.
+// Fields are sliced with get() so a multibyte char never panics (→ None).
 fn parse_iso8601(s: &str) -> Option<f64> {
     let s = s.trim();
-    if s.len() < 19 {
-        return None;
-    }
-    let year: i64 = s[0..4].parse().ok()?;
-    let month: i64 = s[5..7].parse().ok()?;
-    let day: i64 = s[8..10].parse().ok()?;
-    let hour: i64 = s[11..13].parse().ok()?;
-    let min: i64 = s[14..16].parse().ok()?;
-    let sec: i64 = s[17..19].parse().ok()?;
+    let field = |a: usize, b: usize| -> Option<i64> {
+        let f = s.get(a..b)?;
+        if !f.bytes().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        f.parse().ok()
+    };
+    let year = field(0, 4)?;
+    let month = field(5, 7)?;
+    let day = field(8, 10)?;
+    let hour = field(11, 13)?;
+    let min = field(14, 16)?;
+    let sec = field(17, 19)?;
+    let offset = parse_utc_offset(s.get(19..)?)?;
     let mut y = year;
     let mut m = month;
     if m <= 2 {
@@ -140,7 +147,44 @@ fn parse_iso8601(s: &str) -> Option<f64> {
         m += 12;
     }
     let days = 365 * y + y / 4 - y / 100 + y / 400 + (153 * (m - 3) + 2) / 5 + day - 719469;
-    Some((days * 86400 + hour * 3600 + min * 60 + sec) as f64)
+    Some((days * 86400 + hour * 3600 + min * 60 + sec - offset) as f64)
+}
+
+// Suffix after the seconds field: optional ".fff", then "", "Z"/"z" or
+// "±HH", "±HHMM", "±HH:MM". Returns the offset east of UTC in seconds.
+fn parse_utc_offset(rest: &str) -> Option<i64> {
+    let rest = match rest.strip_prefix('.') {
+        Some(frac) => {
+            let digits = frac.bytes().take_while(u8::is_ascii_digit).count();
+            if digits == 0 {
+                return None;
+            }
+            &frac[digits..]
+        }
+        None => rest,
+    };
+    let sign = match rest.as_bytes().first() {
+        None => return Some(0),
+        Some(b'Z' | b'z') if rest.len() == 1 => return Some(0),
+        Some(b'+') => 1,
+        Some(b'-') => -1,
+        Some(_) => return None,
+    };
+    let hm = rest.get(1..)?;
+    let (hh, mm) = match hm.len() {
+        2 => (hm, "00"),
+        4 => (hm.get(0..2)?, hm.get(2..4)?),
+        5 if hm.as_bytes()[2] == b':' => (hm.get(0..2)?, hm.get(3..5)?),
+        _ => return None,
+    };
+    if !hh.bytes().chain(mm.bytes()).all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let (h, m): (i64, i64) = (hh.parse().ok()?, mm.parse().ok()?);
+    if h > 23 || m > 59 {
+        return None;
+    }
+    Some(sign * (h * 3600 + m * 60))
 }
 
 fn elapsed_pct(resets_at: &Option<serde_json::Value>, window_secs: f64) -> i32 {
@@ -1391,5 +1435,55 @@ mod tests {
         // emoji with text presentation by default (Emoji_Presentation=No)
         assert_eq!(display_width("✔❤⚠"), 3);
         assert_eq!(display_width("漢字かな"), 8);
+    }
+
+    #[test]
+    fn iso8601_applies_utc_offset() {
+        let utc = parse_iso8601("2026-10-11T03:00:00Z").unwrap();
+        assert_eq!(utc, 1_791_687_600.0);
+        assert_eq!(parse_iso8601("2026-10-11T03:00:00"), Some(utc));
+        assert_eq!(parse_iso8601("2026-10-11T03:00:00z"), Some(utc));
+        assert_eq!(parse_iso8601("2026-10-11T12:00:00+09:00"), Some(utc));
+        assert_eq!(parse_iso8601("2026-10-11T12:00:00+0900"), Some(utc));
+        assert_eq!(parse_iso8601("2026-10-11T12:00:00+09"), Some(utc));
+        assert_eq!(parse_iso8601("2026-10-10T22:30:00-04:30"), Some(utc));
+        assert_eq!(parse_iso8601("2026-10-11T03:00:00.123Z"), Some(utc));
+        assert_eq!(parse_iso8601("2026-10-11T12:00:00.5+09:00"), Some(utc));
+        assert_eq!(parse_iso8601(" 2026-10-11T03:00:00Z \n"), Some(utc));
+    }
+
+    #[test]
+    fn iso8601_rejects_malformed_without_panic() {
+        for s in [
+            "2026-10-1あT12:00:00",
+            "あ026-10-11T12:00:00",
+            "2026-10-11T12:00:0あ",
+            "2026-10-11T12:00:00+あa",
+            "2026-10-11T12:00:00+0あ",
+            "2026-10-11T12:00:00+09:あ",
+            "2026-10-11T12:00:00あ",
+            "2026-10-11T12:00:00.",
+            "2026-10-11T12:00:00.Z",
+            "2026-10-11T12:00:00Zx",
+            "2026-10-11T12:00:00+9",
+            "2026-10-11T12:00:00+24:00",
+            "2026-10-11T12:00:00+09:60",
+            "2026-10-11T12:00:00 UTC",
+            "2026-10-11T12:00",
+            "2026-10-11",
+            "",
+        ] {
+            assert_eq!(parse_iso8601(s), None, "{s:?}");
+        }
+    }
+
+    #[test]
+    fn resets_at_number_is_used_as_is() {
+        assert_eq!(parse_resets_at(&serde_json::json!(1791699600)), Some(1_791_699_600.0));
+        assert_eq!(
+            parse_resets_at(&serde_json::json!("2026-10-11T12:00:00+09:00")),
+            Some(1_791_687_600.0)
+        );
+        assert_eq!(parse_resets_at(&serde_json::json!(null)), None);
     }
 }
