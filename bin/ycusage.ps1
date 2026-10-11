@@ -134,6 +134,29 @@ function Get-UsageFromCache([string]$credDir, [string]$filePath) {
     }
 }
 
+# 5h/7d 使用率と 5t/7t 経過率の 2 行 (キャッシュが 1 時間より古ければ経過時間も) を表示
+function Show-UsageRows([hashtable]$u) {
+    $stale = ""
+    if ($u.CachedAt) {
+        $ago = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - $u.CachedAt
+        if ($ago -gt 3600) { $stale = " ({0}h ago)" -f [int][Math]::Floor($ago / 3600) }
+    }
+
+    $l5 = "$($u.L5)"; $l7 = "$($u.L7)"
+    $timeW = 7
+    $pad = " " * ($l5.PadRight($timeW).Length + 2)
+
+    wh "  " -NoNewline; wh "5h " -ForegroundColor $lc -NoNewline
+    wh "$(Stat $u.P5)$pad" -NoNewline; wh $sep -NoNewline
+    wh "7d " -ForegroundColor $lc -NoNewline; wh "$(Stat $u.P7)" -NoNewline
+    if ($stale) { wh $stale -ForegroundColor DarkGray } else { wh "" }
+
+    wh "  " -NoNewline; wh "5t " -ForegroundColor $lc -NoNewline
+    wh "$(Stat $u.E5)  " -NoNewline; wh $l5.PadRight($timeW) -ForegroundColor Cyan -NoNewline
+    wh $sep -NoNewline; wh "7t " -ForegroundColor $lc -NoNewline
+    wh "$(Stat $u.E7)  " -NoNewline; wh $l7 -ForegroundColor Cyan
+}
+
 # --- Main ---
 $accDirs = gci "$HOME\.claude-*" -Directory -ea 0 |
     ? { $_.Name -match "^\.claude-(\d+)$" }
@@ -187,29 +210,7 @@ foreach ($a in $accounts) {
         continue
     }
 
-    # キャッシュ鮮度表示
-    $stale = ""
-    if ($u.CachedAt) {
-        $ago = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - $u.CachedAt
-        if ($ago -gt 3600) {
-            $hAgo = [int][Math]::Floor($ago / 3600)
-            $stale = " ({0}h ago)" -f $hAgo
-        }
-    }
-
-    $l5 = "$($u.L5)"; $l7 = "$($u.L7)"
-    $timeW = 7
-    $pad = " " * ($l5.PadRight($timeW).Length + 2)
-
-    wh "  " -NoNewline; wh "5h " -ForegroundColor $lc -NoNewline
-    wh "$(Stat $u.P5)$pad" -NoNewline; wh $sep -NoNewline
-    wh "7d " -ForegroundColor $lc -NoNewline; wh "$(Stat $u.P7)" -NoNewline
-    if ($stale) { wh $stale -ForegroundColor DarkGray } else { wh "" }
-
-    wh "  " -NoNewline; wh "5t " -ForegroundColor $lc -NoNewline
-    wh "$(Stat $u.E5)  " -NoNewline; wh $l5.PadRight($timeW) -ForegroundColor Cyan -NoNewline
-    wh $sep -NoNewline; wh "7t " -ForegroundColor $lc -NoNewline
-    wh "$(Stat $u.E7)  " -NoNewline; wh $l7 -ForegroundColor Cyan
+    Show-UsageRows $u
 }
 
 # --- GLM (Z.ai) ---
@@ -220,27 +221,7 @@ if (tp $glmCache) {
         wh ""
         wh "GLM (Z.ai)" -ForegroundColor Magenta
 
-        $stale = ""
-        if ($gu.CachedAt) {
-            $ago = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - $gu.CachedAt
-            if ($ago -gt 3600) {
-                $stale = " ({0}h ago)" -f [int][Math]::Floor($ago / 3600)
-            }
-        }
-
-        $l5 = "$($gu.L5)"; $l7 = "$($gu.L7)"
-        $timeW = 7
-        $pad = " " * ($l5.PadRight($timeW).Length + 2)
-
-        wh "  " -No; wh "5h " -Fo $lc -No
-        wh "$(Stat $gu.P5)$pad" -No; wh $sep -No
-        wh "7d " -Fo $lc -No; wh "$(Stat $gu.P7)" -No
-        if ($stale) { wh $stale -Fo DarkGray } else { wh "" }
-
-        wh "  " -No; wh "5t " -Fo $lc -No
-        wh "$(Stat $gu.E5)  " -No; wh $l5.PadRight($timeW) -Fo Cyan -No
-        wh $sep -No; wh "7t " -Fo $lc -No
-        wh "$(Stat $gu.E7)  " -No; wh $l7 -Fo Cyan
+        Show-UsageRows $gu
     }
 }
 
