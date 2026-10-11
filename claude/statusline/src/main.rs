@@ -70,13 +70,13 @@ struct Cost {
     total_lines_removed: u64,
 }
 
-#[derive(Deserialize, Serialize, Clone, Default)]
+#[derive(Deserialize, Serialize, Clone, Default, PartialEq, Debug)]
 struct RateLimits {
     five_hour: Option<Window>,
     seven_day: Option<Window>,
 }
 
-#[derive(Deserialize, Serialize, Clone, Default)]
+#[derive(Deserialize, Serialize, Clone, Default, PartialEq, Debug)]
 struct Window {
     used_percentage: Option<f64>,
     resets_at: Option<serde_json::Value>,
@@ -287,8 +287,9 @@ fn find_last_assistant_model(content: &str) -> Option<String> {
 // Statusline TOML Rules
 // ========================================
 
+/// A `[[model]]` or `[[provider]]` entry: names matched case-insensitively.
 #[derive(Deserialize, Default, Clone)]
-struct ModelRule {
+struct Rule {
     #[serde(default)]
     name: Vec<String>,
     #[serde(default)]
@@ -300,55 +301,53 @@ struct ModelRule {
 #[derive(Deserialize, Default)]
 struct RulesFile {
     #[serde(default)]
-    model: Vec<ModelRule>,
+    model: Vec<Rule>,
     #[serde(default)]
-    provider: Vec<ProviderRule>,
+    provider: Vec<Rule>,
 }
 
-#[derive(Deserialize, Default, Clone)]
-struct ProviderRule {
-    #[serde(default)]
-    name: Vec<String>,
-    #[serde(default)]
-    display: String,
-    #[serde(default)]
-    color: String,
+// ========================================
+// Config dir
+// ========================================
+
+/// Claude config dir: CLAUDE_CONFIG_DIR, else USERPROFILE/.claude, else
+/// HOME/.claude. An empty variable counts as unset.
+fn config_dir() -> Option<String> {
+    config_dir_from(|name| env::var(name).ok())
+}
+
+fn config_dir_from(get: impl Fn(&str) -> Option<String>) -> Option<String> {
+    let get = |name: &str| get(name).filter(|v| !v.is_empty());
+    get("CLAUDE_CONFIG_DIR").or_else(|| {
+        get("USERPROFILE")
+            .or_else(|| get("HOME"))
+            .map(|h| format!("{h}/.claude"))
+    })
 }
 
 // ========================================
 // TOML Rule Loading
 // ========================================
 
-fn match_model_rule<'a>(model_name: &'a str, rules: &'a [ModelRule]) -> Option<&'a ModelRule> {
-    rules.iter().find(|rule| {
-        rule.name.iter().any(|n| n.eq_ignore_ascii_case(model_name))
-    })
+fn match_rule<'a>(name: &str, rules: &'a [Rule]) -> Option<&'a Rule> {
+    rules.iter().find(|r| r.name.iter().any(|n| n.eq_ignore_ascii_case(name)))
 }
 
-struct LoadedRules {
-    model: Vec<ModelRule>,
-    provider: Vec<ProviderRule>,
+/// Rules are only consulted for a model the Anthropic pattern does not cover
+/// and for a provider badge, so most runs skip reading and parsing the file.
+fn rules_needed(model_raw: &str, provider: Option<&str>) -> bool {
+    provider.is_some() || anthropic_badge(model_raw).is_none()
 }
 
-fn load_rules() -> LoadedRules {
-    let dir = env::var("CLAUDE_CONFIG_DIR").unwrap_or_else(|_| {
-        env::var("USERPROFILE")
-            .or_else(|_| env::var("HOME"))
-            .map(|h| format!("{}/.claude", h))
-            .unwrap_or_default()
-    });
-    let rules_path = format!("{dir}/statusline-rules.toml");
-    let content = std::fs::read_to_string(&rules_path)
-        .unwrap_or_else(|_| include_str!("../statusline-models.toml").to_string());
-    let parsed = toml::from_str::<RulesFile>(&content)
+fn load_rules(dir: Option<&str>) -> RulesFile {
+    let content = dir
+        .and_then(|d| std::fs::read_to_string(format!("{d}/statusline-rules.toml")).ok())
+        .unwrap_or_else(|| include_str!("../statusline-models.toml").to_string());
+    toml::from_str::<RulesFile>(&content)
         .unwrap_or_else(|e| {
             eprintln!("Failed to parse statusline rules: {e}");
             RulesFile::default()
-        });
-    LoadedRules {
-        model: parsed.model,
-        provider: parsed.provider,
-    }
+        })
 }
 
 fn fmt_color(rgb: &str) -> String {
@@ -398,12 +397,12 @@ fn anthropic_badge(name: &str) -> Option<(String, String)> {
     Some((format!("{sym} {ver}{plus}"), color.to_string()))
 }
 
-fn model_short_with_rules(display_name: &str, rules: &[ModelRule]) -> String {
+fn model_short_with_rules(display_name: &str, rules: &[Rule]) -> String {
     // Anthropic モデルはパターン解析で自動生成（toml 追記不要）
     if let Some((disp, color)) = anthropic_badge(display_name) {
         return format!("{}{disp}{RST}", fmt_color(&color));
     }
-    if let Some(rule) = match_model_rule(display_name, rules) {
+    if let Some(rule) = match_rule(display_name, rules) {
         let color = fmt_color(&rule.color);
         format!("{color}{}{RST}", rule.display)
     } else {
@@ -426,10 +425,6 @@ fn effort_badge(level: &str) -> String {
     format!(" {}{label}{RST}", fmt_color(rgb))
 }
 
-fn match_provider_rule<'a>(name: &str, rules: &'a [ProviderRule]) -> Option<&'a ProviderRule> {
-    rules.iter().find(|r| r.name.iter().any(|n| n.eq_ignore_ascii_case(name)))
-}
-
 fn detect_provider() -> Option<String> {
     env::var("ANTHROPIC_BASE_URL")
         .ok()
@@ -437,8 +432,8 @@ fn detect_provider() -> Option<String> {
         .map(|_| "z.ai".into())
 }
 
-fn provider_badge_with_rules(name: &str, rules: &[ProviderRule]) -> Option<String> {
-    match_provider_rule(name, rules).map(|rule| fmt_badge(&rule.display, &rule.color))
+fn provider_badge_with_rules(name: &str, rules: &[Rule]) -> Option<String> {
+    match_rule(name, rules).map(|rule| fmt_badge(&rule.display, &rule.color))
 }
 
 // ========================================
@@ -553,16 +548,10 @@ fn glm_fetch_failed(cache_path: &str, prev: GlmCacheRead, now: u64, msg: &str) -
     cache.rate_limits.unwrap_or_default()
 }
 
-fn get_glm_rate_limits() -> RateLimits {
-    let dir = env::var("CLAUDE_CONFIG_DIR").unwrap_or_else(|_| {
-        env::var("USERPROFILE")
-            .or_else(|_| env::var("HOME"))
-            .map(|h| format!("{h}/.claude"))
-            .unwrap_or_default()
-    });
-    if dir.is_empty() {
+fn get_glm_rate_limits(dir: Option<&str>) -> RateLimits {
+    let Some(dir) = dir else {
         return RateLimits::default();
-    }
+    };
     let cache_path = format!("{dir}/.glm-rate-limits.json");
 
     let now = now_unix() as u64;
@@ -680,17 +669,11 @@ fn get_glm_rate_limits() -> RateLimits {
     rl
 }
 
-fn acc_from_env() -> u32 {
-    let dir = env::var("CLAUDE_CONFIG_DIR").unwrap_or_default();
-    let dir = if dir.is_empty() {
-        env::var("HOME")
-            .or_else(|_| env::var("USERPROFILE"))
-            .map(|h| format!("{h}/.claude"))
-            .unwrap_or_default()
-    } else {
-        dir
-    };
+/// Account number from the trailing digits of the config dir name
+/// (`.claude-3` -> 3). The default `.claude` gives 0.
+fn acc_from_dir(dir: Option<&str>) -> u32 {
     let tail = dir
+        .unwrap_or("")
         .trim_end_matches(['/', '\\'])
         .rsplit(['/', '\\'])
         .next()
@@ -758,29 +741,45 @@ fn pad_left(s: &str, width: usize) -> String {
     }
 }
 
-/// Cache rate_limits to $CLAUDE_CONFIG_DIR/.rate-limits.json for ycusage
-fn cache_rate_limits(raw: &str) {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) else {
-        return;
+// A cache with the same rate_limits younger than this is not rewritten.
+// ycusage only labels data older than 3600s as stale.
+const RATE_LIMITS_REWRITE_SECONDS: u64 = 300;
+
+/// $CLAUDE_CONFIG_DIR/.rate-limits.json, read by bin/ycusage.ps1.
+/// The rate_limits are re-serialized from the typed struct, so fields other
+/// than five_hour/seven_day.{used_percentage,resets_at} are dropped, and
+/// stdin whose rate_limits do not fit the struct (which also blanks the rest
+/// of the Input) writes nothing. ycusage reads only those fields and
+/// cached_at.
+#[derive(Deserialize, Serialize)]
+struct RateLimitsCache {
+    rate_limits: RateLimits,
+    cached_at: u64,
+}
+
+/// Whether the cache needs writing: skipped while the existing file holds
+/// the same rate_limits written less than RATE_LIMITS_REWRITE_SECONDS ago.
+fn rate_limits_cache_stale(existing: Option<&str>, rl: &RateLimits, now: u64) -> bool {
+    let Some(prev) = existing.and_then(|s| serde_json::from_str::<RateLimitsCache>(s).ok()) else {
+        return true;
     };
-    let Some(rl) = v.get("rate_limits") else { return };
-    if rl.is_null() {
+    let recent = prev.cached_at <= now && now - prev.cached_at < RATE_LIMITS_REWRITE_SECONDS;
+    !(recent && prev.rate_limits == *rl)
+}
+
+/// Plain overwrite, not temp + rename: .rate-limits.json can be a symlink
+/// (e.g. under ~/.claude-N.lock), and a rename would replace the link.
+fn cache_rate_limits(dir: Option<&str>, rl: &RateLimits, now: u64) {
+    let Some(dir) = dir else { return };
+    let path = format!("{dir}/.rate-limits.json");
+    let existing = std::fs::read_to_string(&path).ok();
+    if !rate_limits_cache_stale(existing.as_deref(), rl, now) {
         return;
     }
-    let dir = env::var("CLAUDE_CONFIG_DIR").unwrap_or_else(|_| {
-        env::var("USERPROFILE")
-            .or_else(|_| env::var("HOME"))
-            .map(|h| format!("{h}/.claude"))
-            .unwrap_or_default()
-    });
-    if dir.is_empty() {
-        return;
+    let cache = RateLimitsCache { rate_limits: rl.clone(), cached_at: now };
+    if let Ok(json_str) = serde_json::to_string(&cache) {
+        let _ = std::fs::write(&path, json_str);
     }
-    let cache = serde_json::json!({
-        "rate_limits": rl,
-        "cached_at": now_unix() as u64,
-    });
-    let _ = std::fs::write(format!("{dir}/.rate-limits.json"), cache.to_string());
 }
 
 fn main() {
@@ -797,18 +796,38 @@ fn main() {
     let _ = io::stdin().read_to_string(&mut input_str);
     let j: Input = serde_json::from_str(&input_str).unwrap_or_default();
 
-    let LoadedRules { model: rules, provider: provider_rules } = load_rules();
+    let dir = config_dir();
+    let dir = dir.as_deref();
 
     let provider = detect_provider();
     let is_glm = provider.is_some();
-    let provider_badge = provider.as_ref().and_then(|p| provider_badge_with_rules(p, &provider_rules))
+
+    // Model
+    let model_stdin = j.model.as_ref().and_then(|m| m.display_name.clone()).unwrap_or_default();
+    let model_raw = if !model_stdin.is_empty() {
+        model_stdin
+    } else {
+        j.transcript_path
+            .as_deref()
+            .and_then(read_model_from_transcript)
+            .unwrap_or_else(|| "?".into())
+    };
+
+    let rules = if rules_needed(&model_raw, provider.as_deref()) {
+        load_rules(dir)
+    } else {
+        RulesFile::default()
+    };
+    let provider_badge = provider.as_ref().and_then(|p| provider_badge_with_rules(p, &rules.provider))
         .unwrap_or_default();
 
     // Rate limits: GLM or Anthropic
     let rate_limits = if is_glm {
-        Some(get_glm_rate_limits())
+        Some(get_glm_rate_limits(dir))
     } else {
-        cache_rate_limits(&input_str);
+        if let Some(rl) = &j.rate_limits {
+            cache_rate_limits(dir, rl, now_unix() as u64);
+        }
         j.rate_limits.clone()
     };
     let has_rl = rate_limits.is_some();
@@ -824,18 +843,8 @@ fn main() {
         (0, 0, 0, 0)
     };
 
-    // Model
-    let model_stdin = j.model.as_ref().and_then(|m| m.display_name.clone()).unwrap_or_default();
-    let model_raw = if !model_stdin.is_empty() {
-        model_stdin
-    } else {
-        j.transcript_path
-            .as_deref()
-            .and_then(read_model_from_transcript)
-            .unwrap_or_else(|| "?".into())
-    };
-    let model = model_short_with_rules(&model_raw, &rules);
-    let acc = acc_from_env();
+    let model = model_short_with_rules(&model_raw, &rules.model);
+    let acc = acc_from_dir(dir);
     let acc_str = if acc > 0 && (acc as usize) <= ACC_ICONS.len() {
         ACC_ICONS[(acc - 1) as usize].to_string()
     } else {
@@ -1169,5 +1178,154 @@ mod tests {
         for key in ["cached_at", "provider", "rate_limits", "failed_at"] {
             assert!(v.get(key).is_some(), "missing {key}");
         }
+    }
+
+    fn env_of<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |name| vars.iter().find(|(k, _)| *k == name).map(|(_, v)| v.to_string())
+    }
+
+    #[test]
+    fn config_dir_prefers_claude_config_dir() {
+        let vars = [("CLAUDE_CONFIG_DIR", "C:/u/.claude-3"), ("USERPROFILE", "C:/u"), ("HOME", "/h")];
+        assert_eq!(config_dir_from(env_of(&vars)).as_deref(), Some("C:/u/.claude-3"));
+    }
+
+    #[test]
+    fn config_dir_treats_empty_as_unset() {
+        let vars = [("CLAUDE_CONFIG_DIR", ""), ("USERPROFILE", "C:/u"), ("HOME", "/h")];
+        assert_eq!(config_dir_from(env_of(&vars)).as_deref(), Some("C:/u/.claude"));
+        let vars = [("CLAUDE_CONFIG_DIR", ""), ("USERPROFILE", ""), ("HOME", "/h")];
+        assert_eq!(config_dir_from(env_of(&vars)).as_deref(), Some("/h/.claude"));
+        let vars = [("CLAUDE_CONFIG_DIR", ""), ("USERPROFILE", ""), ("HOME", "")];
+        assert_eq!(config_dir_from(env_of(&vars)), None);
+    }
+
+    #[test]
+    fn config_dir_falls_back_userprofile_then_home() {
+        let vars = [("USERPROFILE", "C:/u"), ("HOME", "/h")];
+        assert_eq!(config_dir_from(env_of(&vars)).as_deref(), Some("C:/u/.claude"));
+        let vars = [("HOME", "/h")];
+        assert_eq!(config_dir_from(env_of(&vars)).as_deref(), Some("/h/.claude"));
+        assert_eq!(config_dir_from(env_of(&[])), None);
+    }
+
+    #[test]
+    fn acc_from_dir_reads_trailing_digits() {
+        assert_eq!(acc_from_dir(Some("C:/u/.claude-3")), 3);
+        assert_eq!(acc_from_dir(Some("C:\\u\\.claude-9\\")), 9);
+        assert_eq!(acc_from_dir(Some("/h/.claude-12/")), 12);
+        // every fallback ends in /.claude, whichever of USERPROFILE/HOME is used
+        assert_eq!(acc_from_dir(Some("C:/u3/.claude")), 0);
+        assert_eq!(acc_from_dir(Some("/h3/.claude")), 0);
+        assert_eq!(acc_from_dir(None), 0);
+    }
+
+    fn rule(names: &[&str], display: &str) -> Rule {
+        Rule {
+            name: names.iter().map(|s| s.to_string()).collect(),
+            display: display.into(),
+            color: "1,2,3".into(),
+        }
+    }
+
+    #[test]
+    fn match_rule_is_case_insensitive_and_first_wins() {
+        let rules = [rule(&["glm-4.6", "GLM-4.6-Air"], "a"), rule(&["glm-4.6"], "b")];
+        assert_eq!(match_rule("GLM-4.6", &rules).map(|r| r.display.as_str()), Some("a"));
+        assert_eq!(match_rule("glm-4.6-air", &rules).map(|r| r.display.as_str()), Some("a"));
+        assert!(match_rule("glm-4", &rules).is_none());
+        assert!(match_rule("x", &[]).is_none());
+    }
+
+    #[test]
+    fn bundled_rules_parse() {
+        let parsed: RulesFile = toml::from_str(include_str!("../statusline-models.toml")).unwrap();
+        assert!(!parsed.model.is_empty() || !parsed.provider.is_empty());
+    }
+
+    #[test]
+    fn rules_not_needed_for_anthropic_models() {
+        assert!(!rules_needed("Opus 5.5", None));
+        assert!(!rules_needed("Sonnet 4.6 (1M context)", None));
+        assert!(!rules_needed("Haiku 4.5", None));
+        // no version: anthropic_badge gives None, rules decide
+        assert!(rules_needed("Opus", None));
+        assert!(rules_needed("glm-4.6", None));
+        assert!(rules_needed("?", None));
+        // provider badge always needs the rules
+        assert!(rules_needed("Opus 5.5", Some("z.ai")));
+    }
+
+    fn rl(pct5: f64) -> RateLimits {
+        RateLimits {
+            five_hour: Some(Window {
+                used_percentage: Some(pct5),
+                resets_at: Some(serde_json::json!(1791699600)),
+            }),
+            seven_day: Some(Window {
+                used_percentage: Some(22.0),
+                resets_at: Some(serde_json::json!(1792180800)),
+            }),
+        }
+    }
+
+    fn rl_cache_json(r: &RateLimits, cached_at: u64) -> String {
+        serde_json::to_string(&RateLimitsCache { rate_limits: r.clone(), cached_at }).unwrap()
+    }
+
+    #[test]
+    fn rate_limits_cache_skips_same_recent() {
+        let now = 1_000_000;
+        let same = rl_cache_json(&rl(23.0), now - (RATE_LIMITS_REWRITE_SECONDS - 1));
+        assert!(!rate_limits_cache_stale(Some(&same), &rl(23.0), now));
+        // too old
+        let old = rl_cache_json(&rl(23.0), now - RATE_LIMITS_REWRITE_SECONDS);
+        assert!(rate_limits_cache_stale(Some(&old), &rl(23.0), now));
+        // changed
+        assert!(rate_limits_cache_stale(Some(&same), &rl(24.0), now));
+        // written by a clock ahead of ours
+        let future = rl_cache_json(&rl(23.0), now + 10);
+        assert!(rate_limits_cache_stale(Some(&future), &rl(23.0), now));
+        // missing or unreadable
+        assert!(rate_limits_cache_stale(None, &rl(23.0), now));
+        assert!(rate_limits_cache_stale(Some("not json"), &rl(23.0), now));
+    }
+
+    #[test]
+    fn rate_limits_cache_compares_values_not_text() {
+        // written by the raw-copy version: integers and extra fields
+        let now = 1_000_000;
+        let legacy = format!(
+            r#"{{"cached_at":{},"rate_limits":{{"five_hour":{{"used_percentage":23,"resets_at":1791699600}},"seven_day":{{"used_percentage":22,"resets_at":1792180800}},"extra":1}}}}"#,
+            now - 5
+        );
+        assert!(!rate_limits_cache_stale(Some(&legacy), &rl(23.0), now));
+    }
+
+    #[test]
+    fn cache_rate_limits_writes_only_when_stale() {
+        let dir = std::env::temp_dir()
+            .join(format!("claude-statusline-test-{}-rlcache", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let d = dir.to_str().unwrap();
+        let path = dir.join(".rate-limits.json");
+        let read = || serde_json::from_str::<RateLimitsCache>(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let now = 1_000_000;
+
+        cache_rate_limits(Some(d), &rl(23.0), now);
+        assert_eq!(read().cached_at, now);
+        // same data shortly after: file left as is
+        cache_rate_limits(Some(d), &rl(23.0), now + 10);
+        assert_eq!(read().cached_at, now);
+        // changed data: rewritten
+        cache_rate_limits(Some(d), &rl(30.0), now + 20);
+        let c = read();
+        assert_eq!(c.cached_at, now + 20);
+        assert_eq!(c.rate_limits, rl(30.0));
+        // same data after the rewrite interval: rewritten
+        cache_rate_limits(Some(d), &rl(30.0), now + 20 + RATE_LIMITS_REWRITE_SECONDS);
+        assert_eq!(read().cached_at, now + 20 + RATE_LIMITS_REWRITE_SECONDS);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

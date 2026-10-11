@@ -1,0 +1,1 @@
+{"model":{"display_name":"glm-5.1"},"cost":{"total_cost_usd":0.5,"total_lines_added":12,"total_lines_removed":3},"context_window":{"total_input_tokens":41000,"context_window_size":200000,"current_usage":{"input_tokens":100,"output_tokens":250,"cache_creation_input_tokens":0,"cache_read_input_tokens":40900}}}
