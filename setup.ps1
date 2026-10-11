@@ -120,11 +120,9 @@ try {
     mkl "$env:LOCALAPPDATA\nvim" "$ScriptDir\nvim"
     mkl "$env:APPDATA\nushell" "$ScriptDir\nushell"
     mkl "$env:APPDATA\pandoc" "$ScriptDir\pandoc"
-    # Nushell: starship/zoxide キャッシュ生成
-    $nuCache = "$ScriptDir\nushell\cache"
-    mkd $nuCache
-    if (gcm starship -ea 0) { starship init nu > "$nuCache\starship.nu" }
-    if (gcm zoxide -ea 0) { zoxide init nushell > "$nuCache\zoxide.nu" }
+    # Nushell: starship/zoxide キャッシュ生成は generate-cache.nu に一本化 (exe パス置換等の後処理を通す)
+    # 出力先は $nu.default-config-dir\cache (= 上の mkl で張った $ScriptDir\nushell\cache)
+    if (gcm nu -ea 0) { nu "$ScriptDir\nushell\generate-cache.nu" --force }
     mkd "$env:LOCALAPPDATA\lazygit"
     mkl "$env:LOCALAPPDATA\lazygit\config.yml" "$ScriptDir\lazygit\config.yml"
     mkd "$env:LOCALAPPDATA`Low\Google\Google Japanese Input"
