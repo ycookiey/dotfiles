@@ -83,18 +83,26 @@ fn newest_mtime(dir: &Path) -> Option<SystemTime> {
             return;
         };
         for entry in entries.flatten() {
+            // DirEntry::file_type/metadata reuse the data the directory listing
+            // already returned (FindNextFileW on Windows), so they cost no extra
+            // syscall per entry. They do not follow links, so a symlink or
+            // junction falls back to the path-based calls that follow it.
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
             let path = entry.path();
-            if path.is_dir() {
+            let (is_dir, meta) = if file_type.is_symlink() {
+                (path.is_dir(), path.metadata())
+            } else {
+                (file_type.is_dir(), entry.metadata())
+            };
+            if is_dir {
                 if path.file_name().map(|n| n == "target").unwrap_or(false) {
                     continue; // skip build artifacts
                 }
                 walk(&path, newest);
-            } else {
-                if let Ok(meta) = path.metadata() {
-                    if let Ok(mtime) = meta.modified() {
-                        *newest = Some(newest.map_or(mtime, |n: SystemTime| n.max(mtime)));
-                    }
-                }
+            } else if let Ok(mtime) = meta.and_then(|m| m.modified()) {
+                *newest = Some(newest.map_or(mtime, |n: SystemTime| n.max(mtime)));
             }
         }
     }
@@ -118,13 +126,20 @@ fn get_outdated_info(
         .ok()?
         .as_secs();
 
-    // Get commits after binary build time
-    let after = format!("{}-01-01", 1970 + (bin_timestamp / 31536000));
+    // Get commits after binary build time. `--since=@<epoch>` takes the exact
+    // timestamp (inclusive; the `commit_ts > bin_timestamp` check below keeps
+    // the comparison strict).
+    // TODO: this still spawns `git log -1` and `git diff` once per listed
+    // commit. Collapse it to one git call per crate: either one
+    // `git log --since=@<epoch> --format=... --name-only` parsed in place, or a
+    // tree-hash stamp written by `dotcli build` and compared on check. The
+    // choice is pending (misses commits pulled in with an older committer
+    // date vs. a stamp file to keep in sync).
+    let since = format!("--since=@{bin_timestamp}");
     let log_output = match Command::new("git")
         .args([
             "log",
-            "--after",
-            &after,
+            &since,
             "--format=%H %s",
             "--",
             crate_info.path,
@@ -196,6 +211,63 @@ fn get_outdated_info(
     })
 }
 
+fn missing_binary_info(crate_info: &Crate, dotfiles: &Path) -> OutdatedInfo {
+    let last_commit = Command::new("git")
+        .args(["log", "-1", "--format=%h %s", "--", crate_info.path])
+        .current_dir(dotfiles)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    let (hash, msg) = last_commit.split_once(' ').unwrap_or((&last_commit, ""));
+    let label = if hash.is_empty() {
+        "(not built)".to_string()
+    } else {
+        format!("{hash} (not built)")
+    };
+
+    let status = Command::new("git")
+        .args(["status", "--porcelain", "-z", "--", crate_info.path])
+        .current_dir(dotfiles)
+        .output()
+        .map(|o| o.stdout)
+        .unwrap_or_default();
+    let prefix = format!("{}/", crate_info.path);
+    let mut files: Vec<String> = parse_porcelain_z(&String::from_utf8_lossy(&status))
+        .into_iter()
+        .filter(|f| !f.ends_with("Cargo.lock"))
+        .map(|f| f.strip_prefix(&prefix).map(str::to_string).unwrap_or(f))
+        .collect();
+    if files.is_empty() {
+        files.push("(clean)".to_string());
+    }
+
+    OutdatedInfo {
+        crate_path: crate_info.path,
+        commits: vec![(label, msg.to_string())],
+        changed_files: files,
+    }
+}
+
+/// Paths from `git status --porcelain -z` output. Each entry is `XY <path>`;
+/// a rename or copy (`R`/`C` in X or Y) is followed by an extra NUL-terminated
+/// field holding the original path, which is skipped. Paths are relative to
+/// the repository root and never quoted under `-z`.
+fn parse_porcelain_z(out: &str) -> Vec<String> {
+    let mut files = Vec::new();
+    let mut fields = out.split('\0');
+    while let Some(entry) = fields.next() {
+        if entry.len() < 4 {
+            continue;
+        }
+        let (xy, path) = entry.split_at(3);
+        if xy.contains(['R', 'C']) {
+            fields.next();
+        }
+        files.push(path.to_string());
+    }
+    files
+}
+
 pub fn check() {
     let Some(dotfiles) = dotfiles_dir() else {
         return;
@@ -221,47 +293,8 @@ pub fn check() {
                 }
             }
         } else if bin_mtime.is_none() {
-            // Binary missing
-            let log_output = match Command::new("git")
-                .args(["log", "-1", "--format=%h %s", "--", crate_info.path])
-                .current_dir(&dotfiles)
-                .output()
-            {
-                Ok(output) => String::from_utf8_lossy(&output.stdout).to_string(),
-                _ => String::new(),
-            };
-            if let Some(space_idx) = log_output.find(' ') {
-                let hash = &log_output[..space_idx];
-                let msg = &log_output[space_idx + 1..];
-                let status_output = match Command::new("git")
-                    .args(["status", "--short", crate_info.path])
-                    .current_dir(&dotfiles)
-                    .output()
-                {
-                    Ok(output) => String::from_utf8_lossy(&output.stdout).to_string(),
-                    _ => String::new(),
-                };
-                let prefix = format!("{}/", crate_info.path);
-                let files: Vec<String> = status_output
-                    .lines()
-                    .filter(|f| !f.contains("Cargo.lock"))
-                    .map(|f| {
-                        f.strip_prefix(&prefix)
-                            .unwrap_or(f)
-                            .split_whitespace()
-                            .next()
-                            .unwrap_or(f)
-                            .to_string()
-                    })
-                    .collect();
-                if !files.is_empty() {
-                    outdated_infos.push(OutdatedInfo {
-                        crate_path: crate_info.path,
-                        commits: vec![(format!("{} (not built)", hash), msg.to_string())],
-                        changed_files: files,
-                    });
-                }
-            }
+            // Binary missing: always report it, whether or not the tree is clean.
+            outdated_infos.push(missing_binary_info(crate_info, &dotfiles));
         }
     }
 
@@ -385,4 +418,29 @@ fn which_cargo() -> String {
     }
     eprintln!("Error: cargo not found");
     std::process::exit(1);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_porcelain_z;
+
+    #[test]
+    fn porcelain_z_takes_paths_not_status_codes() {
+        let out = " M cli/src/a.rs\0?? cli/new dir/\0A  cli/b.rs\0";
+        assert_eq!(
+            parse_porcelain_z(out),
+            ["cli/src/a.rs", "cli/new dir/", "cli/b.rs"]
+        );
+    }
+
+    #[test]
+    fn porcelain_z_skips_rename_source() {
+        let out = "R  cli/new.rs\0cli/old.rs\0 M cli/c.rs\0";
+        assert_eq!(parse_porcelain_z(out), ["cli/new.rs", "cli/c.rs"]);
+    }
+
+    #[test]
+    fn porcelain_z_empty() {
+        assert!(parse_porcelain_z("").is_empty());
+    }
 }
