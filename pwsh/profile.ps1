@@ -103,7 +103,7 @@ if ($script:IsInteractive) {
     $cacheDir = "$HOME\.cache\pwsh"
     if (![IO.Directory]::Exists($cacheDir)) { mkd $cacheDir }
     $starshipExe = "$HOME\scoop\apps\starship\current\starship.exe"
-    $starshipCache = "$cacheDir\starship-init.ps1"
+    $starshipCache = $global:_starshipCache = "$cacheDir\starship-init.ps1"
     if (![IO.File]::Exists($starshipCache) -or
         [IO.File]::GetLastWriteTime($starshipExe) -gt [IO.File]::GetLastWriteTime($starshipCache)) {
         & $starshipExe init powershell --print-full-init > $starshipCache
@@ -139,9 +139,13 @@ if ($script:IsInteractive) {
         [Console]::Write("`e]7;file://$($global:_hostName)/$p`e\")
     }
     # 初回: 簡易プロンプト + dotfiles更新開始 → 2回目: starship 遅延読み込み → 以降: starship
+    # starship の prompt は $? / $LASTEXITCODE を退避してから Invoke-Starship-PreCommand を呼ぶ。
+    # hook を prompt の外側で先に実行すると $? が True に上書きされ error 表示が消えるので、hook は PreCommand 内で呼ぶ
     function global:prompt {
-        & $global:_promptHook
+        # 必ず最初の文: これより前の文は $? を上書きする
+        $q = $?; $c = $global:LASTEXITCODE
         if (!$global:_starshipDeferred) {
+            & $global:_promptHook
             $global:_starshipDeferred = $true
             # Dotfiles auto-update (初回プロンプトで遅延起動)
             $_ps = [PowerShell]::Create()
@@ -179,13 +183,31 @@ if ($script:IsInteractive) {
             }
             return "$PWD> "
         }
-        . "$HOME\.cache\pwsh\starship-init.ps1"
-        function global:Invoke-Starship-PreCommand { if (Test-Path Function:\_mise_hook) { _mise_hook }; $null = __zoxide_hook }
-        $global:_starshipFn = $function:prompt
-        function global:prompt {
-            & $global:_promptHook
-            & $global:_starshipFn
+        # cache が無い/空 (starship 未導入等) のまま dot-source すると prompt が再定義されず、
+        # 自分自身を呼び続けて hang するので、starship が prompt を再定義したことまで確かめる
+        $self = $function:prompt.ToString()
+        $cache = [IO.FileInfo]$global:_starshipCache
+        if ($cache.Exists -and $cache.Length -gt 0) { . $cache.FullName }
+        if ($function:prompt.ToString() -ne $self) {
+            function global:Invoke-Starship-PreCommand {
+                if (Test-Path Function:\_mise_hook) { _mise_hook }
+                $null = __zoxide_hook
+                & $global:_promptHook
+            }
+            # hook は starship の prompt が PreCommand 経由で呼ぶので、ここでは呼ばない (二重通知防止)
+            $sp = $function:prompt
+            $global:LASTEXITCODE = $c
+            if (-not $q) { Write-Error '' -ea Ignore }  # $? を False に戻す ($error には残さない)
+            & $sp
+            return
         }
-        & $global:_starshipFn
+        # starship を使えない: 簡易プロンプトに恒久切り替え
+        function global:prompt {
+            if (Test-Path Function:\_mise_hook) { _mise_hook }
+            $null = __zoxide_hook
+            & $global:_promptHook
+            "$PWD> "
+        }
+        & $function:prompt
     }
 }
