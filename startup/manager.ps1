@@ -40,16 +40,21 @@ function Write-Log {
     if ($script:LogFile) { ac $script:LogFile $line -Enc UTF8 }
 }
 
+# Counts for the summary popup at the end. Only failures get their own popup: "started" only means
+# the launcher returned, and a popup per app overflowed the screen.
+$script:AppCount   = 0
+$script:FailedApps = [Collections.Generic.List[string]]::new()
+
 function Start-App-Logged {
     param([string]$Name, [scriptblock]$Launch)
+    $script:AppCount++
     Write-Log "Starting: $Name"
-    Show-AppStatus -AppName $Name -Status "Starting"
     try {
         & $Launch
         Write-Log "  Started: $Name"
-        Show-AppStatus -AppName $Name -Status "Success"
     } catch {
         Write-Log "  Failed: $($_.Exception.Message)" "ERROR"
+        $script:FailedApps.Add($Name)
         Show-AppStatus -AppName $Name -Status "Error"
     }
 }
@@ -101,5 +106,7 @@ Start-App-Logged "LGHUB" { lghub }
 Start-App-Logged "NVIDIA Broadcast" { nvbc }
 Start-App-Logged "Discord" { dis }
 
-Write-Log "Startup complete"
-Show-PopupNotification "Complete" "Startup complete" 3000
+$summary = "$($script:AppCount - $script:FailedApps.Count)/$($script:AppCount) started"
+if ($script:FailedApps.Count) { $summary += ", failed: $($script:FailedApps -join ', ')" }
+Write-Log "Startup complete: $summary" $(if ($script:FailedApps.Count) { "WARN" } else { "INFO" })
+Show-PopupNotification "Startup complete" $summary 3000
