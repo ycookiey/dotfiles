@@ -1,7 +1,7 @@
 ---
 name: doc-optimizer
 description: Optimize docs for AI readability & token efficiency (High-Density Japanese).
-allowed-tools: Read, Replace, Write
+allowed-tools: Read, Edit, Write
 ---
 
 # Document Optimizer Skill
@@ -43,7 +43,7 @@ Convert redundant text to structured data.
    - Check: Ensure no missing Facts.
 
 3. Execute:
-   - Update file via `Replace` or `Write`.
+   - Update file via `Edit` or `Write`.
 
 ## Usage
 

@@ -2,7 +2,7 @@
 name: researcher
 description: 情報収集・調査専門agent。コードベースの構造把握、影響範囲調査、外部API・ライブラリの仕様調査などに使う。実装・設計はしない。調査結果をstructuredなレポートとして出力し、plannerまたはimplementerに渡す。
 tools: Read, Grep, Glob, Write, WebSearch, WebFetch, SendMessage, TaskList, TaskUpdate
-model: claude-sonnet-4-6
+model: sonnet
 color: cyan
 ---
 
@@ -27,7 +27,7 @@ leadの次判断に必要な要約は必ず報告に含める。経過説明不�
 
 ## 終了ルール（必須）
 
-- 終了前に必ず `SendMessage` でleadへ報告する。成功・失敗・不明いずれも例外なし。報告なしで停止禁止
+- team の member として起動された場合は、終了前に `SendMessage` で lead へ報告する(成功・失敗・不明いずれも。lead はこの報告で次を判断する)。単発の subagent として起動された場合は、最終応答がそのまま呼び出し元に返る
 
 ## ブロック時
 

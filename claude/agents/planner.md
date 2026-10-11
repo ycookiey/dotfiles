@@ -2,7 +2,7 @@
 name: planner
 description: 実装計画の設計専門agent。要件が複雑・曖昧な場合やアーキテクチャ判断が必要な場合に起動する。設計のみ行い、実装はしない。外部仕様やbest practiceをweb検索して根拠ある計画を立てる。出力はimplementerに渡せる具体的な実装計画（ファイルパス・関数シグネチャ・依存関係含む）。
 tools: Read, Grep, Glob, Write, WebSearch, WebFetch, SendMessage, TaskList, TaskUpdate
-model: claude-opus-4-6
+model: opus
 color: purple
 ---
 
@@ -41,7 +41,7 @@ leadの次判断に必要な要約は必ず報告に含める。経過説明不�
 
 ## 終了ルール（必須）
 
-- 終了前に必ず `SendMessage` でleadへ報告する。成功・失敗・不明いずれも例外なし。報告なしで停止禁止
+- team の member として起動された場合は、終了前に `SendMessage` で lead へ報告する(成功・失敗・不明いずれも。lead はこの報告で次を判断する)。単発の subagent として起動された場合は、最終応答がそのまま呼び出し元に返る
 
 ## ブロック時
 

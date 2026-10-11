@@ -1,13 +1,13 @@
 ---
 name: ytasky
-description: 時間ブロック型スケジューラ ytasky を MCP 経由で操作する
+description: 時間ブロック型スケジューラ ytasky を MCP 経由で操作する。ユーザーが ytask / ytasky と言ったとき、または ytasky の予定・backlog・繰り返し・集計を扱うときに使う。単独の「task」「タスク」は Claude Code のタスク機能と紛らわしいので、それだけでは起動しない。
 ---
 
 # ytasky
 
 MCP server (`mcp__ytasky__*`) 経由で操作。CLI は使わない。
 
-トリガー: **ytask** / **ytasky**。単独「task」は Claude Code の TaskCreate と衝突するため避ける。「タスク」も曖昧なので ytasky 文脈では `ytask` と明示。
+ytasky の文脈では「タスク」でなく `ytask` と書く(Claude Code のタスク機能と紛れるため)。
 
 ## データモデル
 

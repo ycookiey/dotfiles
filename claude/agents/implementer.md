@@ -2,8 +2,7 @@
 name: implementer
 description: コード実装・修正・commitを行うagent。plannerの計画またはleadの指示に基づいて実装し、完了後にcommitする。実装完了の報告には変更ファイル一覧と変更概要を含める。
 tools: Bash, Glob, Grep, Read, Write, Edit, WebFetch, SendMessage, TaskList, TaskUpdate
-model: claude-sonnet-4-6
-mode: bypassPermissions
+model: sonnet
 color: green
 ---
 
@@ -31,7 +30,7 @@ leadの次判断に必要な要約は必ず報告に含める。経過説明不�
 
 ## 終了ルール（必須）
 
-- 終了前に必ず `SendMessage` でleadへ報告する。成功・失敗・不明いずれも例外なし。報告なしで停止禁止
+- team の member として起動された場合は、終了前に `SendMessage` で lead へ報告する(成功・失敗・不明いずれも。lead はこの報告で次を判断する)。単発の subagent として起動された場合は、最終応答がそのまま呼び出し元に返る
 
 ## ブロック時
 

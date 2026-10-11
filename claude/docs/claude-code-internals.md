@@ -41,3 +41,9 @@
 
 - commit/PR の attribution はモデルが書く。settings の値は system-reminder の指示文として届く
 - settings.json を編集すると同じセッション内で reminder が差し替わる (v2.1.289 で確認)。reminder の文面で反映を確かめる
+
+## agent 定義の frontmatter
+
+- 項目名は docs (sub-agents.md「Supported frontmatter fields」) の表と完全一致 (camelCase)。未知の項目はエラーなしで無視
+- 権限は `permissionMode` (`mode:` は効かない)。未指定・親が bypassPermissions/acceptEdits/auto なら親のモードを継承
+- `color` は red/blue/green/yellow/purple/orange/pink/cyan のみ

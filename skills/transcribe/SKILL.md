@@ -57,8 +57,3 @@ uv run --python 3.12 --with faster-whisper --with nvidia-cublas-cu12 --with nvid
 uv run --python 3.12 --with faster-whisper --with nvidia-cublas-cu12 --with nvidia-cudnn-cu12 \
   "/c/Users/ycook/.claude-1/skills/transcribe/scripts/transcribe.py" "/c/audio/talk.m4a" --lang en --device cpu
 ```
-
-## 確立の経緯
-2026-05、動画の文字起こしで GPU 実行を確立。
-faster-whisper(CTranslate2) の GPU 実行に必要な `cublas64_12.dll` 等を pip wheel で供給し、
-DLLディレクトリを登録することで CUDA Toolkit 無しに GPU 動作させている。
