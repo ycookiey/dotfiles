@@ -62,3 +62,12 @@ pattern = 'uv\s+run\s.*[/\\]skills[/\\][\w-]+-live[/\\]'
 # A Node server or mock API script
 [[resident]]
 pattern = 'node\s+\S*(server|api)\S*\.m?js'
+
+# Background tasks that are not work Claude waits for, by `type` (as Stop's
+# background_tasks writes it) and a regex on `description`.
+
+# The watch on a published artifact's comments: re-armed on every resume,
+# it wakes Claude only when a person comments.
+[[ignore_task]]
+type = 'monitor'
+description = '^live updates for artifact '
