@@ -51,7 +51,8 @@ if (!(gcm winget -ea 0)) {
 $json = gc $WingetFile -Raw | ConvertFrom-Json
 
 # Cache winget list output for installed check
-$wingetOutput = (winget list 2>$null) -join "`n"
+# --accept-source-agreements/--disable-interactivity: 同意前の新 PC で Y/N プロンプトが捕捉された出力に隠れて止まるのを防ぐ
+$wingetOutput = (winget list --accept-source-agreements --disable-interactivity 2>$null) -join "`n"
 
 $overrides = @{
     'Microsoft.VisualStudio.BuildTools' = '--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet --wait'
