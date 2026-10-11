@@ -41,6 +41,9 @@ claude/skills/private
 # Node modules
 node_modules/
 
+# Python bytecode cache
+__pycache__/
+
 # GCC (GLM Claude Code) agent temp files
 .gcc-summary.md
 .gcc-prompt.md
