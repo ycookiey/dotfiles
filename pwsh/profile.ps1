@@ -105,6 +105,8 @@ if ($script:IsInteractive) {
     # dotcli 裏処理の throttle 間隔: 前回起動 (stamp file の mtime) から間隔内なら起動しない
     $global:_gitPromptInterval = [timespan]'0:10:0'  # git fetch / pull -r (dotfiles 自動更新)
     $global:_syncInterval = [timespan]'1.0:0:0'      # settings / scoop・winget export / MCP sync
+    # 別 pane の git-prompt が完了を記録しないまま (pane 終了 / idle) のとき、sync を待たせる上限
+    $global:_gitPromptGrace = [timespan]'0:5:0'
 
     # --- Proxy auto-detect (同期、PID file + process 検証) ---
     # pid file は `dotcli proxy on` が書く (cargo run の child PID)。消すのは proxy off / status だけなので、
@@ -224,11 +226,20 @@ if ($script:IsInteractive) {
     # $global:j = git-prompt (自動更新), $global:syncJob = sync, $global:_buildCheckJob = build --check
     $global:_dotDir = $Dot
     $global:_dotcli = (Get-Command dotcli -CommandType Application -ea 0 | select -First 1).Source
-    $global:_gitPromptStamp = "$cacheDir\git-prompt.stamp"
+    $global:_gitPromptStamp = "$cacheDir\git-prompt.stamp"  # git-prompt の起動時に touch
+    $global:_gitPromptDone = "$cacheDir\git-prompt.done"    # git-prompt の完了を hook が検知したら touch
     $global:_syncStamp = "$cacheDir\sync.stamp"
     # stamp が無いと GetLastWriteTimeUtc は 1601 年を返すので常に due
     function global:__dotcli_due($stamp, $interval) {
         [DateTime]::UtcNow - [IO.File]::GetLastWriteTimeUtc($stamp) -ge $interval
+    }
+    # どこかの pane の git-prompt が実行中かもしれないなら $true。
+    # 起動 (stamp) より後に完了 (done) が記録されておらず、起動から猶予時間内のとき。
+    # done が無いと 1601 年なので、stamp が新しい間は実行中扱い。両方無ければ stamp の経過が猶予超えで $false
+    function global:__dotcli_gitPromptBusy {
+        $s = [IO.File]::GetLastWriteTimeUtc($global:_gitPromptStamp)
+        $s -gt [IO.File]::GetLastWriteTimeUtc($global:_gitPromptDone) -and
+            [DateTime]::UtcNow - $s -lt $global:_gitPromptGrace
     }
     # 起動に成功したら $stamp を touch し @{Process; Out; Err} を返す。失敗時は 1 行表示して $null
     function global:__dotcli_start([string[]]$a, [string]$stamp) {
@@ -258,9 +269,12 @@ if ($script:IsInteractive) {
         finally { $job.Process.Dispose() }
     }
     # sync は git-prompt の pull と同じ tracked file (install/scoopfile.json 等) を書き換えうるので、
-    # git-prompt の完了後 ($global:j が空) に起動して pull と直列化する
+    # この pane の git-prompt ($global:j) と、別 pane で実行中かもしれない git-prompt の両方の完了後に起動して
+    # pull と直列化する。待つ間は pending のまま残し、hook が毎 prompt で再確認する。
+    # 間隔の判定は待った後に行う (待つ間に別 pane が sync を済ませていれば起動しない)
     function global:__dotcli_kickSync {
         if (!$global:_syncPending -or $global:j) { return }
+        if (__dotcli_gitPromptBusy) { return }
         $global:_syncPending = $false
         if (__dotcli_due $global:_syncStamp $global:_syncInterval) {
             $global:syncJob = __dotcli_start @('sync', '--dot', $global:_dotDir) $global:_syncStamp
@@ -271,6 +285,8 @@ if ($script:IsInteractive) {
     $global:_promptHook = {
         if ($global:j -and ($r = __dotcli_end $global:j)) {
             $global:j = $null
+            # 結果 (updated / dirty / error / 出力なし) によらず完了を記録し、別 pane の sync の待ちを解く
+            try { [IO.File]::WriteAllBytes($global:_gitPromptDone, [byte[]]@()) } catch {}
             $v = $r.Out.Trim()
             if ($v.StartsWith('updated:')) {
                 $p = $v.Substring(8) -split ':', 2
@@ -312,7 +328,7 @@ if ($script:IsInteractive) {
                     $global:j = __dotcli_start @('git-prompt', $global:_dotDir) $global:_gitPromptStamp
                 }
                 $global:_syncPending = $true
-                __dotcli_kickSync  # git-prompt を起動しなかった (間隔内 / 起動失敗) ときは即 sync
+                __dotcli_kickSync  # git-prompt を起動せず (間隔内 / 起動失敗)、別 pane の git-prompt も実行中でなければ即 sync
                 $global:_buildCheckJob = __dotcli_start @('build', '--check')
             } else {
                 wh "⚠ dotcli not found (dotfiles auto-update / sync disabled): run $($global:_dotDir)\setup.ps1" -Fo Yellow
