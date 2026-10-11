@@ -86,7 +86,7 @@ grep -qiF -- "$pat" "$f"; case $? in 0) 一致 ;; 1) 不一致 ;; *) エラー�
 
 ## Windows の python を Git Bash から使うときの食い違い
 
-- `/tmp` が別の場所: Git Bash の `/tmp` = `%TEMP%`(`C:\Users\<user>\AppData\Local\Temp`)、Windows の python の `/tmp` = `C:\tmp`。受け渡しは Windows パス(`C:/...`、scratchpad 等)で書く
+- `/tmp` が別の場所: Git Bash の `/tmp` = `%TEMP%`(`C:\Users\<user>\AppData\Local\Temp`)、Windows の python・node の `/tmp` = `C:\tmp`。受け渡しは Windows パス(`C:/...`、scratchpad 等)で書く。yhooky の規則 `tmp-path-reminder` が、node・python と `/tmp/` を含むコマンドの直前に差し込む
 - text mode の書込は改行を CRLF に変える: `Path.write_text` / `open(p, "w")` は `\n` を `\r\n` で書く。LF のファイルを置換すると全行 CRLF になる(git の警告「CRLF will be replaced by LF」で気づく)。`read_bytes().decode()` → `write_bytes(s.encode())`、または `open(p, "w", newline="")` を使う。確認は `git ls-files --eol <path>` の `w/lf`
 - `print` も stdout に `\r\n` を書く(Windows の `jq -r` の出力も同じ): bash の `while read a b` で読むと最後の変数の末尾に `\r` が残る(ファイル名なら ffmpeg が「出力の形式を選べない」で失敗)。読む側で `tr -d '\r' <file | while read …`、出す側で `sys.stdout.reconfigure(newline="\n")`
 

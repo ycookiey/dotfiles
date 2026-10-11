@@ -147,3 +147,27 @@ fields = ["tool_input.command"]
 all = ['(^|[[:space:];&|(])sed[[:space:]]+([^|;&]*[[:space:]])?(-[A-Za-z]*i|--in-place)']
 action = "context"
 message = '''Git Bash の sed -i は CRLF のファイルを全行 LF にする(置換していない行も)。CRLF のファイルは Edit ツールで直すか、python で bytes のまま置換する。sed -i を使ったら unix2dos -q <file> で戻し、file <file> の「with CRLF line terminators」で確かめる(docs/bash.md)。'''
+
+# Windows' node and python read /tmp as C:\tmp, while Git Bash's /tmp is
+# %TEMP%: a file written to /tmp by bash is not found by node -e
+# (docs/bash.md had it, and it was missed twice).
+[[rule]]
+id = "tmp-path-reminder"
+event = "PreToolUse"
+tools = '^Bash$'
+fields = ["tool_input.command"]
+all = ['''(^|[;&|(`"'[:space:]])(node|python[0-9.]*|py)(\.exe)?([[:space:]]|$)''', '''(^|[[:space:]"'=(])/tmp/''']
+action = "context"
+message = '''Windows の node・python は /tmp を C:\tmp と読む(Git Bash の /tmp は %TEMP%、C:\Users\<user>\AppData\Local\Temp)。bash で /tmp に書いたファイルは node・python から見えない。受け渡しのパスは scratchpad などの C:/... の形で書く(docs/bash.md)。'''
+
+# An API that asks for a contact in the User-Agent invites putting the
+# user's e-mail address in it; it was sent that way once. Only when the
+# user asks.
+[[rule]]
+id = "header-email-reminder"
+event = "PreToolUse"
+tools = '^Bash$'
+fields = ["tool_input.command"]
+all = ['(^|[;&|(`[:space:]])(curl|wget)([[:space:]]|$)', '''(-A|-H|-U|--user-agent|--header)[[:space:]=]*(['"][^'"]*|[^[:space:]'"]*)[[:alnum:]._%+-]+@[[:alnum:]-]+\.[[:alpha:]]''']
+action = "context"
+message = '''外部のサービスへ送る header(User-Agent 等)にメールアドレスが入っている。ユーザーのアドレスなら、ユーザーが頼んだときだけ入れる。連絡先を求める API には、ツールの repo の URL などを使う。'''

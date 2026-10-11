@@ -329,3 +329,59 @@ name = "sed-no-sed"
 rule = "sed-inplace-crlf-reminder"
 expect = "quiet"
 command = "grep -i sed notes.md"
+
+[[case]]
+name = "tmp-node"
+rule = "tmp-path-reminder"
+expect = "context"
+command = '''git show HEAD:a.json > /tmp/a.json && node -e 'require("fs").readFileSync("/tmp/a.json")' '''
+
+[[case]]
+name = "tmp-python-heredoc"
+rule = "tmp-path-reminder"
+expect = "context"
+command = '''python - <<'EOF'
+print(open('/tmp/x.txt').read())
+EOF'''
+
+[[case]]
+name = "tmp-bash-only"
+rule = "tmp-path-reminder"
+expect = "quiet"
+command = "cat /tmp/x.log | grep a"
+
+[[case]]
+name = "tmp-node-windows-path"
+rule = "tmp-path-reminder"
+expect = "quiet"
+command = "node scripts/build.mjs C:/Users/me/AppData/Local/Temp/x ls node_modules/tmp/"
+
+[[case]]
+name = "email-user-agent"
+rule = "header-email-reminder"
+expect = "context"
+command = "curl -s -A 'name-check (someone@example.com)' https://crates.io/api/v1/crates/x"
+
+[[case]]
+name = "email-wget-user-agent"
+rule = "header-email-reminder"
+expect = "context"
+command = '''wget --user-agent="tool/1.0 me@example.org" https://example.com/'''
+
+[[case]]
+name = "repo-url-user-agent"
+rule = "header-email-reminder"
+expect = "quiet"
+command = "curl -A 'yhooky (https://github.com/ycookiey/yhooky)' https://crates.io/api/v1/crates/x"
+
+[[case]]
+name = "email-in-url"
+rule = "header-email-reminder"
+expect = "quiet"
+command = "curl -s https://api.example.com/users/someone@example.com"
+
+[[case]]
+name = "email-not-curl"
+rule = "header-email-reminder"
+expect = "quiet"
+command = "git log --author=someone@example.com -H x"
