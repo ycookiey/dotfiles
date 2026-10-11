@@ -124,7 +124,7 @@ pub fn generate(defs: &Definitions, dotfiles_dir: &Path) -> String {
             if c.modifies_shell {
                 writeln!(
                     out,
-                    "{name}() {{ local _o; _o=$(dotcli {sub} \"$@\"); _dotcli_apply <<<\"$_o\"; }}",
+                    "{name}() {{ local _dotcli_out; _dotcli_out=$(dotcli {sub} \"$@\"); _dotcli_apply \"$_dotcli_out\" \"$?\"; }}",
                     name = c.name,
                     sub = c.subcommand,
                 )
@@ -152,35 +152,54 @@ fn ps_squote_inner(s: &str) -> String {
     s.replace('\'', "''")
 }
 
-const APPLY_HELPER: &str = r#"_dotcli_apply() {
-    local json
-    json=$(cat)
-    [ -z "$json" ] && return 0
+/// Shell side of `protocol::ShellAction`. One jq call turns the JSON into shell code that
+/// `eval` runs, so every value from the JSON must reach that code through `q` (`@sh`).
+/// jq's output must contain no raw newline: Windows jq writes LF as CRLF on stdout, which
+/// would leave `\r` in values (`-b` avoids that only on jq >= 1.7).
+const APPLY_HELPER: &str = r##"_dotcli_msg() {
+    case "$1" in
+        warn) printf '\033[33m%s\033[0m\n' "$2" ;;
+        error) printf '\033[31m%s\033[0m\n' "$2" ;;
+        *) printf '\033[32m%s\033[0m\n' "$2" ;;
+    esac
+}
+
+# Bash's exec skips PATHEXT and command_not_found_handle, so resolve .cmd/.bat first.
+# TODO: exec replaces this shell (the pane closes when the program exits), while pwsh and
+# nushell run the program as a child. Drop `exec` here to match them if that is preferred.
+_dotcli_exec() {
+    local _dotcli_prog
+    _dotcli_prog=$(type -P -- "$1" || type -P -- "$1.cmd" || type -P -- "$1.bat") || _dotcli_prog=$1
+    # Tag pane for WezTerm Alt+Z redraw detection (app=claude).
+    [ "$1" = claude ] && printf '\033]1337;SetUserVar=app=Y2xhdWRl\007'
+    shift
+    exec "$_dotcli_prog" "$@"
+}
+
+# Usage: _dotcli_apply JSON [RC]
+# Applies the JSON a dotcli subcommand printed. Returns the action's exit_code, the exec'd
+# program's status, or else RC (the dotcli exit status).
+_dotcli_apply() {
+    [ -z "$1" ] && return "${2:-0}"
     if ! command -v jq >/dev/null 2>&1; then
         printf 'dotcli: jq is required for shell-modifying commands\n' >&2
         return 1
     fi
-    local key val cd_path lvl txt prog
-    while IFS= read -r key; do [ -n "$key" ] && unset "$key"; done < <(printf '%s' "$json" | jq -r '.unset_env[]? // empty')
-    while IFS=$'\t' read -r key val; do [ -n "$key" ] && export "$key=$val"; done < <(printf '%s' "$json" | jq -r '.set_env // {} | to_entries[] | "\(.key)\t\(.value)"')
-    cd_path=$(printf '%s' "$json" | jq -r '.cd // empty')
-    [ -n "$cd_path" ] && cd "$cd_path"
-    while IFS=$'\t' read -r lvl txt; do
-        case "$lvl" in
-            warn) printf '\033[33m%s\033[0m\n' "$txt" ;;
-            error) printf '\033[31m%s\033[0m\n' "$txt" ;;
-            *) printf '\033[32m%s\033[0m\n' "$txt" ;;
-        esac
-    done < <(printf '%s' "$json" | jq -r '.messages[]? | "\(.level)\t\(.text)"')
-    prog=$(printf '%s' "$json" | jq -r '.exec.program // empty')
-    if [ -n "$prog" ]; then
-        if [ "$prog" = "claude" ]; then
-            printf '\033]1337;SetUserVar=app=Y2xhdWRl\007'
-        fi
-        local exec_args=()
-        local arg
-        while IFS= read -r arg; do exec_args+=("$arg"); done < <(printf '%s' "$json" | jq -r '.exec.args[]? // empty')
-        exec "$prog" "${exec_args[@]}"
-    fi
+    local _dotcli_code
+    _dotcli_code=$(jq -j --arg q "'" '
+        def q: @sh | gsub("\n"; "\($q)$\($q)\\n\($q)\($q)");
+        def name: test("^[A-Za-z_][A-Za-z0-9_]*$");
+        def bad_name: "_dotcli_msg error \("dotcli: invalid variable name: \(.)" | q)";
+        [
+            (.unset_env[]? | if name then "unset -v -- \(q)" else bad_name end),
+            (.set_env // {} | to_entries[]
+                | if .key | name then "export -- \("\(.key)=\(.value)" | q)" else .key | bad_name end),
+            (.cd // empty | "cd -- \(q)"),
+            (.messages[]? | "_dotcli_msg \(.level | q) \(.text | q)"),
+            (.exec // empty | "_dotcli_exec \([.program] + (.args // []) | map(q) | join(" ")); return"),
+            (.exit_code // 0 | numbers | select(. != 0) | "return \(floor)"),
+            "return \"${2:-0}\""
+        ] | join("; ")' <<<"$1") || return 1
+    eval "$_dotcli_code"
 }
-"#;
+"##;
