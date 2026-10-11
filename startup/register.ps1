@@ -49,13 +49,16 @@ function Register-Startup {
     # The battery switches keep the tasks from being skipped on a laptop running on battery.
     $settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([timespan]'0:5:0') -Priority 4 -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 
+    # -NoProfile (both tasks): manager.ps1 loads the aliases it needs itself. The shells opened in
+    # the WezTerm it starts (nushell) set their own PATH and STARSHIP_CONFIG, so the profile's env
+    # is not needed.
     # Registered first: the logon task runs it.
-    $action    = New-ScheduledTaskAction -Execute $Pwsh -Argument "-ExecutionPolicy Bypass -W Hidden -NonInteractive -File `"$ScriptPath`" -Part User"
+    $action    = New-ScheduledTaskAction -Execute $Pwsh -Argument "-NoProfile -ExecutionPolicy Bypass -W Hidden -NonInteractive -File `"$ScriptPath`" -Part User"
     $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Limited -LogonType Interactive
     [void](Register-ScheduledTask -TaskName $UserTask -Action $action -Principal $principal -Settings $settings -Force)
     wh "Registered: $UserTask (TaskScheduler, on demand)" -Fo Green
 
-    $action    = New-ScheduledTaskAction -Execute $Pwsh -Argument "-ExecutionPolicy Bypass -W Hidden -NonInteractive -File `"$ScriptPath`" -Part Elevated"
+    $action    = New-ScheduledTaskAction -Execute $Pwsh -Argument "-NoProfile -ExecutionPolicy Bypass -W Hidden -NonInteractive -File `"$ScriptPath`" -Part Elevated"
     $trigger   = New-ScheduledTaskTrigger -AtLogOn
     $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest -LogonType Interactive
     [void](Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force)
