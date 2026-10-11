@@ -38,12 +38,20 @@ if ([IO.File]::Exists($chromeYatcyScript)) {
     function chrome-yatcy { & $chromeYatcyScript @args }
 }
 
-function admin { start wezterm -Verb RunAs -Arg 'start','--cwd',$PWD }
+function admin {
+    # Start-Process は ArgumentList を quote せず空白で連結するだけなので、空白を含む cwd は自分で quote する。
+    # ProviderPath で PSDrive 名・provider prefix を除く。末尾の \ (drive root の C:\) は閉じ quote を
+    # escape してしまう (C:" になる) ので \\ に重ねる (TrimEnd だと C: = drive の current dir になる)
+    $d = $PWD.ProviderPath
+    if ($d.EndsWith('\')) { $d += '\' }
+    start wezterm -Verb RunAs -ArgumentList "start --cwd `"$d`""
+}
 function y {
     $tmp = [IO.Path]::GetTempFileName()
     yazi @args --cwd-file=$tmp
     $d = (gc $tmp -ea 0 | select -First 1)?.Trim()
-    if ($d -and $d -ne $PWD.Path) { cd $d }
+    # -Path は wildcard 解釈で [ ] を含む dir へ移動できないので -LiteralPath
+    if ($d -and $d -ne $PWD.Path) { Set-Location -LiteralPath $d }
     rm $tmp -ea 0
 }
 
