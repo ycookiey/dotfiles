@@ -44,17 +44,20 @@ function Register-Startup {
         wh "Removed old registry entry" -Fo Gray
     }
 
+    # Shared by both tasks. Priority 4 = NORMAL_PRIORITY_CLASS. The default 7 (BelowNormal) is
+    # inherited by every app manager.ps1 starts (AHK hotkeys, and everything launched from them).
+    # The battery switches keep the tasks from being skipped on a laptop running on battery.
+    $settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([timespan]'0:5:0') -Priority 4 -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+
     # Registered first: the logon task runs it.
     $action    = New-ScheduledTaskAction -Execute $Pwsh -Argument "-ExecutionPolicy Bypass -W Hidden -NonInteractive -File `"$ScriptPath`" -Part User"
     $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Limited -LogonType Interactive
-    $settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([timespan]'0:5:0') -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     [void](Register-ScheduledTask -TaskName $UserTask -Action $action -Principal $principal -Settings $settings -Force)
     wh "Registered: $UserTask (TaskScheduler, on demand)" -Fo Green
 
     $action    = New-ScheduledTaskAction -Execute $Pwsh -Argument "-ExecutionPolicy Bypass -W Hidden -NonInteractive -File `"$ScriptPath`" -Part Elevated"
     $trigger   = New-ScheduledTaskTrigger -AtLogOn
     $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest -LogonType Interactive
-    $settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([timespan]'0:5:0')
     [void](Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force)
     wh "Registered: $TaskName (TaskScheduler)" -Fo Green
     Register-Reaper
