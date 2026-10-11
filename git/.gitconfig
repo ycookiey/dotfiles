@@ -10,8 +10,9 @@
 	autocrlf = true
 	# エディタ設定
 	editor = nvim
-	# ファイル名の大文字小文字を区別
-	ignorecase = false
+	# 260 文字を超えるパスを扱う (Git for Windows は OS の LongPathsEnabled に関係なく、これが無いと 'Filename too long')
+	longpaths = true
+	# (ignorecase は書かない: init/clone が FS に合わせて repo の config に書く。NTFS で false にすると rename 検出と index が壊れる)
 	# untracked ファイル走査の結果をディレクトリ mtime 付きで index に保存し、status/diff を速くする (NTFS で安全)
 	untrackedCache = true
 	# TODO: fsmonitor は未採用。全体で有効にする / 大きな repo だけ ([includeIf] か repo の config) / 入れない のどれにするか未定
