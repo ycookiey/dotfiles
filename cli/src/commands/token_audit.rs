@@ -17,14 +17,17 @@ struct Request {
     output: i64,
     cache_read: i64,
     cache_create: i64,
-    /// Delta from previous request's cache_create (populated after parse).
+    /// total_ctx growth from the previous request of the same file
+    /// (populated by parse_requests).
     delta_cc: i64,
-    /// Index of the source file (for per-session delta computation).
+    /// Index of the file the requestId was first seen in.
     file_idx: usize,
 }
 
 #[derive(Debug, Clone)]
 struct ToolUse {
+    /// tool_use block id; None when the log omits it (never deduplicated).
+    id: Option<String>,
     name: String,
     input: Value, // .input field (for file_path extraction)
 }
@@ -32,6 +35,27 @@ struct ToolUse {
 impl Request {
     fn total_ctx(&self) -> i64 {
         self.input + self.cache_read + self.cache_create
+    }
+
+    /// Fold a later log line of the same request into this one.
+    /// Claude Code writes each content block (thinking/text/tool_use) of one
+    /// API request on its own line under the same requestId, so tools are
+    /// appended (a tool_use id already present is skipped) and usage is taken
+    /// from the later line.
+    fn merge_line(&mut self, later: Request) {
+        for t in later.tools {
+            let dup = t
+                .id
+                .as_deref()
+                .map_or(false, |id| self.tools.iter().any(|u| u.id.as_deref() == Some(id)));
+            if !dup {
+                self.tools.push(t);
+            }
+        }
+        self.input = later.input;
+        self.output = later.output;
+        self.cache_read = later.cache_read;
+        self.cache_create = later.cache_create;
     }
 
     /// Tool combination key: ["Edit", "Read"] -> "Edit+Read"
@@ -272,34 +296,61 @@ fn filter_by_project(files: &[JsonlFile], project_path: &str) -> Vec<JsonlFile> 
 // JSONL parsing
 // ============================================================================
 
-/// Parse JSONL files, extract assistant messages, dedup by requestId.
-/// Preserves first-appearance order; last entry wins for duplicate IDs.
-/// Equivalent to: jq -c "$JQ_DEDUP" | jq -s "$JQ_DEDUP_GROUP"
+/// Parse JSONL files into one Request per requestId, with delta_cc set.
+/// Each file is parsed on its own (see parse_file) and its deltas are taken
+/// over that file's own request sequence. A requestId already seen in an
+/// earlier file (a forked or resumed session repeats its history) is skipped:
+/// the first file's version and position win.
 fn parse_requests(files: &[PathBuf]) -> Vec<Request> {
     let mut requests: Vec<Request> = Vec::new();
-    let mut id_index: HashMap<String, usize> = HashMap::new();
+    let mut seen: HashSet<String> = HashSet::new();
 
     for (file_idx, file_path) in files.iter().enumerate() {
-        if let Ok(f) = fs::File::open(file_path) {
-            let reader = BufReader::new(f);
-            for line in reader.lines().flatten() {
-                if let Ok(val) = serde_json::from_str::<Value>(&line) {
-                    if is_assistant_message(&val) {
-                        if let Some(mut req) = extract_request(&val) {
-                            req.file_idx = file_idx;
-                            if let Some(&idx) = id_index.get(&req.req_id) {
-                                requests[idx] = req; // last wins, same position
-                            } else {
-                                id_index.insert(req.req_id.clone(), requests.len());
-                                requests.push(req);
-                            }
-                        }
-                    }
-                }
+        for req in parse_file(file_path, file_idx) {
+            if !seen.contains(&req.req_id) {
+                seen.insert(req.req_id.clone());
+                requests.push(req);
             }
         }
     }
 
+    requests
+}
+
+/// Parse one session log. Lines sharing a requestId are merged into one
+/// Request at the position of its first line (see Request::merge_line), then
+/// delta_cc is computed over the file's requests in that order.
+fn parse_file(file_path: &Path, file_idx: usize) -> Vec<Request> {
+    let mut requests: Vec<Request> = Vec::new();
+    let mut id_index: HashMap<String, usize> = HashMap::new();
+
+    let f = match fs::File::open(file_path) {
+        Ok(f) => f,
+        Err(_) => return requests,
+    };
+    for line in BufReader::new(f).lines().flatten() {
+        let val = match serde_json::from_str::<Value>(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if !is_assistant_message(&val) {
+            continue;
+        }
+        let mut req = match extract_request(&val) {
+            Some(r) => r,
+            None => continue,
+        };
+        req.file_idx = file_idx;
+        match id_index.get(&req.req_id) {
+            Some(&idx) => requests[idx].merge_line(req),
+            None => {
+                id_index.insert(req.req_id.clone(), requests.len());
+                requests.push(req);
+            }
+        }
+    }
+
+    compute_deltas(&mut requests);
     requests
 }
 
@@ -332,7 +383,7 @@ fn extract_request(v: &Value) -> Option<Request> {
         cache_read,
         cache_create,
         delta_cc: 0, // populated later by compute_deltas()
-        file_idx: 0, // populated later by parse_requests()
+        file_idx: 0, // populated later by parse_file()
     })
 }
 
@@ -343,6 +394,7 @@ fn extract_tools(content: &Value) -> Vec<ToolUse> {
             if item["type"].as_str() == Some("tool_use") {
                 if let Some(name) = item["name"].as_str() {
                     tools.push(ToolUse {
+                        id: item["id"].as_str().map(str::to_string),
                         name: name.to_string(),
                         input: item.get("input").cloned().unwrap_or(Value::Null),
                     });
@@ -355,6 +407,8 @@ fn extract_tools(content: &Value) -> Vec<ToolUse> {
 
 /// Compute delta_cc: total_ctx growth from previous request.
 /// Resets at session (file) boundaries. Captures how much context each request added.
+/// Run it on one file's requests before the cross-file dedup: on the merged
+/// list a file boundary would charge a request's whole total_ctx as its delta.
 fn compute_deltas(requests: &mut [Request]) {
     let mut prev_ctx: i64 = 0;
     let mut prev_file_idx: usize = usize::MAX;
@@ -570,8 +624,7 @@ fn collect_requests(
         return None;
     }
 
-    let mut requests = parse_requests(&files);
-    compute_deltas(&mut requests);
+    let requests = parse_requests(&files);
     Some((files, requests))
 }
 
@@ -752,10 +805,18 @@ fn aggregate_by_tool(requests: &[Request]) -> Value {
 }
 
 /// Breakdown of ToolSearch queries by delta_cc cost.
+/// A request's delta_cc is split evenly across its ToolSearch calls, as
+/// aggregate_top_reads does for Read.
 fn aggregate_toolsearch(requests: &[Request]) -> Value {
     let mut by_query: HashMap<String, (i64, i64)> = HashMap::new(); // query -> (delta_cc, count)
 
     for r in requests {
+        let search_count = r.tools.iter().filter(|t| t.name == "ToolSearch").count();
+        if search_count == 0 {
+            continue;
+        }
+        let cc_per_search = (r.delta_cc as f64 / search_count as f64) as i64;
+
         for t in &r.tools {
             if t.name == "ToolSearch" {
                 let query = t
@@ -765,7 +826,7 @@ fn aggregate_toolsearch(requests: &[Request]) -> Value {
                     .unwrap_or("?")
                     .to_string();
                 let entry = by_query.entry(query).or_default();
-                entry.0 += r.delta_cc;
+                entry.0 += cc_per_search;
                 entry.1 += 1;
             }
         }
@@ -1297,5 +1358,152 @@ mod tests {
         let got: Vec<PathBuf> = find_latest_files(&files, 3).into_iter().map(|f| f.path).collect();
         assert_eq!(got, vec![PathBuf::from("b"), PathBuf::from("a"), PathBuf::from("c")]);
         assert_eq!(find_latest_files(&files, 10).len(), 4);
+    }
+
+    /// One assistant log line: `usage` is (input, output, cache_read, cache_create).
+    fn log_line(rid: &str, content: Value, usage: (i64, i64, i64, i64)) -> String {
+        json!({
+            "type": "assistant",
+            "requestId": rid,
+            "message": {
+                "role": "assistant",
+                "content": content,
+                "usage": {
+                    "input_tokens": usage.0,
+                    "output_tokens": usage.1,
+                    "cache_read_input_tokens": usage.2,
+                    "cache_creation_input_tokens": usage.3,
+                }
+            }
+        })
+        .to_string()
+    }
+
+    fn text_block() -> Value {
+        json!([{"type": "text", "text": "x"}])
+    }
+
+    fn tool_block(id: &str, name: &str, input: Value) -> Value {
+        json!([{"type": "tool_use", "id": id, "name": name, "input": input}])
+    }
+
+    fn write_log(path: &Path, lines: &[String]) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut body = lines.join("\n");
+        body.push('\n');
+        fs::write(path, body).unwrap();
+    }
+
+    #[test]
+    fn lines_of_one_request_are_merged_with_all_their_tools() {
+        let root = scratch("merge-lines");
+        let log = root.join("s.jsonl");
+        let u = (10, 5, 100, 50);
+        write_log(&log, &[
+            log_line("r1", text_block(), u),
+            json!({"type": "user", "message": {"role": "user", "content": "tool result"}}).to_string(),
+            log_line("r1", tool_block("t1", "Read", json!({"file_path": "A"})), u),
+            log_line("r1", tool_block("t2", "Read", json!({"file_path": "B"})), u),
+        ]);
+
+        let reqs = parse_requests(&[log]);
+        assert_eq!(reqs.len(), 1);
+        let names: Vec<&str> = reqs[0].tools.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, vec!["Read", "Read"]);
+        assert_eq!(reqs[0].tool_key(), "Read");
+
+        let top = aggregate_top_reads(&reqs);
+        let count_of = |f: &str| {
+            top.as_array()
+                .unwrap()
+                .iter()
+                .find(|x| x["file"] == f)
+                .map(|x| x["count"].as_i64().unwrap())
+        };
+        assert_eq!(count_of("A"), Some(1));
+        assert_eq!(count_of("B"), Some(1));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn repeated_tool_use_id_is_kept_once_and_last_line_usage_wins() {
+        let root = scratch("merge-dedup");
+        let log = root.join("s.jsonl");
+        write_log(&log, &[
+            log_line("r1", tool_block("t1", "Bash", json!({"command": "ls"})), (1, 2, 3, 4)),
+            log_line("r1", tool_block("t1", "Bash", json!({"command": "ls"})), (1, 2, 3, 4)),
+            log_line("r1", tool_block("t2", "Bash", json!({"command": "pwd"})), (10, 20, 30, 40)),
+            // A block without an id cannot be matched, so it is always kept.
+            log_line("r1", json!([{"type": "tool_use", "name": "Grep", "input": {}}]), (11, 21, 31, 41)),
+        ]);
+
+        let reqs = parse_requests(&[log]);
+        assert_eq!(reqs.len(), 1);
+        let ids: Vec<Option<&str>> = reqs[0].tools.iter().map(|t| t.id.as_deref()).collect();
+        assert_eq!(ids, vec![Some("t1"), Some("t2"), None]);
+        let r = &reqs[0];
+        assert_eq!((r.input, r.output, r.cache_read, r.cache_create), (11, 21, 31, 41));
+        assert_eq!(r.delta_cc, 11 + 31 + 41);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn request_repeated_in_a_later_file_keeps_the_first_and_deltas_stay_per_file() {
+        let root = scratch("cross-file");
+        let f1 = root.join("a.jsonl");
+        let f2 = root.join("b.jsonl");
+        // total_ctx = input + cache_read + cache_create
+        let r1 = (0, 1, 0, 1000); // 1000
+        let r2 = (0, 1, 1000, 500); // 1500
+        let r3 = (0, 1, 1500, 1500); // 3000
+        let r2_copy = (0, 1, 1000, 700); // 1700: a fork's copy that differs
+        let r4 = (0, 1, 1700, 300); // 2000
+        write_log(&f1, &[
+            log_line("r1", text_block(), r1),
+            log_line("r2", text_block(), r2),
+            log_line("r3", text_block(), r3),
+        ]);
+        write_log(&f2, &[
+            log_line("r1", text_block(), r1),
+            log_line("r2", text_block(), r2_copy),
+            log_line("r4", text_block(), r4),
+        ]);
+
+        let reqs = parse_requests(&[f1, f2]);
+        let ids: Vec<&str> = reqs.iter().map(|r| r.req_id.as_str()).collect();
+        assert_eq!(ids, vec!["r1", "r2", "r3", "r4"]);
+        assert!(reqs[..3].iter().all(|r| r.file_idx == 0), "first file must win");
+        assert_eq!(reqs[3].file_idx, 1);
+        assert_eq!(reqs[1].total_ctx(), 1500, "r2 keeps the first file's usage");
+
+        assert_eq!(reqs[0].delta_cc, 1000);
+        assert_eq!(reqs[1].delta_cc, 1500 - 1000);
+        assert_eq!(reqs[2].delta_cc, 3000 - 1500);
+        // r4 follows file 2's own copy of r2, not r3 of the merged list.
+        assert_eq!(reqs[3].delta_cc, 2000 - 1700);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn toolsearch_cost_is_split_across_the_searches_of_one_request() {
+        let root = scratch("toolsearch");
+        let log = root.join("s.jsonl");
+        let u = (0, 1, 0, 1000);
+        write_log(&log, &[
+            log_line("r1", tool_block("t1", "ToolSearch", json!({"query": "q1"})), u),
+            log_line("r1", tool_block("t2", "ToolSearch", json!({"query": "q2"})), u),
+        ]);
+
+        let reqs = parse_requests(&[log]);
+        assert_eq!(reqs[0].delta_cc, 1000);
+        let out = aggregate_toolsearch(&reqs);
+        let items = out.as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        for q in ["q1", "q2"] {
+            let it = items.iter().find(|x| x["query"] == q).unwrap();
+            assert_eq!(it["cache_create"], 500, "query {}", q);
+            assert_eq!(it["count"], 1, "query {}", q);
+        }
+        let _ = fs::remove_dir_all(&root);
     }
 }
