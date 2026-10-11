@@ -300,19 +300,24 @@ unsafe fn capture_window_pixels(hwnd: HWND) -> Result<CapturedPixels> {
         bail!("CreateCompatibleBitmap failed");
     }
 
-    // bitmap を DC に選択。restore (SelectObject(old)) を必ず DeleteObject より先に行うため
-    // 同一 scopeguard 内で順序を固定する。
-    let old_obj = unsafe { SelectObject(mem_dc, HGDIOBJ(bitmap.0)) };
-    let cleanup = scopeguard(move || unsafe {
-        SelectObject(mem_dc, old_obj);
+    // 解放は 2 段に分ける。`release` は bitmap / memory DC / window DC の破棄、`deselect` は
+    // bitmap の選択解除 (SelectObject(old))。deselect を後に宣言するので、早期 return でも
+    // drop 順は「選択解除 → DeleteObject → DeleteDC → ReleaseDC」になる。
+    let release = scopeguard(move || unsafe {
         let _ = DeleteObject(HGDIOBJ(bitmap.0));
         let _ = DeleteDC(mem_dc);
         ReleaseDC(Some(hwnd), src_dc);
     });
+    let old_obj = unsafe { SelectObject(mem_dc, HGDIOBJ(bitmap.0)) };
+    let deselect = scopeguard(move || unsafe {
+        SelectObject(mem_dc, old_obj);
+    });
 
     let printed = unsafe { PrintWindow(hwnd, mem_dc, PW_FULLCONTENT_FLAGS) };
+    // GetDIBits は「bitmap が DC に選択されていないこと」を要求するので、ここで選択を解除する。
+    drop(deselect);
     if !printed.as_bool() {
-        drop(cleanup);
+        drop(release);
         bail!("PrintWindow returned FALSE (window may be DWM-occluded or protected)");
     }
 
@@ -346,7 +351,7 @@ unsafe fn capture_window_pixels(hwnd: HWND) -> Result<CapturedPixels> {
             DIB_RGB_COLORS,
         )
     };
-    drop(cleanup);
+    drop(release);
     if copied == 0 {
         bail!("GetDIBits copied 0 scanlines");
     }
