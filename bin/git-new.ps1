@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+#Requires -Version 7.0
 # git-new [name] [-Here] — 新規Gitリポジトリを作成してGitHubにプッシュ
 param(
     [Parameter(Position = 0)]
@@ -8,6 +8,12 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# EAP=Stop does not cover native exit codes before PS 7.4, so each git step is checked
+# explicitly: a failed init/add/commit must never reach gh repo create --push.
+function Assert-NativeOk([string]$Step) {
+    if ($LASTEXITCODE) { throw "$Step failed (exit $LASTEXITCODE); GitHub repo not created" }
+}
+. "$PSScriptRoot\..\pwsh\aliases.ps1"
 $DefaultRoot = 'C:\Main\Project'
 
 if (!$Name) {
@@ -20,6 +26,7 @@ if (!$Name) {
 }
 
 git init -b main
+Assert-NativeOk 'git init'
 sc 'README.md' "# $Name" -No
 
 @'
@@ -40,5 +47,7 @@ nul
 '@ | sc '.gitignore'
 
 git add README.md .gitignore
+Assert-NativeOk 'git add'
 git commit -m 'initial commit'
+Assert-NativeOk 'git commit'
 gh repo create $Name --private --source=. --remote=origin --push

@@ -5,6 +5,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. "$PSScriptRoot\..\pwsh\aliases.ps1"
 $cfgPath = "$HOME/.config/yscoopy.json"
 $owner = 'ycookiey'
 $bucket = 'yscoopy'
