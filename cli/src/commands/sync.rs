@@ -287,12 +287,20 @@ fn claude_dirs() -> Result<Vec<PathBuf>> {
     if let Ok(entries) = std::fs::read_dir(&home) {
         for e in entries.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
-            if name.starts_with(".claude-") && e.path().is_dir() {
+            if is_account_dir_name(&name) && e.path().is_dir() {
                 out.push(e.path());
             }
         }
     }
     Ok(out)
+}
+
+/// Extra Claude account config dirs are named `.claude-<digits>` (`^\.claude-\d+$`).
+/// Other `.claude-*` dirs in home (e.g. `.claude-browsers`, `.claude-1.lock`) are not
+/// accounts and must not receive settings / keybindings / MCP config.
+fn is_account_dir_name(name: &str) -> bool {
+    name.strip_prefix(".claude-")
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
 // --- 2) Scoopfile ---
@@ -478,7 +486,7 @@ fn sync_mcp_servers(dot: &Path) -> Result<bool> {
     if let Ok(entries) = std::fs::read_dir(&home) {
         for e in entries.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
-            if name.starts_with(".claude-") && e.path().is_dir() {
+            if is_account_dir_name(&name) && e.path().is_dir() {
                 if e.path().join(".claude.json").exists() {
                     dirs.push(e.path());
                 }
@@ -600,4 +608,22 @@ fn write_if_different(path: &Path, new_content: &str) -> Result<bool> {
     payload.push('\n');
     std::fs::write(path, payload)?;
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_account_dir_name;
+
+    #[test]
+    fn account_dir_name_accepts_numbered_dirs_only() {
+        assert!(is_account_dir_name(".claude-1"));
+        assert!(is_account_dir_name(".claude-12"));
+        assert!(!is_account_dir_name(".claude"));
+        assert!(!is_account_dir_name(".claude-"));
+        assert!(!is_account_dir_name(".claude-browsers"));
+        assert!(!is_account_dir_name(".claude-1.lock"));
+        assert!(!is_account_dir_name(".claude-4.lock"));
+        assert!(!is_account_dir_name(".claude-1a"));
+        assert!(!is_account_dir_name(".claude-１"));
+    }
 }
