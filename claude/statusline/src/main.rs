@@ -870,10 +870,14 @@ fn cache_rate_limits(dir: Option<&str>, rl: &RateLimits, now: u64) {
 }
 
 fn main() {
-    // Claude Code が in-flight 実行をキャンセルした際、Windows では
-    // 孫プロセスとして取り残されることがあり、stdin の EOF が来ず
-    // read_to_string で永遠にブロックしてゾンビ化する。
-    // 正常実行は数ms〜2秒(GLM API timeout=2s)なので 5秒で強制終了する。
+    // Watchdog: a normal run takes a few ms up to ~2s (GLM_API_TIMEOUT), so
+    // exit after 5s if this process stalls once main is running, e.g. stdin
+    // never reaches EOF or a network call hangs.
+    // It does not cover the orphans seen on Windows: Git Bash (MSYS) creates
+    // the child suspended, and if Claude Code cancels the bash in between,
+    // the child stays suspended with main never run (1 thread, CPU 0), so
+    // this thread never starts. bin/reap-orphans.ps1 (Task Scheduler task
+    // OrphanReaper, every 5 minutes) stops those.
     std::thread::spawn(|| {
         std::thread::sleep(std::time::Duration::from_secs(5));
         std::process::exit(2);
