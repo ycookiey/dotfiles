@@ -2,14 +2,8 @@ return {
   {
     "neovim/nvim-lspconfig",
     event = { "BufReadPre", "BufNewFile" },
-    dependencies = {
-      "hrsh7th/nvim-cmp",
-      "hrsh7th/cmp-nvim-lsp",
-      "hrsh7th/cmp-buffer",
-      "hrsh7th/cmp-path",
-      "L3MON4D3/LuaSnip",
-      "saadparwaiz1/cmp_luasnip",
-    },
+    -- cmp-nvim-lsp は capabilities の取得用 (flutter.lua も使う)。補完本体は下の nvim-cmp spec で InsertEnter まで遅らせる
+    dependencies = { "hrsh7th/cmp-nvim-lsp" },
     config = function()
       local capabilities = require("cmp_nvim_lsp").default_capabilities()
 
@@ -24,7 +18,8 @@ return {
         callback = function(ev)
           local opts = { buffer = ev.buf }
           vim.keymap.set("n", "gd", vim.lsp.buf.definition, opts)
-          vim.keymap.set("n", "gr", vim.lsp.buf.references, opts)
+          -- 組み込みの grr/grn/gra 等と前方一致するため、nowait で timeoutlen の待ちを避ける
+          vim.keymap.set("n", "gr", vim.lsp.buf.references, { buffer = ev.buf, nowait = true })
           vim.keymap.set("n", "K", vim.lsp.buf.hover, opts)
           vim.keymap.set("n", "<leader>rn", vim.lsp.buf.rename, opts)
           vim.keymap.set("n", "<leader>ca", vim.lsp.buf.code_action, opts)
@@ -54,7 +49,32 @@ return {
       })
       vim.lsp.enable({ "basedpyright", "ruff" })
 
-      -- 補完
+      -- 保存時に ruff でフォーマット（Python）
+      vim.api.nvim_create_autocmd("BufWritePre", {
+        pattern = "*.py",
+        callback = function(args)
+          vim.lsp.buf.format({
+            bufnr = args.buf,
+            async = false,
+            filter = function(c) return c.name == "ruff" end,
+          })
+        end,
+      })
+    end,
+  },
+  {
+    -- 補完。LSP を使わないファイルを開いただけでは読み込まない
+    -- TODO: render-markdown は attach 時に pcall(require, "cmp") で cmp source を登録しようとし、
+    -- lazy の module 自動読み込みで nvim-cmp 一式が読まれるため、Markdown ではこの遅延が効かない
+    "hrsh7th/nvim-cmp",
+    event = "InsertEnter",
+    dependencies = {
+      "hrsh7th/cmp-buffer",
+      "hrsh7th/cmp-path",
+      "L3MON4D3/LuaSnip",
+      "saadparwaiz1/cmp_luasnip",
+    },
+    config = function()
       local cmp = require("cmp")
       local luasnip = require("luasnip")
       cmp.setup({
@@ -82,18 +102,6 @@ return {
           { name = "buffer" },
           { name = "path" },
         }),
-      })
-
-      -- 保存時に ruff でフォーマット（Python）
-      vim.api.nvim_create_autocmd("BufWritePre", {
-        pattern = "*.py",
-        callback = function(args)
-          vim.lsp.buf.format({
-            bufnr = args.buf,
-            async = false,
-            filter = function(c) return c.name == "ruff" end,
-          })
-        end,
       })
     end,
   },
