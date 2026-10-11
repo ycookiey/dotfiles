@@ -41,3 +41,10 @@
   - 自分の編集が、写しと index で違う行(他人の変更)に触れると拒否(exit 1、index は不変)。新規 file は対象外(`git add`)
   - 改行は index の版に合わせる(autocrlf の CRLF 作業ツリー + LF の blob も可)
 - 後: `git diff --cached` で確認 → commit。test: `bash bin/tests/git-stage-own-edit.test.sh`
+- 編集前に begin し忘れないよう、hook `stage-own-edit-reminder.sh` が Edit/Write の直前に知らせる(追跡済み・HEAD との差分あり・begin 前のときだけ、session ごと file ごとに 1 回)
+
+## ignore の対象の下にある追跡済み file は `git add <path>` が拒否される
+
+- 現象: global ignore 等で `.claude/` が ignore 対象の repo で、追跡済みの `.claude/skills/x/SKILL.md` を `git add <path>` → 「The following paths are ignored」で何も stage されない(追跡済みでも)
+- 対処: `git add -u -- <path>`(追跡済み file の変更だけを stage)。新規 file を足すときだけ `git add -f`
+

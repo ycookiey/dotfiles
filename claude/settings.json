@@ -104,6 +104,11 @@
           },
           {
             "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/sed-inplace-crlf-reminder.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
             "command": "bash \"$HOME/.claude/hooks/backslash-shrink-guard.sh\"",
             "timeout": 10
           },
@@ -194,6 +199,16 @@
             "type": "command",
             "command": "bash \"$HOME/.claude/hooks/settings-template-reminder.sh\"",
             "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/stage-own-edit-reminder.sh\"",
+            "timeout": 10
           }
         ]
       },
