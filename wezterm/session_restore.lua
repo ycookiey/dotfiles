@@ -94,14 +94,17 @@ local function instance_id()
   return wezterm.GLOBAL.session_restore_instance
 end
 
+-- ペインの cwd を、spawn の cwd にそのまま渡せるパスで返す (分からなければ nil)。
+-- Windows の Url.file_path は /C:/foo/ の形なので、先頭の / を外して C:/foo/ にする
 local function cwd_of(pane)
   local ok, url = pcall(function() return pane:get_current_working_dir() end)
   if not ok or not url then return nil end
   local path = type(url) == "string" and url:gsub("^file://[^/]*", "") or url.file_path
   if not path then return nil end
-  -- /C:/foo/ → C:/foo/
   return (path:gsub("^/(%a):", "%1:"))
 end
+
+M.pane_cwd = cwd_of
 
 -- ペインの前面プロセスから親をたどり、シェルに最も近い claude を返す。
 -- Claude から起動された入れ子の `claude -p` はこれで除外される

@@ -1,5 +1,6 @@
 local wezterm = require("wezterm")
 local act = wezterm.action
+local session_restore = require("session_restore")
 
 -- フォーカス中のペインのプロセス名を取得
 local function fg_name(pane)
@@ -148,18 +149,9 @@ return {
       key = "e",
       mods = "ALT",
       action = wezterm.action_callback(function(window, pane)
-        local cwd_uri = pane:get_current_working_dir()
-        local cwd = nil
-        if cwd_uri then
-          if type(cwd_uri) == "string" then
-            cwd = cwd_uri:gsub("^file://[^/]*", "")
-          elseif cwd_uri.file_path then
-            cwd = cwd_uri.file_path
-          end
-        end
         window:perform_action(act.SpawnCommandInNewWindow({
           args = { "nvim" },
-          cwd = cwd,
+          cwd = session_restore.pane_cwd(pane),
         }), pane)
       end),
     },
@@ -290,7 +282,7 @@ return {
     -- ペインズーム
     { key = "z", mods = "ALT", action = act.TogglePaneZoomState },
     -- 前回の WezTerm の窓・タブ・ペインと Claude Code の会話を復元
-    { key = "R", mods = "ALT|SHIFT", action = require("session_restore").restore_action() },
+    { key = "R", mods = "ALT|SHIFT", action = session_restore.restore_action() },
     -- フォントサイズ
     { key = "+", mods = "CTRL", action = act.IncreaseFontSize },
     { key = "-", mods = "CTRL", action = act.DecreaseFontSize },
