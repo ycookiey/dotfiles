@@ -107,10 +107,12 @@ fi
 # cleanup 前に unjunction_worktree() で `cmd /c rmdir` (junction 単体のみ剥がし
 # 実体を辿らない安全な削除) を実行する。
 #
-# junction は Git Bash の `find -type l` では検出できない (NTFS junction は
-# `-type d` = 通常ディレクトリとして見える)。PowerShell の ReparsePoint+
-# Directory 属性で正確に列挙する。PowerShell 不在時は `find -type d -links 1`
-# (junction は nlink=1) でフォールバック。
+# Git Bash (MSYS) では NTFS junction は symlink として見える (`[[ -L ]]` が真、
+# `find -type l` が返す)。一方 `find -type d -links 1` は通常ディレクトリを返し
+# junction は返さないため、検出には使えない。
+# PowerShell があれば ReparsePoint+Directory 属性で列挙する。PowerShell 不在時は
+# `find -type l` (-L は付けず辿らない) でフォールバックする。git 管理の通常の
+# symlink も拾うが、ファイル symlink への `rmdir` は失敗するだけでリンク先には触れない。
 unjunction_worktree() {
   local wt="$1"
   [[ -d "$wt" ]] || return 0
@@ -128,7 +130,7 @@ unjunction_worktree() {
     while IFS= read -r -d '' link; do
       link_win=$(cygpath -w "$link" 2>/dev/null || echo "$link")
       cmd //c rmdir "$link_win" >/dev/null 2>&1 || true
-    done < <(find "$wt" -type d -links 1 -print0 2>/dev/null)
+    done < <(find "$wt" -type l -print0 2>/dev/null)
   fi
 }
 
