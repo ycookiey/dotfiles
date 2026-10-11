@@ -50,6 +50,10 @@ function y {
 
 
 if ($script:IsInteractive) {
+    # dotcli 裏処理の throttle 間隔: 前回起動 (stamp file の mtime) から間隔内なら起動しない
+    $global:_gitPromptInterval = [timespan]'0:10:0'  # git fetch / pull -r (dotfiles 自動更新)
+    $global:_syncInterval = [timespan]'1.0:0:0'      # settings / scoop・winget export / MCP sync
+
     # --- Proxy auto-detect (同期、PIDファイル + プロセス存在チェック) ---
     $_pidFile = 'C:\Main\Project\en-hancer-proxy\.en-hancer-proxy.pid'
     if ([IO.File]::Exists($_pidFile)) {
@@ -109,30 +113,79 @@ if ($script:IsInteractive) {
         & $starshipExe init powershell --print-full-init > $starshipCache
     }
 
+    # --- Dotfiles background jobs (dotcli git-prompt → sync, build --check) ---
+    # dotcli を絶対 path で別 process として起動し、prompt hook が完了を見て結果を表示する。
+    # $global:j = git-prompt (自動更新), $global:syncJob = sync, $global:_buildCheckJob = build --check
+    $global:_dotDir = $Dot
+    $global:_dotcli = (Get-Command dotcli -CommandType Application -ea 0 | select -First 1).Source
+    $global:_gitPromptStamp = "$cacheDir\git-prompt.stamp"
+    $global:_syncStamp = "$cacheDir\sync.stamp"
+    # stamp が無いと GetLastWriteTimeUtc は 1601 年を返すので常に due
+    function global:__dotcli_due($stamp, $interval) {
+        [DateTime]::UtcNow - [IO.File]::GetLastWriteTimeUtc($stamp) -ge $interval
+    }
+    # 起動に成功したら $stamp を touch し @{Process; Out; Err} を返す。失敗時は 1 行表示して $null
+    function global:__dotcli_start([string[]]$a, [string]$stamp) {
+        try {
+            $si = [Diagnostics.ProcessStartInfo]::new($global:_dotcli)
+            foreach ($x in $a) { $si.ArgumentList.Add($x) }
+            $si.UseShellExecute = $false
+            $si.CreateNoWindow = $true
+            $si.RedirectStandardInput = $si.RedirectStandardOutput = $si.RedirectStandardError = $true
+            $si.StandardOutputEncoding = $si.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
+            $si.WorkingDirectory = $global:_dotDir  # 利用者の cwd を子 process が握り続けないように
+            $pr = [Diagnostics.Process]::Start($si)
+            $pr.StandardInput.Close()  # 子 (git / scoop / winget) が入力待ちで止まらないよう即 EOF
+            # stdout/stderr は両方非同期で読む (片方を同期で読むと他方の pipe が詰まり deadlock)
+            $job = @{ Process = $pr; Out = $pr.StandardOutput.ReadToEndAsync(); Err = $pr.StandardError.ReadToEndAsync() }
+            if ($stamp) { try { [IO.File]::WriteAllBytes($stamp, [byte[]]@()) } catch {} }
+            $job
+        } catch {
+            wh "`n✗ dotcli $($a[0]): failed to start ($($_.Exception.Message))" -Fo Red
+        }
+    }
+    # 完了済みなら Process を Dispose して @{Out; Err} を返す。未完了なら $null
+    function global:__dotcli_end($job) {
+        if (!$job.Out.IsCompleted -or !$job.Err.IsCompleted) { return }
+        try { @{ Out = $job.Out.Result; Err = $job.Err.Result } }
+        catch { @{ Out = ''; Err = '' } }
+        finally { $job.Process.Dispose() }
+    }
+    # sync は git-prompt の pull と同じ tracked file (install/scoopfile.json 等) を書き換えうるので、
+    # git-prompt の完了後 ($global:j が空) に起動して pull と直列化する
+    function global:__dotcli_kickSync {
+        if (!$global:_syncPending -or $global:j) { return }
+        $global:_syncPending = $false
+        if (__dotcli_due $global:_syncStamp $global:_syncInterval) {
+            $global:syncJob = __dotcli_start @('sync', '--dot', $global:_dotDir) $global:_syncStamp
+        }
+    }
+
     # --- Prompt hook (inlined) ---
     $global:_promptHook = {
-        if ($global:j -and $global:j.Handle.IsCompleted) {
-            try {
-                $r = $global:j.PowerShell.EndInvoke($global:j.Handle)
-                if ($r -and $r.Count -gt 0) {
-                    $v = [string]$r[0]
-                    if ($v.StartsWith('updated:')) {
-                        $p = $v.Substring(8) -split ':', 2
-                        $label = $p[0] -eq '1' ? 'commit' : 'commits'
-                        wh "`n✨ Dotfiles Updated! ($($p[0]) ${label}: $($p[1]))" -Fo Green
-                    } elseif ($v -eq 'dirty') {
-                        wh "`n⚠ Dotfiles: dirty (behind remote)" -Fo Yellow
-                    } elseif ($v -eq 'error') {
-                        wh "`n✗ Dotfiles: pull failed" -Fo Red
-                    }
-                }
-            } finally { $global:j.PowerShell.Dispose(); $global:j = $null }
+        if ($global:j -and ($r = __dotcli_end $global:j)) {
+            $global:j = $null
+            $v = $r.Out.Trim()
+            if ($v.StartsWith('updated:')) {
+                $p = $v.Substring(8) -split ':', 2
+                $label = $p[0] -eq '1' ? 'commit' : 'commits'
+                wh "`n✨ Dotfiles Updated! ($($p[0]) ${label}: $($p[1]))" -Fo Green
+            } elseif ($v -eq 'dirty') {
+                wh "`n⚠ Dotfiles: dirty (behind remote)" -Fo Yellow
+            } elseif ($v -eq 'error') {
+                wh "`n✗ Dotfiles: pull failed" -Fo Red
+            }
         }
-        if ($global:syncJob -and $global:syncJob.Handle.IsCompleted) {
-            try {
-                $r = $global:syncJob.PowerShell.EndInvoke($global:syncJob.Handle)
-                if ($r -and $r.Count -gt 0) { wh "`n🔄 Synced" -ForegroundColor Cyan }
-            } finally { $global:syncJob.PowerShell.Dispose(); $global:syncJob = $null }
+        __dotcli_kickSync
+        if ($global:syncJob -and ($r = __dotcli_end $global:syncJob)) {
+            $global:syncJob = $null
+            # stderr (scoop / winget 未導入等) は従来どおり表示しない
+            if ($r.Out.Trim() -eq 'synced') { wh "`n🔄 Synced" -Fo Cyan }
+        }
+        if ($global:_buildCheckJob -and ($r = __dotcli_end $global:_buildCheckJob)) {
+            $global:_buildCheckJob = $null
+            $t = ($r.Out + $r.Err).TrimEnd()  # "dotfiles build outdated" ... は stderr に出る
+            if ($t) { wh "`n$t" }
         }
         $p = $PWD.Path -replace '\\','/'
         if (!$global:_hostName) { $global:_hostName = [Net.Dns]::GetHostName() }
@@ -147,39 +200,16 @@ if ($script:IsInteractive) {
         if (!$global:_starshipDeferred) {
             & $global:_promptHook
             $global:_starshipDeferred = $true
-            # Dotfiles auto-update (初回プロンプトで遅延起動)
-            $_ps = [PowerShell]::Create()
-            if (gcm dotcli -ea 0) {
-                [void]$_ps.AddScript("dotcli git-prompt '$Dot'")
+            # Dotfiles 裏処理 (起動のみ。結果は 2 回目以降の prompt で hook が表示)
+            if ($global:_dotcli) {
+                if (__dotcli_due $global:_gitPromptStamp $global:_gitPromptInterval) {
+                    $global:j = __dotcli_start @('git-prompt', $global:_dotDir) $global:_gitPromptStamp
+                }
+                $global:_syncPending = $true
+                __dotcli_kickSync  # git-prompt を起動しなかった (間隔内 / 起動失敗) ときは即 sync
+                $global:_buildCheckJob = __dotcli_start @('build', '--check')
             } else {
-                [void]$_ps.AddScript(@"
-                    `$g = '$HOME\scoop\apps\git\current\cmd\git.exe'
-                    Set-Location '$Dot'
-                    `$dirty = & `$g status --porcelain
-                    & `$g fetch -q
-                    if (`$LASTEXITCODE -ne 0) { return }
-                    & `$g diff --quiet HEAD '@{u}'
-                    if (`$?) { return }
-                    if (`$dirty) { return 'dirty' }
-                    `$before = (& `$g rev-parse HEAD).Trim()
-                    & `$g pull -q -r
-                    if (!`$?) { return 'error' }
-                    `$after = (& `$g rev-parse HEAD).Trim()
-                    if (`$before -ne `$after) {
-                        `$n = (& `$g rev-list --count `$before..`$after)
-                        `$areas = (& `$g diff --name-only `$before `$after | % { (`$_ -split '/')[0] } | select -Unique | sort) -join ', '
-                        "updated:`$n" + ":`$areas"
-                    }
-"@)
-            }
-            $global:j = @{ PowerShell = $_ps; Handle = $_ps.BeginInvoke() }
-            # Build outdated check
-            if (gcm dotcli -ea 0) { dotcli build --check }
-            # Sync (settings.json / scoopfile / wingetfile / MCP servers)
-            if (Get-Command dotcli -ea 0) {
-                $_syncPs = [PowerShell]::Create()
-                [void]$_syncPs.AddScript("dotcli sync --dot '$Dot' | Out-Null")
-                $global:syncJob = @{ PowerShell = $_syncPs; Handle = $_syncPs.BeginInvoke() }
+                wh "⚠ dotcli not found (dotfiles auto-update / sync disabled): run $($global:_dotDir)\setup.ps1" -Fo Yellow
             }
             return "$PWD> "
         }
