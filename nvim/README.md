@@ -13,11 +13,58 @@ Leader: `Space`
 | `Space f b` | バッファ一覧 |
 | `Space f h` | ヘルプタグ検索 |
 
-### Neo-tree（ファイルツリー）
+### Yazi（ファイラー）
 
 | キー | 機能 |
 |------|------|
-| `Space e` | ファイルツリー トグル |
+| `Space e` | Yazi を開く（現在のファイルの場所） |
+| `Space E` | Yazi を開く（カレントディレクトリ） |
+
+### 編集（init.lua）
+
+| キー | 機能 |
+|------|------|
+| `Ctrl+S`（n/i/v） | 保存（`:update`）してノーマルモードへ戻る。ノーマル・挿入からは IME を英数に切り替える |
+| `Alt+L`（n） | Markdown チェックボックスを切り替え（`- [ ]` ⇔ `- [x]`。チェックボックスのないリスト項目には `[ ]` を付ける） |
+| `Alt+L`（v） | 選択した各行のチェックボックスを切り替え |
+| `Alt+J` / `Alt+K`（n/i/v） | 行（ビジュアルでは選択範囲）を下/上へ移動して再インデント。n/v はカウント可 |
+
+挿入モードを抜けるたびに（`Esc` / `Ctrl+C` / `Ctrl+[`）IME を英数に切り替える（`zenhan` があるとき）。
+
+### 検索（vim-asterisk）
+
+| キー | 機能 |
+|------|------|
+| `*` / `#`（n/x） | カーソル下の単語（単語境界あり）を前方/後方検索。カーソルは動かない。ビジュアルでは選択文字列を検索 |
+| `g*` / `g#`（n/x） | 同上、単語境界なし |
+
+### マルチカーソル（multicursors.nvim）
+
+| キー | 機能 |
+|------|------|
+| `Space m`（n/v） | マルチカーソル開始（`:MCstart`。カーソル下の単語、またはビジュアル選択を起点） |
+
+### 空白（mini.trailspace）
+
+| キー | 機能 |
+|------|------|
+| `Space t w` | 行末の空白を削除 |
+| `Space t l` | ファイル末尾の空行を削除 |
+
+### Flutter（flutter-tools.nvim）
+
+Dart ファイルか `pubspec.yaml` を開いて flutter-tools が読み込まれてから有効。
+
+| キー | 機能 |
+|------|------|
+| `Space f r` | `:FlutterRun` |
+| `Space f q` | `:FlutterQuit` |
+| `Space f R` | `:FlutterRestart`（ホットリスタート） |
+| `Space f l` | `:FlutterReload`（ホットリロード） |
+| `Space f d` | `:FlutterDevices` |
+| `Space f e` | `:FlutterEmulators` |
+| `Space f o` | `:FlutterOutlineToggle` |
+| `Space f L` | `:FlutterLogClear` |
 
 ### LSP
 
@@ -36,7 +83,7 @@ Leader: `Space`
 | `Ctrl+Space` | 補完を手動トリガー |
 | `CR` | 補完確定 |
 | `Tab` | 次の候補 / スニペットジャンプ |
-| `Shift+Tab` | 前の候補 |
+| `Shift+Tab` | 前の候補 / スニペットを戻る |
 
 ## Vim 基本操作
 
@@ -70,7 +117,7 @@ Leader: `Space`
 | `gg` | ファイル先頭 |
 | `G` | ファイル末尾 |
 | `{` / `}` | 段落移動 |
-| `%` | 対応する括弧へ |
+| `%` | 対応する括弧へ（vim-matchup で if/else 等のキーワードの組にも対応） |
 | `Ctrl+U` | 半ページ上 |
 | `Ctrl+D` | 半ページ下 |
 | `Ctrl+B` | 1ページ上 |
@@ -85,6 +132,8 @@ Leader: `Space`
 | `t{c}` / `T{c}` | `{c}` の手前/後ろへ |
 | `;` / `,` | f/t の繰り返し/逆方向 |
 
+`Ctrl+U/D/B/F/Y/E` と `zt/zz/zb` は neoscroll.nvim でスムーズスクロールする。
+
 ### 検索
 
 | キー | 機能 |
@@ -92,8 +141,7 @@ Leader: `Space`
 | `/{pattern}` | 前方検索 |
 | `?{pattern}` | 後方検索 |
 | `n` / `N` | 次/前の検索結果 |
-| `*` | カーソル下の単語を前方検索 |
-| `#` | カーソル下の単語を後方検索 |
+| `*` / `#` | カーソル下の単語を前方/後方検索（vim-asterisk で置き換え。カーソルは動かない。上の「検索（vim-asterisk）」参照） |
 
 ### 編集
 
