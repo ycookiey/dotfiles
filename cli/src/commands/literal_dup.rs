@@ -11,6 +11,7 @@
 //! `()`/`=>`/`=`/`;`/メンバ`.` を含まないもの (式やコードブロックを除外)。数値の小数点 (`0.5`) と
 //! リテラル内のコメントは許容する。非 ASCII の文字列・識別子は元の文字のまま正規化キーに残る。
 
+use rayon::prelude::*;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
@@ -33,6 +34,14 @@ struct Args {
     top: usize,
     excludes: Vec<String>,
     no_gitignore: bool,
+}
+
+/// 同一の正規化 literal の出現。open と elements は最初の出現の値 (同じ正規化なら同じ)。
+struct Group {
+    open: char,
+    elements: usize,
+    /// (walk_files が返した paths の添字, 行)。ファイルの走査順、ファイル内は出現順。
+    occs: Vec<(usize, u32)>,
 }
 
 fn parse_args(args: &[String]) -> Args {
@@ -178,60 +187,63 @@ pub fn run(args: &[String]) {
     let paths = walk_files(&parsed.path, &parsed.exts, &parsed.excludes, parsed.no_gitignore);
     let root = &parsed.path;
 
-    // normalized -> occurrences
-    let mut groups: HashMap<String, Vec<(String, u32, char, usize)>> = HashMap::new();
-    for p in &paths {
-        let src = match fs::read_to_string(p) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-        let rel = display_path(p, root);
-        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
-        for (norm, open, elements, line) in extract_literals(&src, ext) {
-            if elements < parsed.min_elements {
-                continue;
-            }
-            if norm.chars().count() < parsed.min_chars {
-                continue;
-            }
+    // ファイルごとの抽出は並列。collect は paths の順を保つので、下の merge で各 literal の
+    // occurrence は従来どおりファイルの走査順に並ぶ。読めないファイルは空。
+    let per_file: Vec<Vec<(String, char, usize, u32)>> = paths
+        .par_iter()
+        .map(|p| {
+            let Ok(src) = fs::read_to_string(p) else { return Vec::new() };
+            let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
+            let mut lits = extract_literals(&src, ext);
+            lits.retain(|(norm, _, elements, _)| {
+                *elements >= parsed.min_elements && norm.chars().count() >= parsed.min_chars
+            });
+            lits
+        })
+        .collect();
+
+    // normalized -> group。occurrence は (paths の添字, 行) で持ち、表示パスは出力する cluster の分だけ作る。
+    let mut groups: HashMap<String, Group> = HashMap::new();
+    for (file_idx, lits) in per_file.into_iter().enumerate() {
+        for (norm, open, elements, line) in lits {
             groups
                 .entry(norm)
-                .or_default()
-                .push((rel.clone(), line, open, elements));
+                .or_insert_with(|| Group { open, elements, occs: Vec::new() })
+                .occs
+                .push((file_idx, line));
         }
     }
 
-    let mut clusters: Vec<Value> = groups
+    let mut clusters: Vec<(String, Group, usize)> = groups
         .into_iter()
-        .filter(|(_, occs)| occs.len() >= parsed.min_occurrences)
-        .map(|(norm, occs)| {
-            let open = occs[0].2;
-            let elements = occs[0].3;
-            let chars = norm.chars().count();
-            json!({
-                "literal": norm,
-                "kind": if open == '[' { "array" } else { "object" },
-                "elements": elements,
-                "occurrence_count": occs.len(),
-                "saved_chars": chars.saturating_mul(occs.len().saturating_sub(1)),
-                "occurrences": occs.iter().map(|(f, l, _, _)| json!({"file": f, "line": l})).collect::<Vec<_>>(),
-            })
+        .filter(|(_, g)| g.occs.len() >= parsed.min_occurrences)
+        .map(|(norm, g)| {
+            let saved = norm.chars().count().saturating_mul(g.occs.len().saturating_sub(1));
+            (norm, g, saved)
         })
         .collect();
 
     // saved_chars 降順 (= 共通化で削減できる総文字量)。短い高頻度も長い低頻度も同じ土俵で評価。
-    clusters.sort_by(|a, b| {
-        let sa = a.get("saved_chars").and_then(|x| x.as_u64()).unwrap_or(0);
-        let sb = b.get("saved_chars").and_then(|x| x.as_u64()).unwrap_or(0);
-        // literal 昇順で tie-break (HashMap 順に依存せず、同値の並びと --top の境界を毎回同じにする)。
-        sb.cmp(&sa).then_with(|| {
-            let la = a.get("literal").and_then(|x| x.as_str()).unwrap_or("");
-            let lb = b.get("literal").and_then(|x| x.as_str()).unwrap_or("");
-            la.cmp(lb)
-        })
-    });
+    // literal 昇順で tie-break (HashMap 順に依存せず、同値の並びと --top の境界を毎回同じにする)。
+    clusters.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
     let total = clusters.len();
-    let shown: Vec<Value> = clusters.into_iter().take(parsed.top).collect();
+    let shown: Vec<Value> = clusters
+        .into_iter()
+        .take(parsed.top)
+        .map(|(norm, g, saved)| {
+            json!({
+                "literal": norm,
+                "kind": if g.open == '[' { "array" } else { "object" },
+                "elements": g.elements,
+                "occurrence_count": g.occs.len(),
+                "saved_chars": saved,
+                "occurrences": g.occs.iter().map(|&(f, l)| json!({
+                    "file": display_path(&paths[f], root),
+                    "line": l,
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
 
     let result = json!({
         "scanned_files": paths.len(),
