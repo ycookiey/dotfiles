@@ -1023,7 +1023,54 @@ fn build_clusters(
             .then_with(|| a.gap_tokens.cmp(&b.gap_tokens))
             .then_with(|| cluster_content_order(files, a, b))
     });
-    clusters
+    drop_subsumed(clusters)
+}
+
+/// Drops each cluster whose occurrences all lie inside the occurrences of one cluster kept
+/// before it in rank order, i.e. a cluster that reports no file region the kept one does not
+/// already report. Every window group that is left-maximal becomes its own cluster, so a
+/// --gap match also yields the exact matches that start right after each gap, and periodic
+/// code yields sub-ranges of the same region. Containment is checked against a single kept
+/// cluster, never the union of several, so a cluster with an occurrence elsewhere (3
+/// occurrences where only 2 match longer) stays. Expects `clusters` sorted by rank and each
+/// cluster's occurrences sorted by (file_idx, start_line) and disjoint per file.
+fn drop_subsumed(clusters: Vec<Cluster>) -> Vec<Cluster> {
+    let mut kept: Vec<Cluster> = Vec::with_capacity(clusters.len());
+    // file_idx -> (start_line, end_line, index into kept) of every kept occurrence.
+    let mut spans_by_file: HashMap<usize, Vec<(u32, u32, usize)>> = HashMap::new();
+    for c in clusters {
+        let first = &c.occurrences[0];
+        let subsumed = spans_by_file.get(&first.file_idx).is_some_and(|spans| {
+            spans.iter().any(|&(start, end, k)| {
+                start <= first.start_line && first.end_line <= end && occurrences_within(&c, &kept[k])
+            })
+        });
+        if subsumed {
+            continue;
+        }
+        let k = kept.len();
+        for o in &c.occurrences {
+            spans_by_file.entry(o.file_idx).or_default().push((o.start_line, o.end_line, k));
+        }
+        kept.push(c);
+    }
+    kept
+}
+
+/// True when every occurrence of `inner` lies inside some occurrence of `outer`. Several
+/// occurrences of `inner` may share one occurrence of `outer`.
+fn occurrences_within(inner: &Cluster, outer: &Cluster) -> bool {
+    inner.occurrences.iter().all(|o| {
+        // outer's occurrences are sorted and disjoint per file, so only the last one starting
+        // at or before o can contain it.
+        let idx = outer
+            .occurrences
+            .partition_point(|a| (a.file_idx, a.start_line) <= (o.file_idx, o.start_line));
+        idx > 0 && {
+            let a = &outer.occurrences[idx - 1];
+            a.file_idx == o.file_idx && o.end_line <= a.end_line
+        }
+    })
 }
 
 /// Orders clusters by where they occur: the first occurrence's (path, start_line), then
@@ -1284,5 +1331,121 @@ mod rust_quote_tests {
             vec![Id, Punct(b'='), Str, Punct(b';'), Id, Punct(b'<'), Str]
         );
         assert_eq!(kinds("r#\"x\"#", "ts"), vec![Id, Punct(b'#'), Str, Punct(b'#')]);
+    }
+}
+
+#[cfg(test)]
+mod subsumption_tests {
+    use super::*;
+
+    /// One JS statement whose punctuation follows the bits of `i`, so a body built from
+    /// consecutive `i` has no repeating token-kind run (Id and Num collapse, so a body of
+    /// same-shaped lines would match itself).
+    fn line(i: u32, rhs: &str) -> String {
+        let mut s = String::from("  v");
+        for bit in 0..5 {
+            s.push_str(if (i >> bit) & 1 == 1 { ".x" } else { "(x)" });
+        }
+        format!("{s} = {rhs};\n")
+    }
+
+    /// A 27-line function: header, statements 1..=25, closing brace. `rhs` gives each
+    /// statement's right-hand side.
+    fn function(rhs: impl Fn(u32) -> String) -> String {
+        let mut src = String::from("function f() {\n");
+        for i in 1..=25 {
+            src.push_str(&line(i, &rhs(i)));
+        }
+        src.push_str("}\n");
+        src
+    }
+
+    fn file(name: &str, src: String) -> FileTokens {
+        let tokens = tokenize(&src, "js");
+        FileTokens { path: PathBuf::from(name), tokens, src, ext: "js".into(), lexer: "generic" }
+    }
+
+    /// A cluster's occurrences as "file_idx:start-end", space separated. Tests spell clusters
+    /// as such strings so their tables do not show up in `dup-scan` over this file.
+    fn occs(c: &Cluster) -> String {
+        let spans: Vec<String> = c
+            .occurrences
+            .iter()
+            .map(|o| format!("{}:{}-{}", o.file_idx, o.start_line, o.end_line))
+            .collect();
+        spans.join(" ")
+    }
+
+    /// Builds a cluster from the `occs` notation.
+    fn cluster(spec: &str) -> Cluster {
+        let occurrences = spec
+            .split(' ')
+            .map(|span| {
+                let (file, lines) = span.split_once(':').unwrap();
+                let (start, end) = lines.split_once('-').unwrap();
+                Occurrence {
+                    file_idx: file.parse().unwrap(),
+                    start_line: start.parse().unwrap(),
+                    end_line: end.parse().unwrap(),
+                }
+            })
+            .collect();
+        Cluster { token_count: 0, match_tokens: 0, gap_tokens: 0, line_count: 0, occurrences, preview: String::new() }
+    }
+
+    #[test]
+    fn one_token_difference_reports_each_region_once() {
+        // Files 0 and 1 differ in one token at the middle statement (line 14).
+        let p = function(|i| i.to_string());
+        let q = function(|i| if i == 13 { "\"s\"".to_string() } else { i.to_string() });
+        let files = vec![file("p.js", p), file("q.js", q)];
+        let clusters_for = |gap| {
+            let mut got: Vec<_> = build_clusters(&files, 20, 1, gap).iter().map(occs).collect();
+            got.sort();
+            got
+        };
+        // Exact matches on either side of the difference; neither contains the other.
+        assert_eq!(clusters_for(0), ["0:1-14 1:1-14", "0:14-27 1:14-27"]);
+        // The gap match spans the function and absorbs the exact match after the gap.
+        assert_eq!(clusters_for(2), ["0:1-27 1:1-27"]);
+    }
+
+    #[test]
+    fn cluster_with_an_occurrence_outside_the_longer_match_stays() {
+        // Files 0 and 1 hold the whole function; file 2 holds only its last statements.
+        let whole = function(|i| i.to_string());
+        let mut tail = String::new();
+        for i in 18..=25 {
+            tail.push_str(&line(i, &i.to_string()));
+        }
+        tail.push_str("}\n");
+        let files = vec![file("a.js", whole.clone()), file("b.js", whole), file("c.js", tail)];
+        // The 3-occurrence cluster ranks after the whole-function one and its occurrences in
+        // files 0 and 1 lie inside it, so only the one in file 2 keeps it.
+        let got: Vec<_> = build_clusters(&files, 20, 1, 0).iter().map(occs).collect();
+        assert_eq!(got, ["0:1-27 1:1-27", "0:19-27 1:19-27 2:1-9"]);
+    }
+
+    #[test]
+    fn drop_subsumed_checks_each_occurrence_against_one_kept_cluster() {
+        let input = [
+            // Inside the next cluster but ranked before it, so never checked against it: stays.
+            "0:5-9 1:5-9",
+            "0:1-27 1:1-27",
+            // Two occurrences inside one occurrence of the cluster above: dropped.
+            "0:2-13 0:15-26 1:2-26",
+            // An occurrence in a file the whole-range cluster does not cover: stays.
+            "0:2-10 1:2-10 2:5-13",
+            // Runs past the whole-range cluster's end: stays.
+            "0:20-30 1:20-27",
+            // Inside the union of the two clusters above but not inside either one: stays.
+            "1:5-25 2:6-12",
+            // Inside the 3-occurrence cluster kept above: dropped.
+            "1:3-9 2:5-13",
+        ];
+        let kept = drop_subsumed(input.iter().map(|s| cluster(s)).collect());
+        let got: Vec<_> = kept.iter().map(occs).collect();
+        let want: Vec<_> = [0, 1, 3, 4, 5].iter().map(|&i| input[i]).collect();
+        assert_eq!(got, want);
     }
 }
