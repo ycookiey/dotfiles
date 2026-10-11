@@ -69,11 +69,14 @@ fn dotfiles_dir() -> Option<std::path::PathBuf> {
     })
 }
 
+/// `cargo install` と同じ置き先 ($CARGO_HOME/bin、未設定なら ~/.cargo/bin)。
+/// 実行中の exe の場所から導くと、target/release の dotcli から dotb したとき
+/// コピー元と置き先が同じファイルになるので使わない。
 fn cargo_bin_dir() -> Option<PathBuf> {
-    // Derive from current exe (dotcli itself is in cargo bin)
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+    let home = std::env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|h| h.join(".cargo")))?;
+    Some(home.join("bin")).filter(|d| d.is_dir())
 }
 
 fn newest_mtime(dir: &Path) -> Option<SystemTime> {
@@ -311,9 +314,9 @@ pub fn run() {
 
 // On Windows, a running exe can't be overwritten (cargo install's final move
 // fails with os error 5), but it can be renamed. So: build in the project's
-// target dir, rename the live exe out of the way, then copy the new one in.
+// target dir, then swap the new exe in with install_exe.
 // Applies to all crates: dotcli is always running during dotb, and
-// claude-statusline runs every second via statusLine.refreshInterval.
+// claude-statusline may be running for an open Claude Code status line.
 fn build_project(cargo: &str, dotfiles: &Path, cargo_bin: &Path, crate_info: &Crate) -> bool {
     let project_dir = dotfiles.join(crate_info.path);
     if !project_dir.join("Cargo.toml").exists() {
@@ -341,14 +344,8 @@ fn build_project(cargo: &str, dotfiles: &Path, cargo_bin: &Path, crate_info: &Cr
         eprintln!("FAILED (built exe not found)");
         return false;
     };
-    let dst = cargo_bin.join(format!("{}.exe", crate_info.bin_name));
-    let old = dst.with_extension("old");
-    let renamed = dst.exists() && std::fs::rename(&dst, &old).is_ok();
-    match std::fs::copy(&src, &dst) {
-        Ok(_) => {
-            // Deleting .old fails while a process still holds it; leave it,
-            // the next build's rename overwrites it.
-            let _ = std::fs::remove_file(&old);
+    match install_exe(&src, cargo_bin, crate_info.bin_name) {
+        Ok(()) => {
             eprintln!("ok");
             if let Some(post) = crate_info.post {
                 post(dotfiles);
@@ -356,11 +353,78 @@ fn build_project(cargo: &str, dotfiles: &Path, cargo_bin: &Path, crate_info: &Cr
             true
         }
         Err(e) => {
-            if renamed {
-                let _ = std::fs::rename(&old, &dst);
-            }
-            eprintln!("FAILED (copy: {e})");
+            eprintln!("FAILED ({e})");
             false
+        }
+    }
+}
+
+/// `<bin_dir>/<bin_name>.exe` を `src` で置き換える。
+/// 1. 新 exe を `.exe.new` へコピー（ここが遅い部分。稼働中の exe には触れない）
+/// 2. 稼働中の exe を毎回異なる名前 `<bin_name>.<ms>.old` へ退避（実行中でも rename は可能。
+///    固定名だと、前回の退避先を別プロセスがまだ実行中のとき置き換え不可で失敗する）
+/// 3. `.exe.new` を本来の名前へ rename（exe が無い時間を rename 1 回分に縮める）
+///
+/// 退避ファイルは毎回削除を試み、まだ実行中で消せないものだけ次回へ残す。
+fn install_exe(src: &Path, bin_dir: &Path, bin_name: &str) -> Result<(), String> {
+    let dst = bin_dir.join(format!("{bin_name}.exe"));
+    if let (Ok(a), Ok(b)) = (src.canonicalize(), dst.canonicalize()) {
+        if a == b {
+            return Err(format!("source and destination are the same file: {}", a.display()));
+        }
+    }
+
+    let staged = bin_dir.join(format!("{bin_name}.exe.new"));
+    let _ = std::fs::remove_file(&staged);
+    std::fs::copy(src, &staged).map_err(|e| format!("copy: {e}"))?;
+
+    let aside = if dst.exists() {
+        let ms = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let aside = bin_dir.join(format!("{bin_name}.{ms}.old"));
+        if let Err(e) = std::fs::rename(&dst, &aside) {
+            let _ = std::fs::remove_file(&staged);
+            return Err(format!("move aside: {e}"));
+        }
+        Some(aside)
+    } else {
+        None
+    };
+
+    if let Err(e) = std::fs::rename(&staged, &dst) {
+        if let Some(aside) = &aside {
+            let _ = std::fs::rename(aside, &dst);
+        }
+        let _ = std::fs::remove_file(&staged);
+        return Err(format!("swap in: {e}"));
+    }
+
+    remove_stale_old(bin_dir, bin_name);
+    Ok(())
+}
+
+/// `<bin_name>.<ms>.old` と旧方式の固定名 `<bin_name>.old` / `<bin_name>.exe.old` を削除する。
+/// 実行中のものは削除に失敗するので、そのまま次回の dotb へ持ち越す。
+fn remove_stale_old(bin_dir: &Path, bin_name: &str) {
+    let Ok(entries) = std::fs::read_dir(bin_dir) else {
+        return;
+    };
+    let prefix = format!("{bin_name}.");
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let Some(mid) = name.strip_prefix(&prefix).and_then(|r| r.strip_suffix("old")) else {
+            continue;
+        };
+        // mid は "" / "exe." (旧方式) か "<数字>."
+        let is_old = mid.is_empty()
+            || mid == "exe."
+            || mid
+                .strip_suffix('.')
+                .is_some_and(|ts| !ts.is_empty() && ts.chars().all(|c| c.is_ascii_digit()));
+        if is_old {
+            let _ = std::fs::remove_file(e.path());
         }
     }
 }
