@@ -66,16 +66,16 @@ bwup() { pwsh -NoProfile -File 'C:/Main/Project/dotfiles/bin/bwup.ps1' "$@"; }
 
 # --- Launchers ---
 kindle() { explorer.exe 'kindle:'; }
-dis() { pwsh -NoProfile -Command 'Start-Process -FilePath "$env:USERPROFILE\scoop\apps\discord\current\discord-portable.exe"'; }
+dis() { cmd.exe //d //c start "" "$USERPROFILE"'\scoop\apps\discord\current\discord-portable.exe'; }
 slk() { explorer.exe 'slack:'; }
 obsd() { explorer.exe 'obsidian:'; }
-viv() { pwsh -NoProfile -Command 'Start-Process -FilePath '\''vivaldi'\'''; }
+viv() { cmd.exe //d //c start "" 'vivaldi'; }
 rmt() { explorer.exe 'parsec:'; }
 spotify() { explorer.exe 'spotify:'; }
 ncal() { pwsh -NoProfile -Command 'explorer "shell:AppsFolder\$((Get-StartApps '\''Notion Calendar'\'' | Select-Object -First 1).AppID)"'; }
-htb() { pwsh -NoProfile -Command 'Start-Process -FilePath '\''C:\Main\Project\HideTaskBar-temp\src\HideTaskBar\bin\Debug\net8.0-windows\HideTaskBar.exe'\'''; }
-lghub() { pwsh -NoProfile -Command 'Start-Process -FilePath "$env:ProgramFiles\LGHUB\system_tray\lghub_system_tray.exe" -ArgumentList '\''--minimized'\'''; }
-nvbc() { pwsh -NoProfile -Command 'Start-Process -FilePath "$env:ProgramFiles\NVIDIA Corporation\NVIDIA Broadcast\NVIDIA Broadcast.exe" -ArgumentList '\''--process-start-args "--launch-hidden"'\'''; }
+htb() { cmd.exe //d //c start "" 'C:\Main\Project\HideTaskBar-temp\src\HideTaskBar\bin\Debug\net8.0-windows\HideTaskBar.exe'; }
+lghub() { cmd.exe //d //c start "" "$PROGRAMFILES"'\LGHUB\system_tray\lghub_system_tray.exe' '--minimized'; }
+nvbc() { cmd.exe //d //c start "" "$PROGRAMFILES"'\NVIDIA Corporation\NVIDIA Broadcast\NVIDIA Broadcast.exe' '--process-start-args' '--launch-hidden'; }
 
 # --- Commands (via dotcli) ---
 proxy() { local _dotcli_out; _dotcli_out=$(dotcli proxy "$@"); _dotcli_apply "$_dotcli_out" "$?"; }
