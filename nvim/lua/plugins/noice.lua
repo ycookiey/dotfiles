@@ -6,7 +6,12 @@ return {
     {
       "rcarriga/nvim-notify",
       opts = {
-        background_colour = "#1e1e2e", -- Catppuccin Mocha background
+        -- transparent_background で Normal に bg がないため、現在の catppuccin flavour の base を
+        -- 描画のたびに取る(dark=mocha / light=latte)
+        background_colour = function()
+          local ok, palettes = pcall(require, "catppuccin.palettes")
+          return ok and palettes.get_palette().base or "#1e1e2e"
+        end,
       },
     },
   },
