@@ -17,6 +17,9 @@ builtins = [
   "head-truncation-reminder",
   "label-guard",
   "language-guard",
+  # Records what a turn leaves running, for the your-turn plugin
+  # (dotfiles/claude/plugins); resident commands in ../turn-state.toml.
+  "turn-state",
 ]
 
 # The Bash tool runs commands where errexit has no effect, so `set -e`

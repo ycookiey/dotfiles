@@ -1,0 +1,6 @@
+{
+  "name": "your-turn",
+  "version": "0.1.0",
+  "description": "Shows a line under the prompt when Claude waits for you, not for its own background work",
+  "author": { "name": "ycookiey" }
+}

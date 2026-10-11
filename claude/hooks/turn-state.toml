@@ -1,0 +1,64 @@
+# Background commands that run until stopped, read by yhooky's turn-state
+# check (github.com/ycookiey/yhooky). Such a command wakes nobody by
+# finishing, so a turn that leaves only these running waits for the user.
+#
+# Each `pattern` is matched from the start of a command's head (a part
+# split at && || ; | and line ends outside quotes, without leading VAR=x,
+# timeout <n>, nohup, exec, time, ( and {); no `except` may match the head.
+# Rust regex: no look-around, so exceptions go in `except`.
+
+# pnpm dev / npm run dev:web / yarn storybook / bun run preview ...
+[[resident]]
+pattern = '(pnpm|npm|yarn|bun)(\s+(run|exec|-C\s+\S+|--filter\s+\S+|-F\s+\S+|--dir\s+\S+))*\s+(dev(:\S+)?|start|serve|preview|storybook(:\S+)?)(\s|$)'
+except = ['\bbuild\b']
+
+# npx vite / pnpm exec next dev / npx -y serve / expo start / wrangler dev ...
+[[resident]]
+pattern = '(npx(\s+(--yes|-y))?|pnpm\s+exec|bunx)\s+(vite|next\s+(dev|start)|serve|expo\s+start|storybook\s+dev|wrangler\s+dev|http-server|tsx\s+watch)(\s|$)'
+except = ['\bvite\s+(build|optimize)\b']
+
+[[resident]]
+pattern = 'vite(\s|$)'
+except = ['^vite\s+(build|optimize)\b']
+
+# python -m http.server / uvicorn
+[[resident]]
+pattern = '\S*python3?(\.exe)?\s+(-\S+\s+)*-m\s+(http\.server|uvicorn)(\s|$)'
+
+# A Python server script, or a main.py given a port
+[[resident]]
+pattern = '\S*python3?(\.exe)?\s+\S*server\S*\.py'
+
+[[resident]]
+pattern = '\S*python3?(\.exe)?\s+\S*main\.py\s.*--port'
+
+# flutter run (fvm too)
+[[resident]]
+pattern = '(\S*/)?(fvm\s+)?flutter\s+run(\s|$)'
+
+# A project's dev script; some take -r / -s to build or capture once
+[[resident]]
+pattern = '(bash\s+)?(\S*/)?scripts/dev[\w-]*\.sh(\s|$)'
+except = ['\.sh\s+-[rs](\s|$)']
+
+# The Android emulator: "<emulator>" @Avd_Name or -avd Name
+[[resident]]
+pattern = '\S+\s+(@[A-Za-z][\w.-]*(\s|$)|-avd\s)'
+
+[[resident]]
+pattern = 'docker\s+compose\s+up(\s|$)'
+except = ['\s(-d|--detach)(\s|$)']
+
+[[resident]]
+pattern = 'tail\s+-[fF]'
+
+[[resident]]
+pattern = '\S+\s.*\s--watch(\s|$)'
+
+# A skill script that runs until stopped (skills/*-live)
+[[resident]]
+pattern = 'uv\s+run\s.*[/\\]skills[/\\][\w-]+-live[/\\]'
+
+# A Node server or mock API script
+[[resident]]
+pattern = 'node\s+\S*(server|api)\S*\.m?js'

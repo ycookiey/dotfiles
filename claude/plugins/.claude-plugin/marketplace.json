@@ -1,0 +1,12 @@
+{
+  "name": "dotfiles",
+  "description": "Plugins kept in ycookiey/dotfiles",
+  "owner": { "name": "ycookiey" },
+  "plugins": [
+    {
+      "name": "your-turn",
+      "source": "./your-turn",
+      "description": "Shows a line under the prompt when Claude waits for you, not for its own background work"
+    }
+  ]
+}
