@@ -227,22 +227,60 @@ fn context_pct(cw: &ContextWindow) -> Option<i32> {
     Some(pct.min(100.0) as i32)
 }
 
+// Transcripts can reach hundreds of MB, so only the tail is read: start with
+// this window and double it up to the cap while no model is found.
+const TRANSCRIPT_TAIL_INITIAL: u64 = 256 * 1024;
+const TRANSCRIPT_TAIL_MAX: u64 = 4 * 1024 * 1024;
+
 fn read_model_from_transcript(path: &str) -> Option<String> {
-    let content = std::fs::read_to_string(path).ok()?;
-    for line in content.lines().rev() {
+    read_model_from_transcript_tail(path, TRANSCRIPT_TAIL_INITIAL, TRANSCRIPT_TAIL_MAX)
+}
+
+/// Model of the last assistant line within the last `max_window` bytes.
+fn read_model_from_transcript_tail(path: &str, initial_window: u64, max_window: u64) -> Option<String> {
+    use std::io::{Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    let mut window = initial_window.max(1).min(len);
+    loop {
+        // Read one byte before the window so a line starting exactly at the
+        // window edge is kept; the partial first line is dropped below.
+        let start = len - window;
+        let read_from = start.saturating_sub(1);
+        file.seek(SeekFrom::Start(read_from)).ok()?;
+        let mut buf = Vec::with_capacity((len - read_from) as usize);
+        file.by_ref().take(len - read_from).read_to_end(&mut buf).ok()?;
+        let bytes = if read_from > 0 {
+            match buf.iter().position(|&b| b == b'\n') {
+                Some(i) => &buf[i + 1..],
+                None => &[][..],
+            }
+        } else {
+            &buf[..]
+        };
+        if let Some(model) = find_last_assistant_model(&String::from_utf8_lossy(bytes)) {
+            return Some(model);
+        }
+        if start == 0 || window >= max_window {
+            return None;
+        }
+        window = window.saturating_mul(2).min(max_window).min(len);
+    }
+}
+
+/// Scans lines from the end; unparsable lines (e.g. one still being written)
+/// and assistant lines without a model are skipped.
+fn find_last_assistant_model(content: &str) -> Option<String> {
+    content.lines().rev().find_map(|line| {
         if !line.contains("\"type\"") || !line.contains("\"assistant\"") {
-            continue;
+            return None;
         }
         let obj: serde_json::Value = serde_json::from_str(line).ok()?;
-        if obj.get("type")?.as_str()? == "assistant" {
-            return obj
-                .get("message")?
-                .get("model")?
-                .as_str()
-                .map(|s| s.to_string());
+        if obj.get("type")?.as_str()? != "assistant" {
+            return None;
         }
-    }
-    None
+        obj.get("message")?.get("model")?.as_str().map(|s| s.to_string())
+    })
 }
 
 // ========================================
@@ -1041,6 +1079,88 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_file(&self.0);
         }
+    }
+
+    fn assistant_line(model: &str) -> String {
+        format!("{{\"type\":\"assistant\",\"message\":{{\"model\":\"{model}\",\"content\":[]}}}}\n")
+    }
+
+    #[test]
+    fn transcript_skips_partial_last_line() {
+        let content = format!(
+            "{{\"type\":\"user\"}}\n{}{{\"type\":\"assistant\",\"mess",
+            assistant_line("glm-4.6")
+        );
+        let f = TempFile::new("partial", content.as_bytes());
+        assert_eq!(read_model_from_transcript(f.path()).as_deref(), Some("glm-4.6"));
+    }
+
+    #[test]
+    fn transcript_skips_assistant_line_without_model() {
+        let content = format!(
+            "{}{{\"type\":\"assistant\",\"message\":{{\"content\":[]}}}}\n{{\"type\":\"assistant\"}}\n",
+            assistant_line("glm-4.5")
+        );
+        let f = TempFile::new("nomodel", content.as_bytes());
+        assert_eq!(read_model_from_transcript(f.path()).as_deref(), Some("glm-4.5"));
+    }
+
+    #[test]
+    fn transcript_tolerates_invalid_utf8() {
+        let mut content = b"\xff\xfe{\"type\":\"user\",\"x\":\"\xc3\"}\n".to_vec();
+        content.extend_from_slice(assistant_line("glm-4.6").as_bytes());
+        let f = TempFile::new("utf8", &content);
+        assert_eq!(read_model_from_transcript(f.path()).as_deref(), Some("glm-4.6"));
+    }
+
+    #[test]
+    fn transcript_larger_than_window_returns_tail_model() {
+        let filler = "{\"type\":\"user\",\"message\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}\n";
+        let mut content = assistant_line("head-model");
+        for _ in 0..12_000 {
+            content.push_str(filler);
+        }
+        content.push_str(&assistant_line("tail-model"));
+        content.push_str(filler);
+        assert!(content.len() as u64 > TRANSCRIPT_TAIL_INITIAL);
+        let f = TempFile::new("large", content.as_bytes());
+        assert_eq!(read_model_from_transcript(f.path()).as_deref(), Some("tail-model"));
+    }
+
+    #[test]
+    fn transcript_window_doubles_until_cap() {
+        let filler = "{\"type\":\"user\",\"message\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}\n";
+        let mut content = assistant_line("near-model");
+        for _ in 0..10 {
+            content.push_str(filler);
+        }
+        let f = TempFile::new("double", content.as_bytes());
+        // initial window 64B misses the model; doubling reaches it
+        assert_eq!(
+            read_model_from_transcript_tail(f.path(), 64, 4096).as_deref(),
+            Some("near-model")
+        );
+        // cap below the model's offset: not found
+        assert_eq!(read_model_from_transcript_tail(f.path(), 64, 256), None);
+    }
+
+    #[test]
+    fn transcript_line_at_window_edge_is_kept() {
+        let line = assistant_line("edge-model");
+        let content = format!("{{\"type\":\"user\"}}\n{line}");
+        let f = TempFile::new("edge", content.as_bytes());
+        let window = line.len() as u64;
+        assert_eq!(
+            read_model_from_transcript_tail(f.path(), window, window).as_deref(),
+            Some("edge-model")
+        );
+    }
+
+    #[test]
+    fn transcript_missing_or_empty_file() {
+        assert_eq!(read_model_from_transcript("Z:/nonexistent/claude-statusline.jsonl"), None);
+        let f = TempFile::new("empty", b"");
+        assert_eq!(read_model_from_transcript(f.path()), None);
     }
 
     #[test]
