@@ -176,12 +176,6 @@ modifies_shell = true
 enabled = true
 
 [[command]]
-name = "y"
-subcommand = "yazi-cd"
-modifies_shell = true
-enabled = false
-
-[[command]]
 name = "zf"
 subcommand = "zf"
 modifies_shell = true

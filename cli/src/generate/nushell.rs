@@ -314,6 +314,33 @@ mod tests {
         toml::from_str(toml_src).expect("test definitions must parse")
     }
 
+    /// definitions.toml itself may hold no disabled command, so the `enabled` filter of
+    /// all three generators is checked on a synthetic pair of commands.
+    #[test]
+    fn disabled_commands_are_left_out_of_every_generator() {
+        let defs = defs_from(
+            r#"
+[[command]]
+name = "on"
+subcommand = "on-sub"
+modifies_shell = true
+
+[[command]]
+name = "off"
+subcommand = "off-sub"
+modifies_shell = true
+enabled = false
+"#,
+        );
+        let ps = powershell::generate(&defs, dotfiles_path());
+        let nu = generate(&defs, dotfiles_path());
+        let sh = crate::generate::bash::generate(&defs, dotfiles_path());
+        for (shell, out) in [("PowerShell", &ps), ("nushell", &nu), ("bash", &sh)] {
+            assert!(out.contains("on-sub"), "enabled command missing from {shell} output");
+            assert!(!out.contains("off-sub"), "disabled command present in {shell} output");
+        }
+    }
+
     #[test]
     fn absolute_exe_launcher_is_a_literal_with_drive_root() {
         let defs = defs_from(
