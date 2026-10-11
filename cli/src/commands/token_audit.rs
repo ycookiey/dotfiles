@@ -856,6 +856,21 @@ fn compute_deltas(requests: &mut [Request]) {
 // Subcommands
 // ============================================================================
 
+/// Claude Code's config dir and its state file `.claude.json`, as Claude Code
+/// resolves them: with CLAUDE_CONFIG_DIR set (and non-empty) both live in
+/// that dir; otherwise the config dir is ~/.claude and the state file is
+/// ~/.claude.json, beside it rather than inside it.
+fn claude_config_paths(home: &Path, config_dir_env: Option<&std::ffi::OsStr>) -> (PathBuf, PathBuf) {
+    match config_dir_env.filter(|v| !v.is_empty()) {
+        Some(dir) => {
+            let dir = PathBuf::from(dir);
+            let json = dir.join(".claude.json");
+            (dir, json)
+        }
+        None => (home.join(".claude"), home.join(".claude.json")),
+    }
+}
+
 /// cmd_static: static token analysis of config files.
 fn cmd_static() -> Value {
     let home = match dirs::home_dir() {
@@ -863,9 +878,12 @@ fn cmd_static() -> Value {
         None => return json!({"error": "no home directory"}),
     };
 
+    let (config_dir, claude_json_path) =
+        claude_config_paths(&home, std::env::var_os("CLAUDE_CONFIG_DIR").as_deref());
+
     // CLAUDE.md analysis
     let mut claude_md = Vec::new();
-    let global_claude_md = home.join(".claude/CLAUDE.md");
+    let global_claude_md = config_dir.join("CLAUDE.md");
     if global_claude_md.exists() {
         if let Ok(bytes) = fs::metadata(&global_claude_md).map(|m| m.len()) {
             let est_tokens = (bytes / 2) as i64;
@@ -902,46 +920,39 @@ fn cmd_static() -> Value {
     // Skills analysis (frontmatter description)
     let mut skills = Vec::new();
     let mut skills_total_est_tokens = 0i64;
-    let mut processed_claude_dir = false;
 
-    for claude_dir_prefix in &[home.join(".claude")] {
-        let skills_dir = claude_dir_prefix.join("skills");
-        if processed_claude_dir {
-            break;
-        }
-        if skills_dir.exists() {
-            if let Ok(entries) = fs::read_dir(&skills_dir) {
-                for entry in entries.flatten() {
-                    let skill_dir = entry.path();
-                    let skill_md = skill_dir.join("SKILL.md");
-                    if skill_md.exists() {
-                        if let Ok(content) = fs::read_to_string(&skill_md) {
-                            let skill_name = skill_dir
-                                .file_name()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or("unknown")
-                                .to_string();
+    let skills_dir = config_dir.join("skills");
+    if skills_dir.exists() {
+        if let Ok(entries) = fs::read_dir(&skills_dir) {
+            for entry in entries.flatten() {
+                let skill_dir = entry.path();
+                let skill_md = skill_dir.join("SKILL.md");
+                if skill_md.exists() {
+                    if let Ok(content) = fs::read_to_string(&skill_md) {
+                        let skill_name = skill_dir
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("unknown")
+                            .to_string();
 
-                            // Extract frontmatter (--- delimited)
-                            let description_bytes = extract_frontmatter_description(&content);
-                            let est_tokens = (description_bytes / 2) as i64;
-                            skills_total_est_tokens += est_tokens;
+                        // Extract frontmatter (--- delimited)
+                        let description_bytes = extract_frontmatter_description(&content);
+                        let est_tokens = (description_bytes / 2) as i64;
+                        skills_total_est_tokens += est_tokens;
 
-                            skills.push(json!({
-                                "name": skill_name,
-                                "desc_bytes": description_bytes,
-                                "est_tokens": est_tokens
-                            }));
-                        }
+                        skills.push(json!({
+                            "name": skill_name,
+                            "desc_bytes": description_bytes,
+                            "est_tokens": est_tokens
+                        }));
                     }
                 }
             }
-            processed_claude_dir = true;
         }
     }
 
     // settings.json analysis
-    let settings_path = home.join(".claude/settings.json");
+    let settings_path = config_dir.join("settings.json");
     let mut plugins: Vec<String> = Vec::new();
     let mut mcp_server_count = 0i64;
     let mut token_audit_hook_active = false;
@@ -980,8 +991,8 @@ fn cmd_static() -> Value {
         }
     }
 
-    // MCP servers count
-    let claude_json_path = home.join(".claude/.claude.json");
+    // MCP servers count (top-level mcpServers only; per-project servers under
+    // .projects are not counted)
     if claude_json_path.exists() {
         if let Ok(content) = fs::read_to_string(&claude_json_path) {
             if let Ok(claude_json) = serde_json::from_str::<Value>(&content) {
@@ -2164,6 +2175,19 @@ mod tests {
         assert_eq!(file_of("Bash"), Value::Null);
         // Neither counts as a Read of some file.
         assert_eq!(aggregate_top_reads(&reqs), json!([]));
+    }
+
+    #[test]
+    fn config_paths_follow_claude_config_dir_or_default_to_home() {
+        let home = Path::new("H:/u");
+        let default = (home.join(".claude"), home.join(".claude.json"));
+        assert_eq!(claude_config_paths(home, None), default);
+        assert_eq!(claude_config_paths(home, Some("".as_ref())), default);
+        let dir = PathBuf::from("H:/u/.claude-1");
+        assert_eq!(
+            claude_config_paths(home, Some(dir.as_os_str())),
+            (dir.clone(), dir.join(".claude.json"))
+        );
     }
 
     /// A request whose only tool is a Read of `path`, large in both output
