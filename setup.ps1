@@ -365,13 +365,20 @@ if (gcm cargo -ea 0) {
 # Vivaldi 検索エンジン設定
 # apply-search-engines.ps1 は Preferences が無いと throw する。Vivaldi 未起動の新PCを失敗扱いにしないよう前提として判定
 # TODO: apply-search-engines.ps1 側で Preferences 不在を throw でなく return にし、この判定を消す
+# 起動中 (Preferences を書き戻されるので適用しない) と sqlite3 不在 (scoopfile に無く新PCでは無い) も
+# スクリプトの挙動に頼らず前提として判定し、未適用を configured や失敗として記録しない
+# TODO: 判定後〜スクリプト実行までに Vivaldi が起動されると、スクリプトが黙って return した場合 configured と記録される
 $vivaldiPrefs = "$HOME\scoop\apps\vivaldi\current\User Data\Default\Preferences"
-if (tp $vivaldiPrefs) {
+if (!(tp $vivaldiPrefs)) {
+    Write-Skip "Vivaldi search engines (profile not found: $vivaldiPrefs)"
+} elseif (Get-Process vivaldi -ea 0) {
+    Write-Skip 'Vivaldi search engines (Vivaldi is running; close it and rerun vivaldi\apply-search-engines.ps1)'
+} elseif (!(gcm sqlite3 -ea 0)) {
+    Write-Skip 'Vivaldi search engines (sqlite3 not found; run scoop install sqlite and rerun vivaldi\apply-search-engines.ps1)'
+} else {
     Invoke-Step 'Vivaldi search engines' {
         & "$ScriptDir\vivaldi\apply-search-engines.ps1"
     } 'Vivaldi search engine configured'
-} else {
-    Write-Skip "Vivaldi search engines (profile not found: $vivaldiPrefs)"
 }
 
 # Startup manager (TaskScheduler)
