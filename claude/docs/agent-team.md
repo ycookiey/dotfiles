@@ -11,6 +11,9 @@
 - 作業中の agent には追加の指示を送らない(品質低下)。完了して idle の agent にだけ送る
 - agent が報告した画像(スクリーンショット)は、元の HTML・CSS の最後の変更より古いことがある(変更後に撮り直していない)。比べる・人に見せる前に、画像と元ファイルの更新時刻を比べるか、自分で撮り直す
 - Leadのcontext最小化を意識
+- **git mv を含む担当 agent の commit を先に landing**。並行で別系統の commit を走らせると index の R (rename) レコードが半端 stage で他 commit 混入 (V2-13 実発生: lint-gates 系 commit に typecheck-depcruise の git mv 混入)。commit 前に `git status --short | grep '^R'` で検知、混入時 `git reset HEAD <mv 対象>` で分離
+- **「working tree clean 前提」の fix script は複数 agent 並行 tree で不成立**。他 session WIP (M / ??) で `git status --porcelain` 判定 block。設計時点で除外 pattern (allowlist) or `.local/agent-output/<task-id>/backup/` restore 方式、または担当 file 範囲 narrow check (`git status <path>...`)
+- **同一 file (中核 config or entrypoint) を単一 owner に指定、他 agent は SendMessage で patch relay**。V2-13 で verify.sh 並行編集 → bash 実行中 parse fail 事故 (line 735 syntax error)、V2-14 で ci.yml 単一 owner + 3 agent relay で衝突ゼロ実証。ownership 分割は「file 単位」で「finding 単位」ではない。適用対象: verify.sh / ci.yml / turbo.json / next.config.ts / tsconfig 系 root config 等
 
 ## 手順
 
@@ -61,6 +64,7 @@ plannerが規模乖離を検知すれば報告するので、Leadが再判断。
 - `.agent-output/` への書き込みはEdit/Write toolを使用(Bash redirect不可)
 - cleanup/merge-back: 完了後は `agent-merge-back.sh --task-id <TASK_ID>` でmainへ取り込み+worktree/branch削除を一括実行
 - 例外: researcher/plannerは読み取り専用のためworktree分離不要
+- **共有 tree で `git stash` 全面禁止**: 複数agent並行時に stash push/pop が別agentの stash を誤操作する事故が実発生 (異なる agent の stash push→続く agent の pop が別 agent 分を pop → conflict、mergestage2 手動復元)。stash は「repo 単位の LIFO stack」で agent 単位に isolate されない。一時退避は `.agent-output/<task-id>/` (or `.local/agent-output/<task-id>/`) への事前 cp からの復元で行う。drift 注入・実測・切り分けも同様
 
 ### 先行prep(高コストsetup時の待ち時間活用)
 

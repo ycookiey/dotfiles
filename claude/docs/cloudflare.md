@@ -9,6 +9,17 @@
 - analyzers.app — 分析ツール群（複数プロジェクト共用）
 - omega-analyzer.com
 - ycookiey.com
+  - サブドメインはプロジェクト間で取り合いになる。新しく付ける前にこの表と DNS(`nslookup <名前>.ycookiey.com 1.1.1.1`)で空きを確かめ、付けたらここに足す
+  - 名前は汎用語(`test`・`sandbox` など)を単独で使わず、`<用途>-<プロジェクトの略>` の形にする
+
+| サブドメイン | 用途 | 置き場 |
+|---|---|---|
+| `tri-mode-cup` | TRI MODE CUP の本番 | tri-mode-cup-app `wrangler.jsonc` の `env.prod` |
+| `test-tmc` | TRI MODE CUP の試験用サイト(2026-10-03 から) | tri-mode-cup-app `wrangler.jsonc` |
+| `flows` | 各プロジェクトの画面の流れの一覧(プロジェクトごとに秘密のパスで分ける) | 各 repo の `flows/wrangler.jsonc` |
+| `samples` | 外部に見せるデザインの見本(全プロジェクトで 1 Worker、プロジェクトごとに秘密のパスで分ける。2026-10-06 から) | ysampley `wrangler.jsonc`、公開は `publish.sh` |
+| `workout` | yWorkouty | yWorkouty `wrangler.toml` |
+| `replay-os` | Omega Strikers の得点のリプレイ(自分で試す用。秘密のパスの下だけに置き、ほかは 404。2026-10-08 から) | os-tourney-kit `experiments/goal-replay/web/wrangler.jsonc`、パスは Worker の秘密の値 `SECRET_PATH` |
 
 ## 使い方
 
@@ -75,6 +86,12 @@ js
 - 罠: CHECK 内の GLOB は CREATE TABLE では通り、行を入れた時点で初めて失敗 → テーブルの migration だけ流しても気づけない。行を入れる migration かテストまで流して確かめる
 - 日時の形式の CHECK は GLOB を使わず整形し直して比較: `coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', col) = col, 0) OR coalesce(strftime('%Y-%m-%dT%H:%M:%fZ', col) = col, 0)`。`T` や `Z` のない値、時差付き、2 月 30 日も断る(`coalesce` がないと NULL で CHECK が素通り)
 - 確認環境: wrangler 4 のローカル D1(workerd)
+
+### D1: `database_id` なしの binding で `--remote` が認証エラー
+
+- `d1_databases` に `database_name` だけ(`database_id` なし)だと、`wrangler d1 migrations apply <binding> --remote` が `/d1/database/<名前>` を呼び `Authentication error [code: 10000]`。login・権限の問題に見えるが原因は ID 欠落(wrangler 4.148、2026-10 実測)。`wrangler deploy` はこの状態でも通るので気づきにくい
+- 対処: `wrangler d1 list` の uuid を `database_id` に書く。CI の `migrations apply --remote` も同じ理由で落ちる
+- 副作用: ローカル D1 の保存先は `database_id`(なければ名前)ごと → ID を足すと dev は空の DB を見て API が 500。`wrangler d1 migrations apply <binding> --local` をやり直す
 
 ### Cron Triggers: アカウントの枠が不足(2026-10)
 

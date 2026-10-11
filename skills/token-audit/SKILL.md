@@ -40,7 +40,7 @@ allowed-tools: Bash, Read, Glob, Grep
 - CLAUDE.md推定トークン > 1500 → 圧縮推奨（⚠）
 - skill description合計 > 800 → 個別圧縮推奨（⚠）
 - plugin数 > 3 → 不要plugin無効化を検討（⚠）
-- .claudeignore未設定 → 作成推奨（⚠）
+- 読ませたくないファイルの除外を勧めるときは settings の `permissions.deny` に `Read(...)`（Claude Code は .claudeignore を読まない）
 
 ### セッション分析の観点
 

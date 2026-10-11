@@ -161,17 +161,6 @@ pub fn format_static(v: &Value) -> String {
         }
     }
 
-    let ignore = v
-        .get("claudeignore_exists")
-        .and_then(|x| x.as_bool())
-        .unwrap_or(false);
-    out.push('\n');
-    if ignore {
-        out.push_str(".claudeignore  present\n");
-    } else {
-        out.push_str(".claudeignore  not found ⚠\n");
-    }
-
     if let Some(n) = v.get("mcp_server_count").and_then(|x| x.as_i64()) {
         out.push_str(&format!("\nMCP servers: {}\n", n));
     }

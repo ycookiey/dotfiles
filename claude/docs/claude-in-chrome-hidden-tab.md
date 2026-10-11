@@ -81,6 +81,16 @@ const tick = () => new Promise((r) => { const c = new MessageChannel(); c.port1.
 - 移動: SPA は `history.pushState({}, '', url)` + `dispatchEvent(new PopStateEvent('popstate', { state: {} }))` で再読み込みなし。URL で位置を指定できる画面(例: Discord のメッセージ ID)は、スクロールの代わりに URL 移動で読み込ませる
 - 構造化データ: 要素の `__reactFiber…` キーの `memoizedProps` を `.return` で親へたどると、画面が持つデータ(本文・日時・添付等)が取れる。実例: life の skill `discord-channel-log`
 
+## 症状 6: ブラウザ窓が見えていないと screenshot が timeout する
+
+- `computer` の `screenshot` が `Page.captureScreenshot timed out after 30000ms ... renderer may be frozen` を返す。`javascript_tool` は普通に返るので固まってはいない(窓が最小化・別仮想デスクトップ等で描画されていない)
+- 画像を `javascript_tool` 経由で取る案(canvas の `toDataURL` を返す)は、戻り値が `[BLOCKED: Base64 encoded data]` になり使えない
+- 自分の開発中ページ(localhost)の見た目確認なら、取得済みの Playwright 用 Chromium(`%LOCALAPPDATA%\ms-playwright\chromium-<rev>\chrome-win64\chrome.exe`)を `--headless=new --remote-debugging-port=<port> --user-data-dir=<tmp>` で起動し、Node 標準の `WebSocket` で CDP を直接叩く。npm package 不要
+  - `GET http://127.0.0.1:<port>/json` → page の `webSocketDebuggerUrl` に接続 → `Page.navigate` → `Runtime.evaluate`(`awaitPromise: true`)でボタン操作 → `Page.captureScreenshot` に `clip` と `captureBeyondViewport: true` を渡して要素だけ PNG 保存 → Read で見る
+  - 要素の位置は `getBoundingClientRect()` + `scrollX/scrollY`(clip は document 座標)
+  - 終了は CDP の `Browser.close` で行う(`/json/version` の `webSocketDebuggerUrl` に接続して送る)。Node の `proc.kill()` は親だけを止め、子プロセス(renderer・crashpad 等)が残る。`taskkill /PID <pid> /T /F` を exit 時に呼んでも残った。実測: 撮影を繰り返して 74 個溜まり、同じ port で次の起動が接続できなくなった
+  - 残りの確認と掃除(PowerShell): `Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" | ? { $_.CommandLine -like '*ms-playwright*' }`。ユーザーの通常の Chrome を巻き込まないよう、コマンドラインで絞ってから止める
+
 ## 大量データの回収
 
 - `javascript_tool` の戻り値は約 1,000〜1,500 字で `[TRUNCATED]`
@@ -132,6 +142,32 @@ Array.from(document.querySelectorAll('model-response ol li')).map(li => li.textC
 
 ## その他の注意
 
-- **クリップボードは他の操作で上書きされる。** 貼り付け直前にクリップボードへ載せ、貼り付け後は `input_len` で長さを検証する。想定と違う長さなら別の内容が入っている
+- **clipboard は他 process に上書きされる** → paste 直前に set。paste 後は `input_len` と先頭文字列で検証
+- **`textContent` は改行を含まない**(Quill 等の contenteditable は段落を要素に分ける) → 完全性は「全文から改行を除いた字数」と比べる。生の字数と比べると切れたと誤判定する(実例: 改行込み 149,832 字の入力が 140,657 字 = 改行除去後と完全一致)
 - **`computer` の `wait` は最大 10 秒。** それ以上待つ場合は複数回に分ける
 - **Chrome 拡張は長時間の操作で切断されることがある。** `tabs_context_mcp` がタイムアウトを返し始めたら、ブラウザ側の再接続が必要
+
+## LLM Web UI で同じ prompt を反復実行する(実験用)
+
+- 送信前に model 名を JS で照合、不一致なら中止: 既定 model は予告なく変わる(claude.ai が Opus 5.5 既定に)。Gemini は Pro 上限で Flash 系へ自動 fallback
+- 上限時は model menu に「上限は M月D日 H:MMにリセット」 → reset 時刻に CronCreate(one-shot)で自分への再開リマインドを予約
+- 長文 input は file 添付: Gemini「アップロードとツール」click → `find` で file input の ref → `file_upload`(session で共有済みの path のみ)。本文は指示文だけ貼る
+- `browser_batch` は合計待機が約 60 秒を超えると timeout(中の action は実行継続) → 送信までを batch、生成待ちは `wait`(≤10 秒)を単発で
+- 結果が長いときは上の「大量データの回収」(`<article>` + `get_page_text`)で一度に取る
+- Gemini で file 添付時、`li.textContent` 末尾に添付 chip の「TXT」が混入 → `.replace(/\s+TXT$/, '')`
+- 出力に英語表記の併記が混じる(`実装データ型 (ImplementationDataType)`) → 照合時に末尾の括弧を除去
+- 1 応答に下書き + 最終版の複数リスト(`ol` が 2〜3 個、間に「最終版を書く」等)、同じ 100 件が 2 回続いて 1 つの `ol` に 200 件 → 最後のリスト / 後半を採用
+- 件数不足・崩れ: Opus 4.8 が 87 件で止めて「残りも埋めるか」と問い返す、Gemini Flash が途中で先頭に戻り同じ語を繰り返す(145 件) → 保存前に件数と重複なし件数を照合、崩れた出力は別 folder に残して同条件で出し直し、回数を記録
+- 大きい paste(Gemini 15 万字超)は paste 自体が重く、paste + 送信 + 待機を 1 batch にすると timeout → paste と送信確認を別 batch に分ける
+- 結果をコピーボタン経由(クリップボード)で保存する場合: 押し損じで中身が別物になる → 画面の DOM から数えた語数・文字数と照合、0 件なら保存しない。tool の返り値経由(書き写し)より転記ミスがない
+- clipboard を使う自動化はユーザーの作業と衝突(ユーザーのコピーが自分の paste に入る / 自分がユーザーのクリップボードを上書き) → paste 直後に貼り付け行数(claude.ai は添付 chip の「N行」)と入力欄が空かを照合してから送信。実行前にユーザーへ告知
+
+## 複数タブで並列実行(Vivaldi のタイル表示)
+
+- 生成待ち(1 回 40〜90 秒)が律速 → 3 タブ同時生成で 1 回あたり約 1.6 分 → 0.6 分(実測、claude.ai 27 回)
+- `tabs_create_mcp` は MCP タブグループがあるウィンドウにしか作れない(最後にフォーカスしたウィンドウではない)。`vivaldi.exe --new-window` で開いた窓、ユーザーがクリックした窓でも不可 → 別ウィンドウ案は使えない
+- タイル表示(グループ内のタブを Ctrl+クリックで複数選択 → 右クリック →タイル表示)なら全タブ `visibilityState: "visible"`。タブはグループに残り操作可能
+- キー入力はフォーカス中のタイルにしか届かない。JS の `el.focus()` では移らない → `computer` で入力欄を実クリックしてから Ctrl+V
+- タイルごとに viewport が違い、スクリーンショット座標 = CSS px × (画像幅 / innerWidth)。細いタイルでは換算座標のクリックが外れた → `find` で ref を取ってクリック
+- クリップボードは 1 つ → paste・保存(コピーボタン)は 1 タブずつ順番、生成だけを並行。送信 batch に他タブの完了確認 JS を同梱すると往復が減る
+- tool 呼び出しを 1 応答で並べると並行実行されうる → clipboard を読み書きする手順(コピー → paste、クリック → 保存)は応答を分ける

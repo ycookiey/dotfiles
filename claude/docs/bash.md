@@ -31,12 +31,27 @@ esac
 grep -qiF -- "$pat" "$f"; case $? in 0) 一致 ;; 1) 不一致 ;; *) エラー処理 ;; esac
 ```
 
+## `grep -v` で除外すると、見たい行も一緒に消える
+
+- 除外語は見たい event の行にも載りうる。実例: 診断出力を `grep -v "Mini Krug"` で絞ったら、`monster_reset Mini Krug` の行も消え、既にあった reset を見落とした
+- 除外する前に、見たい種類の行を肯定で抜き出して数を確かめる(`grep -E 'reset|error' | wc -l`)。除外はその後に、表示を減らす目的だけで使う
+
 ## MSYS パス変換が `/X` 形式オプションを破壊
 
 - Git Bash は `/` 始まりの引数を POSIX→Windows パスへ自動変換 → `iscc /DName=val` 等の Windows 形式オプションが壊れる(例: ISCC「You may not specify more than one script filename」)
 - 回避: `MSYS2_ARG_CONV_EXCL="/D" cmd ...`(複数prefixは `;` 区切り、全除外は `*`)
 - 全除外時は引数内のパスを自前で Windows 形式に(`cygpath -w`)
 - 例: `cmd.exe /c <command>` の `/c` が `C:/` に変わり、cmd が対話の画面で起動して入力を待ち止まる → `cmd.exe //c ...`。hook `cmd-switch-guard.sh` が `/c` の形を止める
+
+## Claude Code の Bash ツールで `\\` が縮む・長い heredoc が壊れる
+
+- Bash ツールに渡したコマンド文字列は、bash が解釈する前に `\\` が `\` 1 本になる。`\d` や `\M` のような単独のバックスラッシュは残る
+- シングルクォート内も `<<'EOF'` の heredoc 内も同じ。bash の仕様では変換されない場所なので、bash 側の問題と誤認しやすい
+- 実測: `printf '%s\n' 'a\\b'` の出力が `a\b`。heredoc の行末の `\\` が `\` になって次の行とつながり、終端の `EOF` を読み飛ばした
+- クォートを多く含む数百行の heredoc(Python スクリプト等)は `unexpected EOF while looking for matching` で構文解析に失敗し、何も実行されないことがある
+- 回避: バックスラッシュや複雑なクォートを含む内容は Write ツールでファイルに書いてから Bash で実行する。スクリプト内の Windows パスは `C:/path` のようにスラッシュで書く
+- printf の書式文字列に Windows パスを書かない。`C:\Main\Project\twitchReader\venv` の `\t` `\v` がタブ・垂直タブになりパスが壊れる(実測: 生成した bat が「filename, directory name, or volume label syntax is incorrect」で exit 1)。`printf '%s' "..."` で引数に渡すか Write ツールで書く
+- 改行コードの判定に `grep -c $'\r'` を使わない。Bash ツール経由では LF のファイルでも総行数が返り、全ファイルを CRLF と誤判定した。`file <path>` の「with CRLF line terminators」表示で判定する
 
 ## dev server は PowerShell の tool で起動する(Git Bash の run_in_background だと TaskStop 後も残る)
 
@@ -75,7 +90,16 @@ grep -qiF -- "$pat" "$f"; case $? in 0) 一致 ;; 1) 不一致 ;; *) エラー�
 - text mode の書込は改行を CRLF に変える: `Path.write_text` / `open(p, "w")` は `\n` を `\r\n` で書く。LF のファイルを置換すると全行 CRLF になる(git の警告「CRLF will be replaced by LF」で気づく)。`read_bytes().decode()` → `write_bytes(s.encode())`、または `open(p, "w", newline="")` を使う。確認は `git ls-files --eol <path>` の `w/lf`
 - `print` も stdout に `\r\n` を書く(Windows の `jq -r` の出力も同じ): bash の `while read a b` で読むと最後の変数の末尾に `\r` が残る(ファイル名なら ffmpeg が「出力の形式を選べない」で失敗)。読む側で `tr -d '\r' <file | while read …`、出す側で `sys.stdout.reconfigure(newline="\n")`
 
+- `python -I` は user site(`pip install --user`、Windows では `AppData/Roaming/Python`)も無効にするので、そこに入れた numpy 等が `ModuleNotFoundError` になる。スクリプトのフォルダや cwd を `sys.path` に入れない目的なら `python -E -P`(3.11+)で足り、user site は残る(実測 3.14)。hook `python-isolated-reminder.sh` が `python -I` の直前に差し込む
+
 ## ファイルを変数で渡すコマンドは `"$f"` と引用する
 
 - 引用しない `$f` が空だと grep・sed・cat は引数なしになり、標準入力を待って止まる(Bash ツールでは時間切れまで返らない。`f=$(… | head -1)` が何も返さなかったときに起きた)
 - 引用すれば「ファイルが無い」で即座に失敗する。入力が要らないコマンドには `</dev/null` も付ける
+
+## 長い計測を background で回す間に import 元を編集しない
+
+background の計測 (tsx / node / python の script) は、後から起動するプロセスや遅延 import がその時点の working tree を読む。計測中に src を編集すると、結果が新旧混在になる (前半と後半で別の code)。
+
+- 対策: 計測を `git worktree add <tmp> HEAD` の固定版で回す、または計測が終わるまで import 元を編集しない
+- 結果を使う前に、計測開始後に import 元を編集・commit していないか確かめる。していれば測り直す

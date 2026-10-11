@@ -10,7 +10,7 @@
 - ハマった問題: 汎用的な学びを抽出し ~/.claude/docs/ への記録を meta-update で提案
 - 残る成果物すべて (コード/識別子/文書/コミット等) は今回の文脈に縛らず汎用形で書く
 - 手元で確かめられない不明点(外部仕様・最新情報・エラーの原因等)は WebSearch で調べる
-- 外部サービスのURLを案内時,クエリパラメータを活用しユーザ操作を減らす
+- 外部サービスのURLを案内時,クエリパラメータを活用しユーザ操作を減らす(既知テンプレ→docs/url-templates.md、対応可否不明なら案内前にWebSearchで確認)
 - 対処法が複数あり得る問題は、最初に見つけた方法を即実装せず、トレードオフを比較提示してユーザが選んでから実装する
 - 同じ手作業をユーザに2〜3回頼んだら、言われる前に自動化を提案する
 - 識別ラベルは A, B, C, ... で始める
@@ -36,8 +36,10 @@
 - 環境を横断して再現したい変更（アプリ・設定等） → bootstrap.md
 - MCP サーバー管理 → mcp.md
 - Agent teamタスク → agent-team.md
+- Context 圧縮対策 (agent 出力永続化 / 反映と永続化の順序) → context-management.md
 - ASCII図の整列 → ascii-diagram.md
 - upstream 投稿 → oss-contribute.md
+- Gate/test 設計則 (codegen stale gate / non-vacuous / fixture SOT / property arb / doc drift) → gate-and-test.md
 - UI・画面のデザイン(柔軟に使う指針) → ui-design.md
 
 # 補助ドキュメント
@@ -54,3 +56,5 @@
 - 陳腐化: 既存のCLAUDE.md/docs/skill記述が実態(コード/構成/設定)と乖離しているのを作業中に発見(実害の有無を問わない)
 
 タイミングは2段階: ①検知した時点では1行告知のみ(例「陳腐化検知: X」、タスクは中断しない) ②`meta-update` の起動と提案はタスク区切りで。タスク区切り直前に再点検。ただしタスクが確認待ち等で停止する場合は、その応答内に①の告知を必ず含め取りこぼさない。
+
+長期 batch/session の場合、batch commit ごとも task 区切りとして扱う (溜め込むと meta-update が漏れやすい)。

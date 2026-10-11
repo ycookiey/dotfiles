@@ -18,7 +18,7 @@
     },
     {
       "Name": "nonportable",
-      "Source": null
+      "Source": "https://github.com/ScoopInstaller/Nonportable"
     },
     {
       "Name": "games",
@@ -32,6 +32,10 @@
   "apps": [
     {
       "Name": "7zip",
+      "Source": "main"
+    },
+    {
+      "Name": "7zip19.00-helper",
       "Source": "main"
     },
     {
@@ -103,6 +107,10 @@
       "Source": "main"
     },
     {
+      "Name": "gcloud",
+      "Source": "extras"
+    },
+    {
       "Name": "gh",
       "Source": "main"
     },
@@ -127,8 +135,16 @@
       "Source": "extras"
     },
     {
+      "Name": "gradle",
+      "Source": "main"
+    },
+    {
       "Name": "imagemagick",
       "Source": "main"
+    },
+    {
+      "Name": "inno-setup",
+      "Source": "extras"
     },
     {
       "Name": "innounp",
@@ -155,8 +171,7 @@
       "Source": "versions"
     },
     {
-      "Name": "llama.cpp-cu131",
-      "Source": null
+      "Name": "llama.cpp-cu131"
     },
     {
       "Name": "llvm",
@@ -341,6 +356,10 @@
     {
       "Name": "yStrokey",
       "Source": "yscoopy"
+    },
+    {
+      "Name": "yt-dlp",
+      "Source": "main"
     },
     {
       "Name": "ytasky",

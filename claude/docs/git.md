@@ -20,6 +20,39 @@
 - 復旧(手動 commit 後): `git reset --soft HEAD~1` → `git commit -F .git/rebase-merge/message` → `git rebase --skip`(skip は「現 HEAD を採用して次へ」として作用し rewritten-list を進める)
 - 関連: `GIT_EDITOR=true` を `--continue` に渡すと commit-msg が空で abort、同じ誤エラーが出る。`GIT_EDITOR=:` も同様。メッセージ保持には `git commit -F .git/rebase-merge/message` を先に明示実行
 
+## skip-worktree flag は worktree local state = process 間で漂う
+
+`git update-index --skip-worktree <file>` は git config でなく worktree local state。process 間 (別 clone / fresh checkout / CI runner) で失われる。
+
+- 「skip-worktree 下で運用」を前提にする generated file は、flag 再設定を script 化 (postinstall / dev 起動時) しないと process 間で状態が漂う
+- 実例: `git ls-files -v <file>` = H (通常 tracked、skip-worktree なし) だが README/CLAUDE.md 記述は「skip-worktree 下」を前提 → `pnpm dev:web` / verify で M として現れ `git add -A` で意図しない commit の事故導線
+- 設計判断: tracked + skip-worktree は「暗黙契約」= fragile、**gitignore + generated-only 経路が robust** (絶対に tracked にしない、build 時再生成のみ)
+
+## Windows で git-credential-wincred が「CredWrite failed」
+
+- 症状: HTTPS の clone 自体は成功するが「CredWrite failed」と出る。資格情報が保存されず、fetch / push のたびにパスワードを聞かれる
+- 切り分け結果(2026-09): ダミーの資格情報でも `git credential-wincred store` が失敗 → 入力内容ではなく保存先の問題。GCM の `wincredman` ストアも「Unable to persist credentials」。一方 `cmdkey /generic:` では書き込める。VaultSvc 稼働中・`DisableDomainCreds=0` でも発生し、根本原因は未特定
+- 本物の資格情報を汚さないテスト: ホストを `credtest.invalid` にして store → `cmdkey /list` で確認 → 同じ入力から password 行を除いて erase
+
+```bash
+printf 'protocol=https\nhost=credtest.invalid\nusername=test-user\npassword=dummy\n\n' | git credential-wincred store
+cmdkey /list | grep credtest
+printf 'protocol=https\nhost=credtest.invalid\nusername=test-user\n\n' | git credential-wincred erase
+```
+
+- 回避候補: GCM の DPAPI ストア(`credential.credentialStore=dpapi`)はダミーで保存・削除を確認済み。保存先は `~/.gcm/dpapi_store/`
+- リポジトリ単位で GCM に切り替える場合、system gitconfig の wincred が先に走るので、local config で `credential.helper` を空値でリセットしてから `manager` を足す
+- GCM はホストに通信してプロバイダを自動判定する。自前ホストの Gitea 等では `credential.provider=generic` を設定して判定を止める
+- scoop の git は helper を system gitconfig(`<scoop>/apps/git/<ver>/etc/gitconfig`)で wincred に設定している
+
+## 部分 stage の単独検証と worktree の後片付け(Windows + pnpm)
+
+- 検証: 兄弟 dir に `git worktree add --detach <dir> HEAD` → `git diff --cached --binary > p.patch` を `git apply p.patch` → `pnpm install --offline --frozen-lockfile` → typecheck/lint/test。`link:../x` 依存は兄弟 dir なら同じ相対パスで解決
+- 同一 file 内で commit を分ける: 片方の変更を除いた版を作り `git hash-object -w --path=<file> <版>` → `git update-index --cacheinfo 100644,<sha>,<file>`(非対話。`git add -p` 不可の環境向け)
+- 確かめは CI の手順を全部(format:check を含む)。package.json の CI 用 script か workflow を見て並べる
+- Windows の作業ツリー(autocrlf)では prettier --check が CRLF で全ファイル落ちる → コミットした中身で確かめる: `git show HEAD:<f> | prettier --check --stdin-filepath <f>`
+- 後片付け: pnpm の node_modules(junction)で `git worktree remove --force` が "Directory not empty" で失敗(登録は外れる)。残骸は `cmd //c "rmdir /s /q C:\path"`(junction はリンクだけ消し、先をたどらない)。rm -rf の junction の扱いは環境依存のため使わない
+
 ## push 前の検査は結果を見てから push(検査と push を 1 コマンドに繋げない)
 
 - 症状: 公開 repo への push 前に禁止語(実名・大会名等)を `git diff ... | grep` で検査したが、同じコマンドで `; git push` まで繋げたため、検査が hit しても push が進んで公開された
@@ -48,3 +81,9 @@
 - 現象: global ignore 等で `.claude/` が ignore 対象の repo で、追跡済みの `.claude/skills/x/SKILL.md` を `git add <path>` → 「The following paths are ignored」で何も stage されない(追跡済みでも)
 - 対処: `git add -u -- <path>`(追跡済み file の変更だけを stage)。新規 file を足すときだけ `git add -f`
 
+## autocrlf の作業ツリーで stash / checkout した後、スクリプトの置換が一致しない
+
+- 現象: `core.autocrlf=true` (Windows) で `git stash` → `stash pop`、`git checkout -- <file>` をすると、git が書き戻したファイルは CRLF になる。LF に直して編集していたファイルも CRLF に戻る
+- 影響: python や sed で `"...\n..."` を含む複数行を完全一致で置換するパッチが「見つからない」で失敗する。文字化けや日本語の問題に見えて原因を取り違えやすい
+- 対処: 置換前に `file <path>` で改行を確かめる。複数行の置換は Edit ツールで行う (改行の違いを吸収する)。スクリプトで置換するなら読み込み時に `\r\n` → `\n` に正規化する
+- stash を使った前後比較 (変更前の版でスクリプトを走らせる等) は、この書き戻しが起きる操作だと意識しておく

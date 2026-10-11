@@ -19,6 +19,9 @@
       "Id": "AutoHotkey.AutoHotkey"
     },
     {
+      "Id": "Beeper.Beeper"
+    },
+    {
       "Id": "Canonical.Ubuntu"
     },
     {
@@ -29,6 +32,9 @@
     },
     {
       "Id": "EpicGames.EpicGamesLauncher"
+    },
+    {
+      "Id": "EpicGames.EpicOnlineServices"
     },
     {
       "Id": "GitHub.GitHubDesktop"
@@ -64,6 +70,9 @@
       "Id": "Microsoft.OneDrive"
     },
     {
+      "Id": "Microsoft.Outlook"
+    },
+    {
       "Id": "Microsoft.Teams"
     },
     {
@@ -83,6 +92,12 @@
     },
     {
       "Id": "Microsoft.VCRedist.2010.x86"
+    },
+    {
+      "Id": "Microsoft.VCRedist.2012.x64"
+    },
+    {
+      "Id": "Microsoft.VCRedist.2012.x86"
     },
     {
       "Id": "Microsoft.VCRedist.2013.x64"
@@ -106,6 +121,9 @@
       "Id": "Microsoft.WSL"
     },
     {
+      "Id": "Microsoft.WindowsADK"
+    },
+    {
       "Id": "Microsoft.WindowsAppRuntime.1.5"
     },
     {
@@ -116,6 +134,9 @@
     },
     {
       "Id": "Microsoft.WindowsAppRuntime.1.8"
+    },
+    {
+      "Id": "Microsoft.WindowsAppRuntime.2"
     },
     {
       "Id": "Microsoft.WindowsSDK.10.0.26100"
@@ -167,6 +188,9 @@
     },
     {
       "Id": "Zoom.Zoom.EXE"
+    },
+    {
+      "Id": "Zulip.Zulip"
     },
     {
       "Id": "junegunn.fzf"

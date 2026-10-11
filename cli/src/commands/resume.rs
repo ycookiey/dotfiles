@@ -107,6 +107,7 @@ pub(crate) struct SessionInfo {
 struct ScanResult {
     sessions: Vec<SessionInfo>,
     no_last_ts: usize,
+    unparsable: usize,
 }
 
 pub(crate) fn is_session_id(s: &str) -> bool {
@@ -241,8 +242,15 @@ pub fn select(query: &[String], dangerously_skip_permissions: bool) -> ShellActi
     let q = query.join(" ");
     let mut cmd = Command::new("fzf");
     cmd.args(["-d", "\t", "--with-nth", "2..", "--no-sort", "--ansi"]);
+    let mut header_parts: Vec<String> = Vec::new();
     if scan.no_last_ts > 0 {
-        let header = format!("⚠ {} sessions skipped (no last timestamp)", scan.no_last_ts);
+        header_parts.push(format!("{} no timestamp", scan.no_last_ts));
+    }
+    if scan.unparsable > 0 {
+        header_parts.push(format!("{} unparsable", scan.unparsable));
+    }
+    if !header_parts.is_empty() {
+        let header = format!("⚠ skipped: {}", header_parts.join(", "));
         cmd.args(["--header", &header]);
     }
     if !q.is_empty() {
@@ -412,10 +420,10 @@ fn scan_sessions() -> ScanResult {
 
     let projects_dir = match dirs::home_dir() {
         Some(h) => h.join(".claude").join("projects"),
-        None => return ScanResult { sessions: Vec::new(), no_last_ts: 0 },
+        None => return ScanResult { sessions: Vec::new(), no_last_ts: 0, unparsable: 0 },
     };
     if !projects_dir.is_dir() {
-        return ScanResult { sessions: Vec::new(), no_last_ts: 0 };
+        return ScanResult { sessions: Vec::new(), no_last_ts: 0, unparsable: 0 };
     }
 
     let paths: Vec<PathBuf> = collect_session_jsonl(&projects_dir);
@@ -443,13 +451,14 @@ fn scan_sessions() -> ScanResult {
 
     // 4. miss のみ parse
     let mut no_last_ts: usize = 0;
+    let mut unparsable: usize = 0;
     let parsed: Vec<Result<SessionInfo, bool>> =
         misses.par_iter().map(|p| parse_session(p)).collect();
     for r in parsed {
         match r {
             Ok(s) => hits.push(s),
             Err(true) => no_last_ts += 1,
-            Err(false) => {}
+            Err(false) => unparsable += 1,
         }
     }
 
@@ -462,7 +471,7 @@ fn scan_sessions() -> ScanResult {
         write_scan_cache(&sessions, &current_map);
     }
 
-    ScanResult { sessions, no_last_ts }
+    ScanResult { sessions, no_last_ts, unparsable }
 }
 
 pub(crate) fn collect_session_jsonl(projects_dir: &Path) -> Vec<PathBuf> {
@@ -492,29 +501,33 @@ pub(crate) fn collect_session_jsonl(projects_dir: &Path) -> Vec<PathBuf> {
 
 /// セッションファイルは大きい場合 80MB に達するので、先頭/末尾だけ部分読みする。
 /// HEAD: session_id, cwd 抽出用。TAIL: title/timestamp/最新メッセージ抽出用。
-const HEAD_BYTES: u64 = 128 * 1024;
-const TAIL_BYTES: u64 = 512 * 1024;
+/// BASE は高速パス、MAX は fallback (file-history-snapshot が大量に詰まっているなど、
+/// BASE で session_id/cwd/timestamp が取れなかった時に一度だけ拡張して再試行する)。
+const HEAD_BASE_BYTES: u64 = 128 * 1024;
+const TAIL_BASE_BYTES: u64 = 512 * 1024;
+const HEAD_MAX_BYTES: u64 = 4 * 1024 * 1024;
+const TAIL_MAX_BYTES: u64 = 4 * 1024 * 1024;
 
-/// 部分読みで (head, tail) のバイト列を返す。ファイルが (HEAD + TAIL) 以下なら全文を head に入れて tail は空。
+/// 部分読みで (head, tail) のバイト列を返す。ファイルが (head + tail) 以下なら全文を head に入れて tail は空。
 /// 部分境界の改行で切る（中途半端なバイトを捨てる）。
-fn read_head_and_tail(path: &Path) -> Result<(Vec<u8>, Vec<u8>), bool> {
+fn read_head_and_tail(path: &Path, head_bytes: u64, tail_bytes: u64) -> Result<(Vec<u8>, Vec<u8>), bool> {
     let mut f = File::open(path).map_err(|_| false)?;
     let len = f.metadata().map_err(|_| false)?.len();
 
-    if len <= HEAD_BYTES + TAIL_BYTES {
+    if len <= head_bytes + tail_bytes {
         let mut data = Vec::with_capacity(len as usize);
         f.read_to_end(&mut data).map_err(|_| false)?;
         return Ok((data, Vec::new()));
     }
 
-    let mut head = vec![0u8; HEAD_BYTES as usize];
+    let mut head = vec![0u8; head_bytes as usize];
     f.read_exact(&mut head).map_err(|_| false)?;
     let last_nl = head.iter().rposition(|&b| b == b'\n').unwrap_or(0);
     head.truncate(last_nl);
 
-    let tail_off = len - TAIL_BYTES;
+    let tail_off = len - tail_bytes;
     f.seek(SeekFrom::Start(tail_off)).map_err(|_| false)?;
-    let mut tail = vec![0u8; TAIL_BYTES as usize];
+    let mut tail = vec![0u8; tail_bytes as usize];
     f.read_exact(&mut tail).map_err(|_| false)?;
     let first_nl = tail.iter().position(|&b| b == b'\n').unwrap_or(tail.len());
     let start = (first_nl + 1).min(tail.len());
@@ -525,8 +538,19 @@ fn read_head_and_tail(path: &Path) -> Result<(Vec<u8>, Vec<u8>), bool> {
 
 /// Returns Ok(session) on success, Err(true) if only last_timestamp was missing,
 /// Err(false) for other parse failures.
+///
+/// BASE ウィンドウでまず試し、cwd/session_id/timestamp のいずれかが取れなかったら
+/// 一度だけ MAX ウィンドウで再試行する。BASE で通る分はキャッシュされるので、
+/// MAX の I/O は「メタレコードが大量に詰まった大型セッション」等のエッジのみ発生する。
 fn parse_session(path: &Path) -> Result<SessionInfo, bool> {
-    let (head_buf, tail_buf) = read_head_and_tail(path)?;
+    match parse_session_window(path, HEAD_BASE_BYTES, TAIL_BASE_BYTES) {
+        Ok(s) => Ok(s),
+        Err(_) => parse_session_window(path, HEAD_MAX_BYTES, TAIL_MAX_BYTES),
+    }
+}
+
+fn parse_session_window(path: &Path, head_bytes: u64, tail_bytes: u64) -> Result<SessionInfo, bool> {
+    let (head_buf, tail_buf) = read_head_and_tail(path, head_bytes, tail_bytes)?;
     let head_lines: Vec<&[u8]> = head_buf.split(|&b| b == b'\n').filter(|s| !s.is_empty()).collect();
     if head_lines.is_empty() {
         return Err(false);
@@ -536,6 +560,9 @@ fn parse_session(path: &Path) -> Result<SessionInfo, bool> {
     let mut cwd: Option<String> = None;
     let mut ai_title: Option<String> = None;
 
+    // cwd はセッションを通じて不変なので、type を問わず最初に top-level cwd を
+    // 持つ行から採る。type=user 限定にすると file-history-snapshot が HEAD を
+    // 埋め尽くす大型セッションで cwd を取り逃す。
     for line in head_lines.iter() {
         let Some(meta) = parse_line(line) else { continue };
         if session_id.is_none() {
@@ -546,26 +573,9 @@ fn parse_session(path: &Path) -> Result<SessionInfo, bool> {
         if ai_title.is_none() && meta.typ.as_deref() == Some("ai-title") {
             ai_title = meta.ai_title.clone();
         }
-        if meta.typ.as_deref() != Some("user") {
-            if cwd.is_some() && session_id.is_some() && ai_title.is_some() {
-                break;
-            }
-            continue;
-        }
-        if meta.is_meta == Some(true) {
-            continue;
-        }
-        let msg = match meta.message {
-            Some(m) => m,
-            None => continue,
-        };
-        if msg.role.as_deref() != Some("user") {
-            continue;
-        }
         if cwd.is_none() {
-            cwd = meta.cwd;
-            if let Some(sid) = meta.session_id {
-                session_id = Some(sid);
+            if let Some(c) = &meta.cwd {
+                cwd = Some(c.clone());
             }
         }
         if cwd.is_some() && session_id.is_some() && ai_title.is_some() {

@@ -13,6 +13,7 @@ $env.PATH = ($env.PATH | split row (char esep)
   | append 'C:\Main\Script\git-worktree-runner\bin'
   | append ($env.USERPROFILE | path join 'scoop\apps\miktex\current\texmfs\install\miktex\bin\x64')
   | append ($env.LOCALAPPDATA | path join 'Android\Sdk\platform-tools')
+  | append ($env.USERPROFILE | path join '.opencode/bin')
   | uniq)
 
 # --- starship ---

@@ -461,11 +461,6 @@ fn cmd_static() -> Value {
         }
     }
 
-    // .claudeignore
-    let ignore_exists = std::env::current_dir()
-        .map(|p| p.join(".claudeignore").exists())
-        .unwrap_or(false);
-
     json!({
         "claude_md": claude_md,
         "skills": skills,
@@ -473,8 +468,7 @@ fn cmd_static() -> Value {
         "plugins": plugins,
         "plugin_count": plugins.len() as i64,
         "mcp_server_count": mcp_server_count,
-        "token_audit_hook_active": token_audit_hook_active,
-        "claudeignore_exists": ignore_exists
+        "token_audit_hook_active": token_audit_hook_active
     })
 }
 
