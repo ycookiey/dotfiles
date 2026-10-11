@@ -1012,15 +1012,31 @@ fn build_clusters(
     // Sort by "saved tokens" = match_tokens × (occurrences - 1): the total token volume
     // removable by consolidating this duplicate. Surfaces both "short but high-frequency"
     // (e.g. ['hp','atk',...]) and "long but low-frequency" (large data defs) on the same
-    // footing, while short+rare noise sinks. Tie-break: longer match, then fewer gaps.
+    // footing, while short+rare noise sinks. Tie-break: longer match, then fewer gaps,
+    // then the clusters' contents (cluster_content_order), so equal clusters keep the same
+    // order and the same --top cut across runs instead of following HashMap order.
     clusters.sort_by(|a, b| {
         let sa = a.match_tokens.saturating_mul(a.occurrences.len().saturating_sub(1));
         let sb = b.match_tokens.saturating_mul(b.occurrences.len().saturating_sub(1));
         sb.cmp(&sa)
             .then_with(|| b.match_tokens.cmp(&a.match_tokens))
             .then_with(|| a.gap_tokens.cmp(&b.gap_tokens))
+            .then_with(|| cluster_content_order(files, a, b))
     });
     clusters
+}
+
+/// Orders clusters by where they occur: the first occurrence's (path, start_line), then
+/// the occurrence count, then the remaining occurrences and the token count. Paths are
+/// compared rather than file indexes so the order does not depend on the walk order.
+fn cluster_content_order(files: &[FileTokens], a: &Cluster, b: &Cluster) -> std::cmp::Ordering {
+    let occ_key = |o: &Occurrence| (files[o.file_idx].path.as_path(), o.start_line, o.end_line);
+    let first = |c: &Cluster| c.occurrences.first().map(|o| (files[o.file_idx].path.as_path(), o.start_line));
+    first(a)
+        .cmp(&first(b))
+        .then_with(|| a.occurrences.len().cmp(&b.occurrences.len()))
+        .then_with(|| a.occurrences.iter().map(occ_key).cmp(b.occurrences.iter().map(occ_key)))
+        .then_with(|| a.token_count.cmp(&b.token_count))
 }
 
 // ============================================================================

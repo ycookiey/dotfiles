@@ -277,7 +277,12 @@ pub fn run(args: &[String]) {
     clusters.sort_by(|a, b| {
         let sa = a.get("saved_chars").and_then(|x| x.as_u64()).unwrap_or(0);
         let sb = b.get("saved_chars").and_then(|x| x.as_u64()).unwrap_or(0);
-        sb.cmp(&sa)
+        // literal 昇順で tie-break (HashMap 順に依存せず、同値の並びと --top の境界を毎回同じにする)。
+        sb.cmp(&sa).then_with(|| {
+            let la = a.get("literal").and_then(|x| x.as_str()).unwrap_or("");
+            let lb = b.get("literal").and_then(|x| x.as_str()).unwrap_or("");
+            la.cmp(lb)
+        })
     });
     let total = clusters.len();
     let shown: Vec<Value> = clusters.into_iter().take(parsed.top).collect();

@@ -586,14 +586,18 @@ fn build_variants(files: &[FileStrings]) -> Vec<Variant> {
                 .push(Occurrence { file_idx: fi, line: s.line });
         }
     }
-    by_content
+    let mut variants: Vec<Variant> = by_content
         .into_iter()
         .map(|(content, occurrences)| {
             let char_count = content.chars().count();
             let word_count = content.split_ascii_whitespace().count();
             Variant { content, char_count, word_count, occurrences }
         })
-        .collect()
+        .collect();
+    // Content order, not HashMap order, so variant indexes (and the similar clusters
+    // built from them) are the same on every run.
+    variants.sort_unstable_by(|a, b| a.content.cmp(&b.content));
+    variants
 }
 
 // ============================================================================
@@ -683,7 +687,11 @@ fn build_similar_clusters(variants: &[Variant], threshold: f64) -> Vec<Vec<usize
         let r = uf.find(i);
         by_root.entry(r).or_default().push(i);
     }
-    by_root.into_values().filter(|g| g.len() >= 2).collect()
+    // Members are pushed in index order; order the groups by their first member so the
+    // result does not follow HashMap order.
+    let mut groups: Vec<Vec<usize>> = by_root.into_values().filter(|g| g.len() >= 2).collect();
+    groups.sort_unstable_by_key(|g| g[0]);
+    groups
 }
 
 // ============================================================================
@@ -840,6 +848,7 @@ pub fn run(args: &[String]) {
             .len()
             .cmp(&a.occurrences.len())
             .then_with(|| b.char_count.cmp(&a.char_count))
+            .then_with(|| a.content.cmp(&b.content))
     });
     let total_exact = exact.len();
     let shown_exact: Vec<&&Variant> = exact.iter().take(parsed.top).collect();
@@ -870,11 +879,15 @@ pub fn run(args: &[String]) {
                         >= parsed.min_occurrences
             })
             .collect();
-        // Sort: total occurrences desc, then variant count desc
+        // Sort: total occurrences desc, then variant count desc, then first member's content
+        // (groups are disjoint, so first members differ and the order is total).
         groups_filtered.sort_by(|a, b| {
             let total_a: usize = a.iter().map(|&i| variants[i].occurrences.len()).sum();
             let total_b: usize = b.iter().map(|&i| variants[i].occurrences.len()).sum();
-            total_b.cmp(&total_a).then_with(|| b.len().cmp(&a.len()))
+            total_b
+                .cmp(&total_a)
+                .then_with(|| b.len().cmp(&a.len()))
+                .then_with(|| variants[a[0]].content.cmp(&variants[b[0]].content))
         });
         let total_similar = groups_filtered.len();
         let shown_similar: Vec<&Vec<usize>> = groups_filtered.iter().take(parsed.top).collect();

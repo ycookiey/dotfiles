@@ -5,7 +5,7 @@ use memchr::memmem;
 use rayon::prelude::*;
 use serde::de::{Deserialize, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -1160,7 +1160,8 @@ fn aggregate_by_tool(requests: &[Request]) -> Value {
         .into_iter()
         .map(|(tool, (cc, out))| (tool, cc, out))
         .collect();
-    raw.sort_by(|a, b| b.1.cmp(&a.1));
+    // Tie-break on the tool key so equal costs (and the top-N cut) do not follow HashMap order.
+    raw.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
 
     let make_entry = |tool: String, cc: i64, out: i64| {
         let pct = if total > 0 {
@@ -1241,10 +1242,15 @@ fn aggregate_toolsearch(requests: &[Request]) -> Value {
     items.sort_by(|a, b| {
         let a_cc = b["cache_create"].as_i64().unwrap_or(0);
         let b_cc = a["cache_create"].as_i64().unwrap_or(0);
-        a_cc.cmp(&b_cc)
+        a_cc.cmp(&b_cc).then_with(|| str_field(a, "query").cmp(str_field(b, "query")))
     });
 
     json!(items)
+}
+
+/// String field of a report item, "" when missing; used as a sort tie-break.
+fn str_field<'a>(v: &'a Value, key: &str) -> &'a str {
+    v[key].as_str().unwrap_or("")
 }
 
 /// Top 10 files by Read consumption. Distribute delta_cc across reads.
@@ -1284,7 +1290,7 @@ fn aggregate_top_reads(requests: &[Request]) -> Value {
     items.sort_by(|a, b| {
         let a_total = b["total_cache_create"].as_i64().unwrap_or(0);
         let b_total = a["total_cache_create"].as_i64().unwrap_or(0);
-        a_total.cmp(&b_total)
+        a_total.cmp(&b_total).then_with(|| str_field(a, "file").cmp(str_field(b, "file")))
     });
 
     items.truncate(10);
@@ -1325,7 +1331,10 @@ fn detect_large_responses(requests: &[Request]) -> Value {
     items.sort_by(|a, b| {
         let a_output = b["output"].as_i64().unwrap_or(0);
         let b_output = a["output"].as_i64().unwrap_or(0);
-        a_output.cmp(&b_output)
+        // request_idx is unique, so equal outputs stay in request order explicitly.
+        a_output.cmp(&b_output).then_with(|| {
+            a["request_idx"].as_u64().unwrap_or(0).cmp(&b["request_idx"].as_u64().unwrap_or(0))
+        })
     });
 
     items.truncate(20);
@@ -1336,6 +1345,8 @@ fn detect_large_responses(requests: &[Request]) -> Value {
 fn detect_large_ops(requests: &[Request]) -> Value {
     let mut items = Vec::new();
 
+    // Requests come in a fixed order (files in path order), and the stable sort below keeps
+    // it for items equal in cost, tool and file.
     for r in requests.iter().filter(|r| r.delta_cc > 5000) {
         let tool_key = r.tool_key();
         let file = r.tools.first().and_then(|t| {
@@ -1356,6 +1367,8 @@ fn detect_large_ops(requests: &[Request]) -> Value {
         let a_cc = b["cache_create"].as_i64().unwrap_or(0);
         let b_cc = a["cache_create"].as_i64().unwrap_or(0);
         a_cc.cmp(&b_cc)
+            .then_with(|| str_field(a, "tool").cmp(str_field(b, "tool")))
+            .then_with(|| str_field(a, "file").cmp(str_field(b, "file")))
     });
 
     items.truncate(20);
@@ -1400,7 +1413,7 @@ fn detect_dup_reads(requests: &[Request]) -> Value {
     items.sort_by(|a, b| {
         let a_total = b["total_cache_create"].as_i64().unwrap_or(0);
         let b_total = a["total_cache_create"].as_i64().unwrap_or(0);
-        a_total.cmp(&b_total)
+        a_total.cmp(&b_total).then_with(|| str_field(a, "file").cmp(str_field(b, "file")))
     });
 
     json!(items)
@@ -1482,17 +1495,17 @@ fn per_session_stats(files: &[PathBuf], sessions: &[SessionCtx]) -> (Value, Valu
         }
     }
 
-    // Sort descending
+    // Sort descending, ties by session id
     startup_costs.sort_by(|a, b| {
         let a_ft = b["first_total_ctx"].as_i64().unwrap_or(0);
         let b_ft = a["first_total_ctx"].as_i64().unwrap_or(0);
-        a_ft.cmp(&b_ft)
+        a_ft.cmp(&b_ft).then_with(|| str_field(a, "session").cmp(str_field(b, "session")))
     });
 
     per_session_max.sort_by(|a, b| {
         let a_mx = b["max_ctx"].as_i64().unwrap_or(0);
         let b_mx = a["max_ctx"].as_i64().unwrap_or(0);
-        a_mx.cmp(&b_mx)
+        a_mx.cmp(&b_mx).then_with(|| str_field(a, "session").cmp(str_field(b, "session")))
     });
 
     (json!(startup_costs), json!(per_session_max))
@@ -1534,7 +1547,9 @@ fn cmd_compare(id1: &str, id2: &str) -> Value {
 
 /// Tool breakdown (without pct) for compare.
 fn tool_breakdown(requests: &[Request]) -> Value {
-    let mut map: HashMap<String, i64> = HashMap::new();
+    // BTreeMap: serde_json keeps insertion order (preserve_order), so a HashMap here would
+    // print the tools in a different order on every run.
+    let mut map: BTreeMap<String, i64> = BTreeMap::new();
     for r in requests {
         *map.entry(r.tool_key()).or_default() += r.delta_cc;
     }
