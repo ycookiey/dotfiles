@@ -2,8 +2,15 @@ use anyhow::{Context, Result, bail};
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{Duration, SystemTime};
 
-pub fn run(dot_arg: Option<String>) {
+/// Minimum time between two scoop / winget exports. Shells start `dotcli sync` in the
+/// background on every launch; the exports spawn scoop (PowerShell) and winget and take
+/// seconds, so they are throttled while the cheap merges (settings, keybindings, MCP)
+/// run every time. `--force` bypasses the throttle.
+const EXPORT_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+
+pub fn run(dot_arg: Option<String>, force: bool) {
     let dot = match resolve_dotfiles(dot_arg) {
         Ok(p) => p,
         Err(e) => {
@@ -19,12 +26,14 @@ pub fn run(dot_arg: Option<String>) {
     if let Err(e) = sync_claude_keybindings(&dot) {
         eprintln!("dotcli sync keybindings: {e}");
     }
-    match sync_scoopfile(&dot) {
+    let stamp_dir = stamp_dir();
+    let now = SystemTime::now();
+    match sync_scoopfile(&dot, stamp_dir.as_deref(), force, now) {
         Ok(true) => synced = true,
         Ok(false) => {}
         Err(e) => eprintln!("dotcli sync scoop: {e}"),
     }
-    match sync_wingetfile(&dot) {
+    match sync_wingetfile(&dot, stamp_dir.as_deref(), force, now) {
         Ok(true) => synced = true,
         Ok(false) => {}
         Err(e) => eprintln!("dotcli sync winget: {e}"),
@@ -303,12 +312,109 @@ fn is_account_dir_name(name: &str) -> bool {
         .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
+// --- 2a) Export throttle (scoop / winget) ---
+//
+// One stamp file per export kind: `<cache_dir>/dotcli/sync-<kind>.stamp`
+// (%LOCALAPPDATA%\dotcli on Windows). Its mtime is when the last export that went on
+// to succeed started. The stamp is claimed (rewritten) *before* the export runs, so N
+// shells starting together see a fresh stamp after the first one and skip, instead of
+// all running the export side by side; if the export fails, the claim is rolled back
+// to the previous mtime (or the stamp removed) so the next start retries.
+//
+// The stamp is global, not per dotfiles dir: a sync run against another checkout also
+// defers the next export of this one by up to EXPORT_INTERVAL.
+
+fn stamp_dir() -> Option<PathBuf> {
+    dirs::cache_dir().map(|d| d.join("dotcli"))
+}
+
+struct ExportClaim {
+    stamp: Option<PathBuf>,
+    prev: Option<SystemTime>,
+}
+
+impl ExportClaim {
+    /// Returns None when the export of `kind` ran within EXPORT_INTERVAL before `now`
+    /// and `force` is off. Otherwise claims the stamp and returns the claim. A stamp
+    /// that cannot be written does not block the export (it just isn't throttled).
+    fn acquire(dir: Option<&Path>, kind: &str, force: bool, now: SystemTime) -> Option<Self> {
+        let Some(dir) = dir else {
+            return Some(Self { stamp: None, prev: None });
+        };
+        let stamp = dir.join(format!("sync-{kind}.stamp"));
+        let prev = std::fs::metadata(&stamp).and_then(|m| m.modified()).ok();
+        if !force && prev.is_some_and(|t| is_fresh(t, now)) {
+            return None;
+        }
+        let written = std::fs::create_dir_all(dir).and_then(|()| touch(&stamp, now));
+        Some(Self {
+            stamp: written.ok().map(|()| stamp),
+            prev,
+        })
+    }
+
+    /// Undo the claim after a failed export so the next run does not skip it.
+    fn release(self) {
+        let Some(stamp) = self.stamp else { return };
+        let restored = match self.prev {
+            Some(t) => std::fs::File::options()
+                .write(true)
+                .open(&stamp)
+                .and_then(|f| f.set_modified(t)),
+            None => std::fs::remove_file(&stamp),
+        };
+        if restored.is_err() {
+            let _ = std::fs::remove_file(&stamp);
+        }
+    }
+}
+
+/// A stamp in the future (clock moved back) counts as stale.
+fn is_fresh(stamp: SystemTime, now: SystemTime) -> bool {
+    now.duration_since(stamp)
+        .is_ok_and(|elapsed| elapsed < EXPORT_INTERVAL)
+}
+
+fn touch(path: &Path, now: SystemTime) -> std::io::Result<()> {
+    let f = std::fs::File::create(path)?;
+    f.set_modified(now)
+}
+
+/// Runs `export` unless throttled. `export` returns `Ok(None)` when the export did not
+/// produce usable output (command failed, unparsable output), `Ok(Some(changed))` when
+/// it did; only the latter keeps the stamp claimed.
+fn run_throttled(
+    dir: Option<&Path>,
+    kind: &str,
+    force: bool,
+    now: SystemTime,
+    export: impl FnOnce() -> Result<Option<bool>>,
+) -> Result<bool> {
+    let Some(claim) = ExportClaim::acquire(dir, kind, force, now) else {
+        return Ok(false);
+    };
+    let result = export();
+    if !matches!(result, Ok(Some(_))) {
+        claim.release();
+    }
+    Ok(result?.unwrap_or(false))
+}
+
 // --- 2) Scoopfile ---
 
-fn sync_scoopfile(dot: &Path) -> Result<bool> {
+fn sync_scoopfile(
+    dot: &Path,
+    stamp_dir: Option<&Path>,
+    force: bool,
+    now: SystemTime,
+) -> Result<bool> {
     if which("scoop").is_none() {
         return Ok(false);
     }
+    run_throttled(stamp_dir, "scoop", force, now, || export_scoopfile(dot))
+}
+
+fn export_scoopfile(dot: &Path) -> Result<Option<bool>> {
     // scoop is a .cmd / .ps1 shim → invoke via cmd /C for reliability
     let out = Command::new("cmd")
         .args(["/C", "scoop", "export"])
@@ -316,11 +422,11 @@ fn sync_scoopfile(dot: &Path) -> Result<bool> {
         .output();
     let out = match out {
         Ok(o) if o.status.success() => o,
-        _ => return Ok(false),
+        _ => return Ok(None),
     };
     let export: Value = match serde_json::from_slice(&out.stdout) {
         Ok(v) => v,
-        Err(_) => return Ok(false),
+        Err(_) => return Ok(None),
     };
     let buckets = filter_keys(export.get("buckets"), &["Name", "Source"]);
     let apps = filter_keys(export.get("apps"), &["Name", "Source"]);
@@ -331,7 +437,7 @@ fn sync_scoopfile(dot: &Path) -> Result<bool> {
     let new_str = serde_json::to_string_pretty(&Value::Object(new_obj))?;
 
     let path = dot.join("install").join("scoopfile.json");
-    write_if_different(&path, &new_str)
+    write_if_different(&path, &new_str).map(Some)
 }
 
 fn filter_keys(value: Option<&Value>, keys: &[&str]) -> Value {
@@ -366,10 +472,19 @@ const WINGET_EXCLUDE: &[&str] = &[
     "Python.Python.3.14",
 ];
 
-fn sync_wingetfile(dot: &Path) -> Result<bool> {
+fn sync_wingetfile(
+    dot: &Path,
+    stamp_dir: Option<&Path>,
+    force: bool,
+    now: SystemTime,
+) -> Result<bool> {
     if which("winget").is_none() {
         return Ok(false);
     }
+    run_throttled(stamp_dir, "winget", force, now, || export_wingetfile(dot))
+}
+
+fn export_wingetfile(dot: &Path) -> Result<Option<bool>> {
     let tmp = std::env::temp_dir().join(format!("winget-export-{}.json", std::process::id()));
     let _ = std::fs::remove_file(&tmp);
     let status = Command::new("winget")
@@ -380,16 +495,16 @@ fn sync_wingetfile(dot: &Path) -> Result<bool> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
-    let result = (|| -> Result<bool> {
+    let result = (|| -> Result<Option<bool>> {
         if !matches!(&status, Ok(s) if s.success()) {
-            return Ok(false);
+            return Ok(None);
         }
         if !tmp.exists() {
-            return Ok(false);
+            return Ok(None);
         }
         let data = std::fs::read_to_string(&tmp)?;
         if data.trim().is_empty() {
-            return Ok(false);
+            return Ok(None);
         }
         let export: Value = serde_json::from_str(&data)?;
         let mut apps: Vec<Map<String, Value>> = Vec::new();
@@ -428,7 +543,7 @@ fn sync_wingetfile(dot: &Path) -> Result<bool> {
         new_obj.insert("apps".into(), apps_value);
         let new_str = serde_json::to_string_pretty(&Value::Object(new_obj))?;
         let path = dot.join("install").join("wingetfile.json");
-        write_if_different(&path, &new_str)
+        write_if_different(&path, &new_str).map(Some)
     })();
     let _ = std::fs::remove_file(&tmp);
     result
@@ -612,7 +727,116 @@ fn write_if_different(path: &Path, new_content: &str) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::is_account_dir_name;
+    use super::{EXPORT_INTERVAL, is_account_dir_name, run_throttled};
+    use std::cell::Cell;
+    use std::path::{Path, PathBuf};
+    use std::time::{Duration, SystemTime};
+
+    struct TempDir(PathBuf);
+    impl TempDir {
+        fn new(name: &str) -> Self {
+            let p = std::env::temp_dir().join(format!(
+                "dotcli-sync-test-{name}-{}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&p);
+            std::fs::create_dir_all(&p).unwrap();
+            Self(p)
+        }
+    }
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn stamp_mtime(dir: &Path) -> Option<SystemTime> {
+        std::fs::metadata(dir.join("sync-scoop.stamp"))
+            .and_then(|m| m.modified())
+            .ok()
+    }
+
+    /// Runs the throttle with an export that reports `outcome`; returns whether the
+    /// export closure was called.
+    fn attempt(dir: &Path, force: bool, now: SystemTime, outcome: Option<bool>) -> bool {
+        let called = Cell::new(false);
+        let _ = run_throttled(Some(dir), "scoop", force, now, || {
+            called.set(true);
+            Ok(outcome)
+        });
+        called.get()
+    }
+
+    fn base() -> SystemTime {
+        // Whole seconds: keeps mtime comparisons exact on every filesystem.
+        SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000)
+    }
+
+    #[test]
+    fn export_runs_without_stamp_then_skips_until_interval_passes() {
+        let t = TempDir::new("interval");
+        let dir = t.0.join("nested");
+        assert!(attempt(&dir, false, base(), Some(false)), "first run must export");
+        assert_eq!(stamp_mtime(&dir), Some(base()));
+        let soon = base() + Duration::from_secs(60);
+        assert!(!attempt(&dir, false, soon, Some(true)), "fresh stamp must skip");
+        assert_eq!(stamp_mtime(&dir), Some(base()), "a skip must not move the stamp");
+        let later = base() + EXPORT_INTERVAL;
+        assert!(attempt(&dir, false, later, Some(false)), "expired stamp must export");
+        assert_eq!(stamp_mtime(&dir), Some(later));
+    }
+
+    #[test]
+    fn force_exports_despite_fresh_stamp() {
+        let t = TempDir::new("force");
+        assert!(attempt(&t.0, false, base(), Some(false)));
+        let soon = base() + Duration::from_secs(60);
+        assert!(attempt(&t.0, true, soon, Some(false)));
+        assert_eq!(stamp_mtime(&t.0), Some(soon));
+    }
+
+    #[test]
+    fn failed_export_leaves_no_fresh_stamp() {
+        let t = TempDir::new("fail-first");
+        assert!(attempt(&t.0, false, base(), None));
+        assert_eq!(stamp_mtime(&t.0), None, "failed first export must remove its claim");
+
+        let errored = run_throttled(Some(&t.0), "scoop", false, base(), || {
+            anyhow::bail!("boom")
+        });
+        assert!(errored.is_err());
+        assert_eq!(stamp_mtime(&t.0), None, "an export error must remove its claim");
+    }
+
+    #[test]
+    fn failed_export_restores_previous_stamp() {
+        let t = TempDir::new("fail-restore");
+        assert!(attempt(&t.0, false, base(), Some(false)));
+        let later = base() + EXPORT_INTERVAL + Duration::from_secs(1);
+        assert!(attempt(&t.0, false, later, None));
+        assert_eq!(stamp_mtime(&t.0), Some(base()), "failed retry must restore the old mtime");
+        assert!(attempt(&t.0, false, later, Some(false)), "next start must retry");
+    }
+
+    #[test]
+    fn stamp_in_the_future_counts_as_stale() {
+        let t = TempDir::new("future");
+        let future = base() + Duration::from_secs(3600);
+        assert!(attempt(&t.0, false, future, Some(false)));
+        assert!(attempt(&t.0, false, base(), Some(false)));
+        assert_eq!(stamp_mtime(&t.0), Some(base()));
+    }
+
+    #[test]
+    fn missing_stamp_dir_does_not_block_export() {
+        let called = Cell::new(false);
+        let r = run_throttled(None, "scoop", false, base(), || {
+            called.set(true);
+            Ok(Some(true))
+        });
+        assert!(called.get());
+        assert!(r.unwrap());
+    }
 
     #[test]
     fn account_dir_name_accepts_numbered_dirs_only() {

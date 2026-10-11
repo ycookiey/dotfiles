@@ -140,10 +140,14 @@ enum Commands {
         failure: bool,
     },
     /// Sync dotfiles → ~/.claude*/, scoopfile, wingetfile, mcp servers
+    /// (scoop/winget exports run at most once per 6h unless --force)
     Sync {
         /// Path to dotfiles repo (defaults to $DOTFILES_DIR)
         #[arg(long)]
         dot: Option<String>,
+        /// Run the scoop/winget exports even if they ran within the throttle interval
+        #[arg(long)]
+        force: bool,
     },
     /// CAS journal admin
     Cas {
@@ -259,7 +263,7 @@ fn main() {
             offset,
         } => commands::notify::run(&title, &message, duration, offset),
         Commands::CasPost { failure } => commands::cas_post::run(failure),
-        Commands::Sync { dot } => commands::sync::run(dot),
+        Commands::Sync { dot, force } => commands::sync::run(dot, force),
         Commands::Cas { action } => match action {
             CasAction::Gc { days } => commands::cas_admin::gc(days),
             CasAction::Inspect { session, path } => commands::cas_admin::inspect(session.as_deref(), path.as_deref()),
