@@ -38,11 +38,14 @@ echo "拡張機能のインストール開始: $(date)" >> "$LOG_FILE"
 INSTALLED_COUNT=0
 FAILED_COUNT=0
 
-cat "$SCRIPT_DIR/.vscode/extensions" | while read -r line
+# パイプで while に渡すとループがサブシェルで動きカウンタがサマリに残らないので、リダイレクトで読む
+# 最終行に改行が無くても読むため read 失敗時も $line が空でなければ処理する
+while read -r line || [ -n "$line" ]
 do
   if [ ! -z "$line" ]; then
     echo "Installing $line" | tee -a "$LOG_FILE"
-    if code --install-extension "$line"; then
+    # code が stdin を読むと残りの行を食うので /dev/null を渡す
+    if code --install-extension "$line" < /dev/null; then
       echo "  ✓ $line" >> "$LOG_FILE"
       INSTALLED_COUNT=$((INSTALLED_COUNT+1))
     else
@@ -50,7 +53,7 @@ do
       FAILED_COUNT=$((FAILED_COUNT+1))
     fi
   fi
-done
+done < "$SCRIPT_DIR/.vscode/extensions"
 
 # インストール結果のサマリーをログに追加
 echo "拡張機能のインストール完了: $(date)" >> "$LOG_FILE"
