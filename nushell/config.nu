@@ -45,10 +45,15 @@ if $env.DOTCLI_AVAILABLE {
     job spawn { ^dotcli sync --dot $env.DOT | ignore } | ignore
 }
 
-# --- Background starship/zoxide cache refresh (idempotent, no-op if fresh) ---
-job spawn {
-    ^nu ($env.DOT | path join 'nushell\generate-cache.nu') | ignore
-} | ignore
+# --- Background starship/zoxide cache refresh (stale のときだけ spawn) ---
+# 先頭行の key を inline で比較し、fresh なら nu 子プロセスを起動しない。
+# $nu.current-exe は scoop shim を経由しない実体の nu.exe
+use ($nu.default-config-dir | path join 'cache-key.nu') cache-stale
+if (cache-stale 'starship' ($nu.default-config-dir | path join 'cache/starship.nu')) or (cache-stale 'zoxide' ($nu.default-config-dir | path join 'cache/zoxide.nu')) {
+    job spawn {
+        ^$nu.current-exe -n ($nu.default-config-dir | path join 'generate-cache.nu') | ignore
+    } | ignore
+}
 
 # --- yazi (TUI needs direct terminal, can't pipe through dotcli) ---
 def --env y [...args: string] {

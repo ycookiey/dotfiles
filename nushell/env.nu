@@ -2,6 +2,9 @@
 
 $env.STARSHIP_CONFIG = 'C:\Main\Project\dotfiles\starship.toml'
 $env.STARSHIP_EXE = ($env.USERPROFILE | path join 'scoop\apps\starship\current\starship.exe')
+# cache/zoxide.nu が呼ぶ exe (PATH 上の scoop shim を経由しない)。解決規則は cache-key.nu の scoop-exe と同じ
+# TODO: 上の STARSHIP_EXE も $env.SCOOP に従わせる (現状 USERPROFILE\scoop 固定。カスタム scoop root だと cache の呼び先が無い)
+$env.ZOXIDE_EXE = ($env.SCOOP? | default ($env.USERPROFILE | path join 'scoop') | path join 'apps\zoxide\current\zoxide.exe')
 $env.YAZI_FILE_ONE = ($env.USERPROFILE | path join 'scoop\apps\git\current\usr\bin\file.exe')
 $env.DOT = 'C:\Main\Project\dotfiles'
 $env.EDITOR = 'nvim'
