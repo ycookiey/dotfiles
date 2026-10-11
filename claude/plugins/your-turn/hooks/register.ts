@@ -195,6 +195,7 @@ async function restore($: Engine): Promise<void> {
   if (dir === undefined) return
   const session = stem(await $.session.id())
   const log = await $.fs.read(`${dir}/${session}.verdicts.jsonl`).then(String, () => '')
+  const stop = await readStop($, `${dir}/${session}.stop.json`)
   const last = log.trim().split('\n').pop()
   if (turnId !== undefined) return // a turn began meanwhile; it draws its own
   let v: Verdict | undefined
@@ -202,6 +203,19 @@ async function restore($: Engine): Promise<void> {
     v = last ? (JSON.parse(last) as Verdict) : undefined
   } catch {
     v = undefined
+  }
+  // A turn ended after the last verdict (this plugin was not loaded then):
+  // the verdict is stale. Judge that turn from Stop's record alone, without
+  // the model: work left running means Claude waits for it.
+  if (stop !== undefined && (v === undefined || stop.at > v.at)) {
+    if (stop.tasks.length > 0 || stop.crons > 0) {
+      $.ui.status(undefined)
+      return
+    }
+    turnId = `stop-${stop.at}`
+    endedAt = stop.at
+    await show($, turnId, 'user')
+    return
   }
   const kind: Kind | undefined =
     v?.decision === 'user' ? 'user' : v?.decision === 'error' ? 'error' : v?.decision === 'refusal' ? 'refusal' : undefined
