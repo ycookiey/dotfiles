@@ -1,53 +1,90 @@
 local wezterm = require("wezterm")
 local config = wezterm.config_builder()
 
+-- wezterm.gui を持たない評価 (wezterm-mux-server 等) ではダーク扱い
 local function detect_is_dark()
-  return wezterm.gui.get_appearance():find("Dark") ~= nil
+  local appearance = wezterm.gui and wezterm.gui.get_appearance() or "Dark"
+  return appearance:find("Dark") ~= nil
 end
 
 local is_dark = detect_is_dark()
 
--- nvim連携: テーマをファイルに書き出す（config reload = OSテーマ変更時に更新）
-local home = os.getenv("USERPROFILE") or os.getenv("HOME") or ""
-local f = io.open(home .. "\\.wezterm_appearance", "w")
-if f then
-  f:write(is_dark and "dark" or "light")
-  f:close()
+-- テーマごとの配色。読み込み時に 1 回だけ作り、config 本体・override・タブの描画で共有する
+local function make_palette(p)
+  p.active_fg = p.fg
+  return p
+end
+local PALETTES = {
+  dark = make_palette({
+    scheme = "Tokyo Night",
+    grad = "#000000",
+    fg = "#ffffff",
+    tab_active_bg = "#6c7086",
+    tab_inactive_bg = "#45475a",
+    inactive_fg = "#959cb4",
+    dim_fg = "#6c7086",
+  }),
+  light = make_palette({
+    scheme = "Tokyo Night Day",
+    grad = "#e1e2e7",
+    fg = "#3760bf",
+    tab_active_bg = "#b6bfe2",
+    tab_inactive_bg = "#c4c8da",
+    inactive_fg = "#6172b0",
+    dim_fg = "#a1a6c5",
+  }),
+}
+local PALETTE_BY_SCHEME = {
+  [PALETTES.dark.scheme] = PALETTES.dark,
+  [PALETTES.light.scheme] = PALETTES.light,
+}
+
+local function palette(dark)
+  return dark and PALETTES.dark or PALETTES.light
 end
 
+local function gradient_of(p)
+  return { colors = { p.grad } }
+end
+
+local function colors_of(p)
+  return {
+    foreground = p.fg,
+    -- タブ同士の境界線を非表示
+    tab_bar = { inactive_tab_edge = "none" },
+  }
+end
+
+-- nvim連携: テーマをファイルに書き出す（config reload = OSテーマ変更時に更新）。
+-- 外観を読めない評価 (wezterm.gui が nil) では書かない (既定のダーク扱いで上書きしないため)
+local home = os.getenv("USERPROFILE") or os.getenv("HOME") or ""
+local written_appearance = nil
+local function write_appearance(dark)
+  if not wezterm.gui or written_appearance == dark then return end
+  local fp = io.open(home .. "\\.wezterm_appearance", "w")
+  if fp then
+    fp:write(dark and "dark" or "light")
+    fp:close()
+    written_appearance = dark
+  end
+end
+
+write_appearance(is_dark)
+
 -- 新規ウィンドウ/リロード時に最新のOSテーマを各ウィンドウへ適用
--- （is_dark はプロセス起動時の値で固定されるため、window_config_reloaded でoverride）
+-- （is_dark はプロセス起動時の値で固定されることがあったため、window-config-reloaded でoverride）。
+-- override を適用すると設定ファイルが評価し直されるので、実効設定 (override 込み) の scheme が
+-- 目標と違うときだけ適用する。override には配色の 3 項目を常にまとめて入れるので、scheme の比較で足りる
 wezterm.on("window-config-reloaded", function(window)
   local dark = detect_is_dark()
+  local p = palette(dark)
+  write_appearance(dark)
+  if window:effective_config().color_scheme == p.scheme then return end
   local overrides = window:get_config_overrides() or {}
-  local scheme = dark and "Tokyo Night" or "Tokyo Night Day"
-  local grad = dark and "#000000" or "#e1e2e7"
-  local fg = dark and "#ffffff" or "#3760bf"
-
-  local changed = false
-  if overrides.color_scheme ~= scheme then
-    overrides.color_scheme = scheme
-    changed = true
-  end
-  local cur_grad = overrides.window_background_gradient
-    and overrides.window_background_gradient.colors
-    and overrides.window_background_gradient.colors[1]
-  if cur_grad ~= grad then
-    overrides.window_background_gradient = { colors = { grad } }
-    changed = true
-  end
-  local cur_fg = overrides.colors and overrides.colors.foreground
-  if cur_fg ~= fg then
-    overrides.colors = { foreground = fg, tab_bar = { inactive_tab_edge = "none" } }
-    changed = true
-  end
-
-  if changed then
-    window:set_config_overrides(overrides)
-    -- appearanceファイルも同期
-    local fp = io.open(home .. "\\.wezterm_appearance", "w")
-    if fp then fp:write(dark and "dark" or "light"); fp:close() end
-  end
+  overrides.color_scheme = p.scheme
+  overrides.window_background_gradient = gradient_of(p)
+  overrides.colors = colors_of(p)
+  window:set_config_overrides(overrides)
 end)
 
 ----------------------------------------------------
@@ -68,7 +105,7 @@ config.font_size = 12.0
 ----------------------------------------------------
 -- カラー設定
 ----------------------------------------------------
-config.color_scheme = is_dark and 'Tokyo Night' or 'Tokyo Night Day'
+config.color_scheme = palette(is_dark).scheme
 
 ----------------------------------------------------
 -- カーソル設定
@@ -115,9 +152,7 @@ config.window_frame = {
 }
 
 -- タブバーを背景色に合わせる
-config.window_background_gradient = {
-  colors = { is_dark and "#000000" or "#e1e2e7" },
-}
+config.window_background_gradient = gradient_of(palette(is_dark))
 
 -- タブの追加ボタンを非表示
 config.show_new_tab_button_in_tab_bar = false
@@ -125,13 +160,7 @@ config.show_new_tab_button_in_tab_bar = false
 -- タブの閉じるボタンを非表示
 config.show_close_tab_button_in_tabs = false
 
-config.colors = {
-  foreground = is_dark and "#ffffff" or "#3760bf",
--- タブ同士の境界線を非表示
-  tab_bar = {
-    inactive_tab_edge = "none",
-  },
-}
+config.colors = colors_of(palette(is_dark))
 
 -- タブの形をカスタマイズ
 -- タブの左側の装飾
@@ -139,15 +168,15 @@ local SOLID_LEFT_ARROW = wezterm.nerdfonts.ple_left_half_circle_thick
 -- タブの右側の装飾
 local SOLID_RIGHT_ARROW = wezterm.nerdfonts.ple_right_half_circle_thick
 
+-- タブバーを計算し直すたびにタブごとに同期で呼ばれるため、外観の問い合わせ (レジストリの読み取り)
+-- はせず、窓の実効設定 (override 込み) の color_scheme から配色を引く
 wezterm.on("format-tab-title", function(tab, tabs, panes, config, hover, max_width)
-  local dark = detect_is_dark()
+  local p = PALETTE_BY_SCHEME[config.color_scheme] or palette(is_dark)
   local edge_background = "none"
-  local tab_bg = tab.is_active
-    and (dark and "#6c7086" or "#b6bfe2")
-    or  (dark and "#45475a" or "#c4c8da")
-  local active_fg = dark and "#ffffff" or "#3760bf"
-  local inactive_fg = dark and "#959cb4" or "#6172b0"
-  local dim_fg = dark and "#6c7086" or "#a1a6c5"
+  local tab_bg = tab.is_active and p.tab_active_bg or p.tab_inactive_bg
+  local active_fg = p.active_fg
+  local inactive_fg = p.inactive_fg
+  local dim_fg = p.dim_fg
 
   -- タブの丸括弧（左）
   local elements = {
@@ -158,15 +187,14 @@ wezterm.on("format-tab-title", function(tab, tabs, panes, config, hover, max_wid
 
   -- 各ペインのタイトルを表示
   local pane_count = #tab.panes
-  for i, p in ipairs(tab.panes) do
-    local pane_title = p.title
-    -- ペインごとの幅を制限
-    local pane_max = math.floor((max_width - pane_count + 1) / pane_count)
-    if pane_max < 10 then pane_max = 10 end
-    pane_title = wezterm.truncate_right(pane_title, pane_max)
+  -- ペインごとの幅を制限
+  local pane_max = math.floor((max_width - pane_count + 1) / pane_count)
+  if pane_max < 10 then pane_max = 10 end
+  for i, pane in ipairs(tab.panes) do
+    local pane_title = wezterm.truncate_right(pane.title, pane_max)
 
     local fg
-    if p.pane_id == tab.active_pane.pane_id then
+    if pane.pane_id == tab.active_pane.pane_id then
       fg = active_fg
     else
       fg = tab.is_active and inactive_fg or dim_fg
