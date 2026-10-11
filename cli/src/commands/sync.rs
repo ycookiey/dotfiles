@@ -620,12 +620,7 @@ fn sync_mcp_servers(dot: &Path, home: &Path, claude_dirs: &[PathBuf]) -> Result<
     }
     let resolved_value = Value::Object(resolved);
 
-    let json_paths = unique_files(
-        claude_dirs
-            .iter()
-            .map(|d| d.join(".claude.json"))
-            .filter(|p| p.exists()),
-    );
+    let json_paths = unique_files(mcp_target_files(home, claude_dirs));
     if json_paths.is_empty() {
         return Ok(false);
     }
@@ -652,6 +647,26 @@ fn sync_mcp_servers(dot: &Path, home: &Path, claude_dirs: &[PathBuf]) -> Result<
         }
     }
     Ok(changed)
+}
+
+/// The `.claude.json` files that receive the MCP servers: one per account dir
+/// (`~/.claude-<n>`, including one that is a link to `~/.claude`). `~/.claude` itself is
+/// not an account config dir: Claude Code only writes `~/.claude/.claude.json` when run
+/// with CLAUDE_CONFIG_DIR pointed at it by mistake, and the accounts mirror `~/.claude`,
+/// so syncing that stray file would keep it alive for the mirrors to pick up.
+//
+// TODO: the default account (no CLAUDE_CONFIG_DIR) keeps its config in `~/.claude.json`,
+// which is not synced. Whether to add it (its mcpServers would be replaced by the
+// template, dropping servers added there by hand) or to leave it out on purpose is
+// still open; until then it is left untouched.
+fn mcp_target_files(home: &Path, claude_dirs: &[PathBuf]) -> Vec<PathBuf> {
+    let primary = home.join(".claude");
+    claude_dirs
+        .iter()
+        .filter(|d| **d != primary)
+        .map(|d| d.join(".claude.json"))
+        .filter(|p| p.exists())
+        .collect()
 }
 
 // matches PowerShell regex /\{[A-Z_]+\}/
@@ -1087,5 +1102,43 @@ mod tests {
         assert_eq!(chat_keys(&home.join(".claude-1/keybindings.json")), ["a", "b", "c"]);
         let settings = std::fs::read_to_string(home.join(".claude/settings.json")).unwrap();
         assert!(settings.contains("\"k\": 1"));
+    }
+
+    fn mcp_server_names(path: &Path) -> Vec<String> {
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        v["mcpServers"].as_object().unwrap().keys().cloned().collect()
+    }
+
+    #[test]
+    fn mcp_servers_reach_account_dirs_but_not_primary_dir() {
+        let (tmp, dot, home) = temp_home("mcp");
+        // An absolute command path that exists, so the server is not filtered out.
+        let exe = tmp.0.join("server.exe");
+        std::fs::write(&exe, "").unwrap();
+        let exe = exe.to_string_lossy().replace('\\', "/");
+        std::fs::write(
+            dot.join("claude/mcp-servers.json"),
+            format!(r#"{{"tool":{{"command":"{exe}"}}}}"#),
+        )
+        .unwrap();
+        let stale = r#"{"mcpServers":{"old":{"command":"x"}},"keep":1}"#;
+        for f in [".claude/.claude.json", ".claude-1/.claude.json", ".claude.json"] {
+            std::fs::write(home.join(f), stale).unwrap();
+        }
+        let dirs = super::claude_dirs(&home);
+        assert!(super::sync_mcp_servers(&dot, &home, &dirs).unwrap());
+
+        let account = home.join(".claude-1/.claude.json");
+        assert_eq!(mcp_server_names(&account), ["tool"]);
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&account).unwrap()).unwrap();
+        assert_eq!(v["keep"], 1, "keys other than mcpServers are kept");
+        // ~/.claude is not an account dir; ~/.claude.json awaits the open decision.
+        for f in [".claude/.claude.json", ".claude.json"] {
+            assert_eq!(std::fs::read_to_string(home.join(f)).unwrap(), stale, "{f}");
+        }
+        // Nothing left to change on a second run.
+        assert!(!super::sync_mcp_servers(&dot, &home, &dirs).unwrap());
     }
 }
