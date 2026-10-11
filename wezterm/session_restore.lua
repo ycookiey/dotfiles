@@ -87,12 +87,6 @@ local function current_pid()
   return wezterm.procinfo.pid()
 end
 
--- 保存するのは GUI プロセスだけ (`wezterm cli` 等も同じ設定を読むため)
-local function should_save()
-  local info = wezterm.procinfo.get_info_for_pid(current_pid())
-  return proc_name(info):match("^wezterm%-gui") ~= nil
-end
-
 local function instance_id()
   if not wezterm.GLOBAL.session_restore_instance then
     wezterm.GLOBAL.session_restore_instance = string.format("%d-%d", os.time(), current_pid())
@@ -117,9 +111,14 @@ local function top_claude_pid(pane)
   -- 前面のプロセスは短命なもの (Claude のステータス行の表示で起動するコマンド等) のことがあり、
   -- pid で問い合わせ直すと既に終了していて nil になる (実測)。最初は受け取った情報をそのまま使う
   local pid, info, top = fg.pid, fg, nil
+  local gui_pid = current_pid()
   for _ = 1, 32 do
     local name = proc_name(info)
     if is_claude_name(name) then top = pid end
+    -- 親がこの GUI なら問い合わせずに止める。get_info_for_pid は渡した pid の配下の全プロセス木を
+    -- キャッシュせずに作るため、GUI の pid を渡すと全ペインのプロセスを読むことになる。
+    -- 名前の判定の後に置くので、GUI の直下で動く claude (`wezterm start -- claude`) も拾う
+    if info.ppid == gui_pid then break end
     if name:match("^wezterm") or not info.ppid or info.ppid == 0 or info.ppid == pid then break end
     pid = info.ppid
     info = wezterm.procinfo.get_info_for_pid(pid)
@@ -649,7 +648,9 @@ function M.setup(user_opts)
     maximize_if_pending(window)
     if loop_started then return end
     local ok, err = pcall(function()
-      if should_save() then
+      -- 保存するのは GUI プロセスだけ。このイベントは GUI の窓でしか発火しないが、wezterm.gui を
+      -- 持たない評価 (wezterm-mux-server 等) で保存を始めないよう、念のため確かめる
+      if wezterm.gui then
         loop_started = true
         start_saving()
       end
