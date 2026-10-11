@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "config/nvim/**"
+      - "nvim/**"
   workflow_dispatch:
 
 jobs:
@@ -19,7 +19,7 @@ jobs:
             echo "# Neovim Configuration (auto-generated)"
             echo "# $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo ""
-            find config/nvim -name "*.lua" | sort | while read -r f; do
+            find nvim -name "*.lua" | sort | while read -r f; do
               echo "================================================================"
               echo "-- FILE: $f"
               echo "================================================================"
