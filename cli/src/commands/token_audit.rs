@@ -209,30 +209,111 @@ fn collect_jsonl(dir: &Path, out: &mut Vec<JsonlFile>) {
     }
 }
 
-/// --last N: sort by mtime descending, take top N.
-/// Equal mtimes keep the input (path) order, so the pick is deterministic.
-fn find_latest_files(files: &[JsonlFile], n: usize) -> Vec<JsonlFile> {
-    let mut with_mtime: Vec<(SystemTime, &JsonlFile)> = files
-        .iter()
-        .filter_map(|f| f.mtime.map(|t| (t, f)))
+/// The session a log belongs to: (group key, whether it is the session's own
+/// top-level log).
+///
+/// A session `<uuid>` writes `<proj>/<uuid>.jsonl` and its subagents under
+/// `<proj>/<uuid>/subagents/**` (agent-*.jsonl, also in workflows/wf_*/), so
+/// a file under a `subagents` dir (looked for below `projects` only) belongs
+/// to the dir above it. Any other file is its own group, keyed by its stem.
+/// A subagent whose parent log is missing therefore still groups by the
+/// parent's uuid, and a loose `agent-*.jsonl` (no subagents dir) is a group
+/// of its own; neither is top-level.
+fn session_group(path: &Path) -> (String, bool) {
+    let mut subagents_parent: Option<&Path> = None;
+    for ancestor in path.ancestors().skip(1) {
+        match ancestor.file_name().and_then(|n| n.to_str()) {
+            Some("projects") | None => break,
+            Some("subagents") => subagents_parent = ancestor.parent(),
+            Some(_) => {}
+        }
+    }
+    if let Some(key) = subagents_parent
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+    {
+        return (key, false);
+    }
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let top_level = !stem.starts_with("agent-");
+    (stem, top_level)
+}
+
+/// The logs of one session (see session_group).
+#[derive(Debug, Clone)]
+struct SessionGroup {
+    key: String,
+    /// The top-level log first, then the subagents in input order: a
+    /// subagent such as acompact or aside_question repeats requests of its
+    /// parent, and the cross-file dedup keeps the first file's version.
+    files: Vec<JsonlFile>,
+}
+
+impl SessionGroup {
+    /// Latest known mtime of the group's files.
+    fn mtime(&self) -> Option<SystemTime> {
+        self.files.iter().filter_map(|f| f.mtime).max()
+    }
+}
+
+/// Group files by session, groups in order of their first file in the input.
+fn group_sessions(files: &[JsonlFile]) -> Vec<SessionGroup> {
+    let mut groups: Vec<SessionGroup> = Vec::new();
+    let mut index: HashMap<String, usize> = HashMap::new();
+    for f in files {
+        let (key, top_level) = session_group(&f.path);
+        let idx = *index.entry(key.clone()).or_insert_with(|| {
+            groups.push(SessionGroup { key, files: Vec::new() });
+            groups.len() - 1
+        });
+        let group = &mut groups[idx].files;
+        if top_level {
+            // Ahead of the subagents already listed (path order puts the
+            // `<uuid>/` dir before `<uuid>.jsonl`), behind other top-level logs.
+            let at = group.iter().take_while(|g| session_group(&g.path).1).count();
+            group.insert(at, f.clone());
+        } else {
+            group.push(f.clone());
+        }
+    }
+    groups
+}
+
+/// --last N: the N sessions with the latest mtime among their files
+/// (descending), each with all its files. Equal mtimes keep the input (path)
+/// order, so the pick is deterministic; a session none of whose times could
+/// be read is skipped.
+fn find_latest_files(files: &[JsonlFile], n: usize) -> Vec<SessionGroup> {
+    let mut with_mtime: Vec<(SystemTime, SessionGroup)> = group_sessions(files)
+        .into_iter()
+        .filter_map(|g| g.mtime().map(|t| (t, g)))
         .collect();
 
     with_mtime.sort_by(|a, b| b.0.cmp(&a.0)); // descending, stable
     with_mtime.truncate(n);
-    with_mtime.into_iter().map(|(_, f)| f.clone()).collect()
+    with_mtime.into_iter().map(|(_, g)| g).collect()
 }
 
-/// --session ID: filter files containing ID in filename.
-fn find_session_files(files: &[JsonlFile], id: &str) -> Vec<JsonlFile> {
-    files
-        .iter()
-        .filter(|f| {
-            f.path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map_or(false, |s| s.contains(id))
+/// --session ID: every session whose id contains ID, with its subagents.
+/// A session matched only through a file name (`--session agent-<id>`)
+/// keeps just the files whose name contains ID.
+fn find_session_files(files: &[JsonlFile], id: &str) -> Vec<SessionGroup> {
+    group_sessions(files)
+        .into_iter()
+        .filter_map(|mut g| {
+            if !g.key.contains(id) {
+                g.files.retain(|f| {
+                    f.path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .map_or(false, |s| s.contains(id))
+                });
+            }
+            (!g.files.is_empty()).then_some(g)
         })
-        .cloned()
         .collect()
 }
 
@@ -1032,53 +1113,81 @@ fn extract_frontmatter_description(content: &str) -> usize {
     0
 }
 
+/// Logs selected for a session report, parsed.
+struct Collected {
+    /// The selected files, session by session (see SessionGroup).
+    files: Vec<PathBuf>,
+    /// Number of sessions the files belong to (subagents count with their
+    /// parent).
+    session_count: usize,
+    parsed: ParsedLogs,
+}
+
 /// Resolve files + parse + compute deltas. Returns None when no files match.
-fn collect_requests(
-    mode: &str,
-    value: &str,
-    project: Option<&str>,
-) -> Option<(Vec<PathBuf>, ParsedLogs)> {
+fn collect_requests(mode: &str, value: &str, project: Option<&str>) -> Option<Collected> {
     let all_files = find_jsonl_files();
     let all_files = match project {
         Some(path) => filter_by_project(&all_files, path),
         None => all_files,
     };
-    let files: Vec<PathBuf> = match mode {
-        "all" => all_files,
+    let groups: Vec<SessionGroup> = match mode {
+        "all" => group_sessions(&all_files),
         "last" => {
             let n = value.parse().unwrap_or(10);
-            if n == 0 { all_files } else { find_latest_files(&all_files, n) }
+            if n == 0 { group_sessions(&all_files) } else { find_latest_files(&all_files, n) }
         }
         "session" => find_session_files(&all_files, value),
         _ => {
             eprintln!("Unknown session mode: {}", mode);
             std::process::exit(1);
         }
-    }
-    .into_iter()
-    .map(|f| f.path)
-    .collect();
+    };
+    let session_count = groups.len();
+    let files: Vec<PathBuf> = groups
+        .into_iter()
+        .flat_map(|g| g.files)
+        .map(|f| f.path)
+        .collect();
 
     if files.is_empty() {
         return None;
     }
 
     let parsed = parse_logs(&files);
-    Some((files, parsed))
+    Some(Collected { files, session_count, parsed })
+}
+
+/// Whether a file of `files` is a session's own top-level log (not a subagent).
+fn is_top_level(files: &[PathBuf], file_idx: usize) -> bool {
+    session_group(&files[file_idx]).1
+}
+
+/// Requests of the top-level logs only, for the growth curve and compactions:
+/// a subagent's context is its own, so mixing it in would read every switch
+/// between parent and subagent as a context drop. When no top-level log is
+/// selected (`--session agent-<id>`, an orphan subagent), all requests are
+/// taken, as the subagent's own curve.
+fn top_level_requests<'a>(files: &[PathBuf], requests: &'a [Request]) -> Vec<&'a Request> {
+    let top: Vec<bool> = (0..files.len()).map(|i| is_top_level(files, i)).collect();
+    if !top.contains(&true) {
+        return requests.iter().collect();
+    }
+    requests.iter().filter(|r| top[r.file_idx]).collect()
 }
 
 /// cmd_session: analyze session logs (full report).
 fn cmd_session(mode: &str, value: &str, project: Option<&str>) -> Value {
-    let (files, ParsedLogs { requests, sessions }) = match collect_requests(mode, value, project) {
-        Some(x) => x,
-        None => return json!({"error": "no sessions found"}),
-    };
+    let Collected { files, session_count, parsed: ParsedLogs { requests, sessions } } =
+        match collect_requests(mode, value, project) {
+            Some(x) => x,
+            None => return json!({"error": "no sessions found"}),
+        };
 
-    let session_count = files.len();
     let is_single_session = mode == "session";
 
     let (growth, compactions) = if is_single_session {
-        (context_growth(&requests), detect_compactions(&requests))
+        let top = top_level_requests(&files, &requests);
+        (context_growth(&top), detect_compactions(&top))
     } else {
         (json!([]), json!([]))
     };
@@ -1109,12 +1218,12 @@ fn cmd_session_section(
     value: &str,
     project: Option<&str>,
 ) -> Value {
-    let (files, ParsedLogs { requests, sessions }) = match collect_requests(mode, value, project) {
-        Some(x) => x,
-        None => return json!({"error": "no sessions found"}),
-    };
+    let Collected { files, session_count, parsed: ParsedLogs { requests, sessions } } =
+        match collect_requests(mode, value, project) {
+            Some(x) => x,
+            None => return json!({"error": "no sessions found"}),
+        };
 
-    let session_count = files.len();
     let is_single_session = mode == "session";
 
     let mut out = json!({
@@ -1153,8 +1262,9 @@ fn cmd_session_section(
         "growth" => {
             // growth/compactions only meaningful for a single session
             if is_single_session {
-                obj.insert("context_growth".into(), context_growth(&requests));
-                obj.insert("compactions".into(), detect_compactions(&requests));
+                let top = top_level_requests(&files, &requests);
+                obj.insert("context_growth".into(), context_growth(&top));
+                obj.insert("compactions".into(), detect_compactions(&top));
             } else {
                 obj.insert("context_growth".into(), json!([]));
                 obj.insert("compactions".into(), json!([]));
@@ -1462,7 +1572,7 @@ fn detect_dup_reads(requests: &[Request]) -> Value {
 }
 
 /// Context growth curve (first 5 + every 50).
-fn context_growth(requests: &[Request]) -> Value {
+fn context_growth(requests: &[&Request]) -> Value {
     let mut items = Vec::new();
 
     for (idx, r) in requests.iter().enumerate() {
@@ -1478,7 +1588,7 @@ fn context_growth(requests: &[Request]) -> Value {
 }
 
 /// Detect compactions (drop > 10000).
-fn detect_compactions(requests: &[Request]) -> Value {
+fn detect_compactions(requests: &[&Request]) -> Value {
     let mut items = Vec::new();
 
     for (i, window) in requests.windows(2).enumerate() {
@@ -1506,14 +1616,16 @@ fn detect_compactions(requests: &[Request]) -> Value {
 }
 
 /// Per-session stats: first_total_ctx and max_ctx, from the stats parse_logs
-/// took of each file (files without requests have none).
+/// took of each top-level log (files without requests have none). Subagent
+/// logs are left out: each starts its own context, which is not the
+/// session's startup cost.
 fn per_session_stats(files: &[PathBuf], sessions: &[SessionCtx]) -> (Value, Value) {
     let mut startup_costs = Vec::new();
     let mut per_session_max = Vec::new();
 
     for &SessionCtx { file_idx, first_total_ctx, max_ctx } in sessions {
         // Skip invalid data (negative or zero)
-        if first_total_ctx <= 0 {
+        if first_total_ctx <= 0 || !is_top_level(files, file_idx) {
             continue;
         }
 
@@ -1553,21 +1665,32 @@ fn per_session_stats(files: &[PathBuf], sessions: &[SessionCtx]) -> (Value, Valu
     (json!(startup_costs), json!(per_session_max))
 }
 
-/// cmd_compare: compare two sessions.
+/// The log `compare` reads for a session ID: the first matching session's
+/// top-level log, else the first matching file (a subagent named by its id).
+fn compare_file(all_files: &[JsonlFile], id: &str) -> Option<PathBuf> {
+    let groups = find_session_files(all_files, id);
+    let mut files = groups.iter().flat_map(|g| g.files.iter());
+    files
+        .clone()
+        .find(|f| session_group(&f.path).1)
+        .or_else(|| files.next())
+        .map(|f| f.path.clone())
+}
+
+/// cmd_compare: compare two sessions (their top-level logs; subagents are
+/// not included).
 fn cmd_compare(id1: &str, id2: &str) -> Value {
     let all_files = find_jsonl_files();
-    let files1 = find_session_files(&all_files, id1);
-    let files2 = find_session_files(&all_files, id2);
+    let file1 = compare_file(&all_files, id1);
+    let file2 = compare_file(&all_files, id2);
 
-    let file1 = files1.first().map(|f| &f.path);
-    let file2 = files2.first().map(|f| &f.path);
+    let (file1, file2) = match (file1, file2) {
+        (Some(a), Some(b)) => (a, b),
+        _ => return json!({"error": "one or both sessions not found"}),
+    };
 
-    if file1.is_none() || file2.is_none() {
-        return json!({"error": "one or both sessions not found"});
-    }
-
-    let reqs1 = parse_file(file1.unwrap(), 0).requests;
-    let reqs2 = parse_file(file2.unwrap(), 0).requests;
+    let reqs1 = parse_file(&file1, 0).requests;
+    let reqs2 = parse_file(&file2, 0).requests;
 
     let first_ctx1 = reqs1.first().map(|r| r.total_ctx()).unwrap_or(0);
     let first_ctx2 = reqs2.first().map(|r| r.total_ctx()).unwrap_or(0);
@@ -1869,9 +1992,191 @@ mod tests {
         let t = |s: u64| Some(UNIX_EPOCH + Duration::from_secs(s));
         let f = |p: &str, m| JsonlFile { path: PathBuf::from(p), mtime: m };
         let files = vec![f("a", t(5)), f("b", t(9)), f("c", t(5)), f("d", None), f("e", t(5))];
-        let got: Vec<PathBuf> = find_latest_files(&files, 3).into_iter().map(|f| f.path).collect();
+        let got: Vec<PathBuf> = find_latest_files(&files, 3)
+            .into_iter()
+            .flat_map(|g| g.files)
+            .map(|f| f.path)
+            .collect();
         assert_eq!(got, vec![PathBuf::from("b"), PathBuf::from("a"), PathBuf::from("c")]);
         assert_eq!(find_latest_files(&files, 10).len(), 4);
+    }
+
+    fn project_file(rest: &str, mtime: Option<SystemTime>) -> JsonlFile {
+        JsonlFile { path: PathBuf::from(format!("C:/h/.claude/projects/P/{rest}")), mtime }
+    }
+
+    fn rel_paths(groups: &[SessionGroup]) -> Vec<Vec<String>> {
+        groups
+            .iter()
+            .map(|g| {
+                g.files
+                    .iter()
+                    .map(|f| normalize_path(&f.path).replace("C:/h/.claude/projects/P/", ""))
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn session_group_puts_subagents_under_their_parent_uuid() {
+        let g = |p: &str| session_group(Path::new(p));
+        let base = "C:/h/.claude/projects/P";
+        assert_eq!(g(&format!("{base}/s1.jsonl")), ("s1".into(), true));
+        assert_eq!(g(&format!("{base}/s1/subagents/agent-x.jsonl")), ("s1".into(), false));
+        assert_eq!(
+            g(&format!("{base}/s1/subagents/workflows/wf_1/agent-y.jsonl")),
+            ("s1".into(), false)
+        );
+        // A loose subagent log (no subagents dir) is a group of its own.
+        assert_eq!(g(&format!("{base}/agent-z.jsonl")), ("agent-z".into(), false));
+        // A `subagents` dir above projects is not the session's.
+        assert_eq!(g("C:/subagents/.claude/projects/P/s2.jsonl"), ("s2".into(), true));
+    }
+
+    #[test]
+    fn groups_list_the_top_level_log_before_its_subagents() {
+        // Path order: the <uuid>/ dir sorts before <uuid>.jsonl.
+        let files = vec![
+            project_file("s1/subagents/agent-x.jsonl", None),
+            project_file("s1/subagents/workflows/wf_1/agent-y.jsonl", None),
+            project_file("s1.jsonl", None),
+            project_file("s2.jsonl", None),
+        ];
+        assert_eq!(
+            rel_paths(&group_sessions(&files)),
+            vec![
+                vec![
+                    "s1.jsonl",
+                    "s1/subagents/agent-x.jsonl",
+                    "s1/subagents/workflows/wf_1/agent-y.jsonl",
+                ],
+                vec!["s2.jsonl"],
+            ]
+        );
+    }
+
+    #[test]
+    fn last_n_picks_sessions_by_their_latest_file_and_keeps_orphans_apart() {
+        let t = |s: u64| Some(UNIX_EPOCH + Duration::from_secs(s));
+        let files = vec![
+            project_file("agent-loose.jsonl", t(4)),
+            // Orphan: s0's own log is gone, its subagents remain.
+            project_file("s0/subagents/agent-o.jsonl", t(6)),
+            project_file("s1/subagents/agent-x.jsonl", t(9)),
+            project_file("s1/subagents/agent-u.jsonl", None),
+            project_file("s1.jsonl", t(1)),
+            project_file("s2.jsonl", t(7)),
+            project_file("s3.jsonl", None),
+        ];
+        assert_eq!(
+            rel_paths(&find_latest_files(&files, 3)),
+            vec![
+                vec!["s1.jsonl", "s1/subagents/agent-x.jsonl", "s1/subagents/agent-u.jsonl"],
+                vec!["s2.jsonl"],
+                vec!["s0/subagents/agent-o.jsonl"],
+            ]
+        );
+        let all = find_latest_files(&files, 10);
+        let keys: Vec<&str> = all.iter().map(|g| g.key.as_str()).collect();
+        assert_eq!(keys, ["s1", "s2", "s0", "agent-loose"], "s3 has no readable mtime");
+    }
+
+    #[test]
+    fn session_id_takes_the_session_with_its_subagents() {
+        let files = vec![
+            project_file("s1/subagents/agent-x.jsonl", None),
+            project_file("s1/subagents/workflows/wf_1/agent-y.jsonl", None),
+            project_file("s1.jsonl", None),
+            project_file("s2.jsonl", None),
+            project_file("s4/subagents/agent-w.jsonl", None),
+        ];
+        assert_eq!(
+            rel_paths(&find_session_files(&files, "s1")),
+            vec![vec![
+                "s1.jsonl",
+                "s1/subagents/agent-x.jsonl",
+                "s1/subagents/workflows/wf_1/agent-y.jsonl",
+            ]]
+        );
+        // A subagent named by its own id: that file only.
+        assert_eq!(
+            rel_paths(&find_session_files(&files, "agent-y")),
+            vec![vec!["s1/subagents/workflows/wf_1/agent-y.jsonl"]]
+        );
+        // Orphan subagents still answer to their session id.
+        assert_eq!(
+            rel_paths(&find_session_files(&files, "s4")),
+            vec![vec!["s4/subagents/agent-w.jsonl"]]
+        );
+        assert!(find_session_files(&files, "s9").is_empty());
+
+        let pick = |id: &str| compare_file(&files, id).map(|p| normalize_path(&p));
+        assert_eq!(pick("s1").as_deref(), Some("C:/h/.claude/projects/P/s1.jsonl"));
+        assert_eq!(
+            pick("agent-x").as_deref(),
+            Some("C:/h/.claude/projects/P/s1/subagents/agent-x.jsonl")
+        );
+        assert_eq!(pick("s9"), None);
+    }
+
+    #[test]
+    fn startup_and_growth_come_from_top_level_logs_only() {
+        let root = scratch("subagent-stats");
+        let proj = root.join("projects").join("P");
+        let parent = proj.join("s1.jsonl");
+        let sub = proj.join("s1").join("subagents").join("agent-acompact-x.jsonl");
+        let orphan = proj.join("s0").join("subagents").join("agent-o.jsonl");
+        write_log(&parent, &[
+            log_line("p1", text_block(), (0, 1, 0, 20000)),
+            log_line("p2", text_block(), (0, 1, 20000, 5000)),
+        ]);
+        // The compaction subagent repeats p1, then runs with a small context.
+        write_log(&sub, &[
+            log_line("p1", text_block(), (0, 1, 0, 20000)),
+            log_line("a1", text_block(), (0, 1, 0, 3000)),
+        ]);
+        write_log(&orphan, &[log_line("o1", text_block(), (0, 1, 0, 700))]);
+
+        let listed = vec![
+            JsonlFile { path: orphan.clone(), mtime: None },
+            JsonlFile { path: sub.clone(), mtime: None },
+            JsonlFile { path: parent.clone(), mtime: None },
+        ];
+        let groups = group_sessions(&listed);
+        assert_eq!(groups.len(), 2, "the orphan is one session of its own");
+        let files: Vec<PathBuf> = groups.into_iter().flat_map(|g| g.files).map(|f| f.path).collect();
+        assert_eq!(files, vec![orphan.clone(), parent.clone(), sub.clone()]);
+
+        let parsed = parse_logs(&files);
+        // p1 is kept once, from the parent (listed before its subagent).
+        let ids: Vec<(&str, usize)> =
+            parsed.requests.iter().map(|r| (r.req_id.as_str(), r.file_idx)).collect();
+        assert_eq!(ids, [("o1", 0), ("p1", 1), ("p2", 1), ("a1", 2)]);
+
+        let (startup, max) = per_session_stats(&files, &parsed.sessions);
+        assert_eq!(startup, json!([{"session": "s1", "first_total_ctx": 20000}]));
+        assert_eq!(max, json!([{"session": "s1", "max_ctx": 25000}]));
+
+        let top = top_level_requests(&files, &parsed.requests);
+        let top_ids: Vec<&str> = top.iter().map(|r| r.req_id.as_str()).collect();
+        assert_eq!(top_ids, ["p1", "p2"]);
+        assert_eq!(detect_compactions(&top), json!([]));
+        let all: Vec<&Request> = parsed.requests.iter().collect();
+        assert_eq!(
+            detect_compactions(&all).as_array().unwrap().len(),
+            1,
+            "mixing the subagent in reads the p2 -> a1 switch as a compaction"
+        );
+
+        // Without a top-level log, the subagents' own requests are the curve.
+        let subs = vec![orphan.clone(), sub.clone()];
+        let parsed = parse_logs(&subs);
+        let ids: Vec<&str> = top_level_requests(&subs, &parsed.requests)
+            .iter()
+            .map(|r| r.req_id.as_str())
+            .collect();
+        assert_eq!(ids, ["o1", "p1", "a1"]);
+        let _ = fs::remove_dir_all(&root);
     }
 
     /// One assistant log line: `usage` is (input, output, cache_read, cache_create).
