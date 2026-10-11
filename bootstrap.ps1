@@ -109,6 +109,10 @@ if ($LASTEXITCODE -ne 0) {
 if (Get-Command mise -ea 0) {
     Write-Host "`nInstalling mise tools..." -ForegroundColor Cyan
     mise install --yes
+} else {
+    # TODO: mise is in no install manifest, so a new PC always lands here. Either add mise to scoop
+    # (and let sync record it) or drop mise.toml and install the runtimes through the manifests.
+    Write-Host "`nmise not found: skipping runtime install (mise.toml tools are not installed)" -ForegroundColor Yellow
 }
 
 # Phase 3.5: uv tools (CLI tools via uv -- non-fatal)
