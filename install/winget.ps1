@@ -43,7 +43,7 @@ if (!(gcm winget -ea 0)) {
 
     if (!(gcm winget -ea 0)) {
         wh "winget installation failed. Skipping." -Fo Yellow
-        return
+        exit 1
     }
     wh "winget installed." -Fo Green
 }
@@ -57,13 +57,28 @@ $overrides = @{
     'Microsoft.VisualStudio.BuildTools' = '--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet --wait'
 }
 
+# 失敗 (非 0) は集めて最後に一覧を出す。S キーのスキップ ($null) は失敗に数えない
+$failed = @()
 foreach ($app in $json.apps) {
     if ($wingetOutput -match ([regex]::Escape($app.Id) + '\s')) {
         continue
     }
     $argStr = "install --id $($app.Id) -e --accept-source-agreements --accept-package-agreements"
     if ($overrides[$app.Id]) { $argStr += " --override `"$($overrides[$app.Id])`"" }
-    Invoke-Skippable "Installing $($app.Id)" winget $argStr
+    $rc = Invoke-Skippable "Installing $($app.Id)" winget $argStr
+    if ($null -ne $rc -and $rc -ne 0) {
+        wh "  Failed: $($app.Id) (exit $rc)" -Fo Yellow
+        $failed += $app.Id
+    }
+}
+
+if ($failed.Count -gt 0) {
+    wh "`nFailed winget apps: $($failed -join ', ')" -Fo Yellow
+    wh "Retry:" -Fo Yellow
+    foreach ($id in $failed) { wh "  winget install --id $id -e" -Fo Yellow }
+    exit 1
 }
 
 wh "`nWinget setup complete." -Fo Green
+# 途中の native コマンド (winget list) の $LASTEXITCODE を呼び出し元に残さない
+exit 0

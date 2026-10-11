@@ -27,6 +27,10 @@ if (!$elevated) {
     # Scoop セットアップ（未インストール時は自動、既存マシンは --scoop で手動）
     if ($args -contains '--scoop' -or !(gcm scoop -ea 0)) {
         & "$ScriptDir\install\scoop.ps1"
+        # 失敗したアプリは scoop.ps1 が一覧を出し exit 1 で返す。後続 (管理者側の設定) は続ける
+        if ($LASTEXITCODE) {
+            "$(Get-Date) - Warning: scoop.ps1 exit $LASTEXITCODE (failed apps listed above; rerun install\scoop.ps1)" >> $LogFile
+        }
     }
 
     # Scoop 後: 新PCでbwがインストールされた場合
@@ -315,7 +319,15 @@ Invoke-Step 'Claude multi-account' {
 Invoke-Step 'Fonts' { & "$ScriptDir\install\fonts.ps1" } 'Fonts install checked'
 
 # Winget アプリ (wingetfile.json)
-Invoke-Step 'Winget apps' { & "$ScriptDir\install\winget.ps1" } 'Winget apps install checked'
+# winget.ps1 はアプリの失敗を exit 1 で返す。setup を失敗にすると bootstrap が Phase 2 で止まり
+# mise/uv/大きいアプリ/startup まで飛ばすので、警告をログに残すだけにする
+Invoke-Step 'Winget apps' {
+    & "$ScriptDir\install\winget.ps1"
+    if ($global:LASTEXITCODE) {
+        "$(Get-Date) - Warning: winget.ps1 exit $global:LASTEXITCODE (failed apps listed above; rerun install\winget.ps1)" >> $LogFile
+        $global:LASTEXITCODE = 0
+    }
+} 'Winget apps install checked'
 
 # Microsoft IME 無効化（Google IME のみ残す）
 Invoke-Step 'Disable Microsoft IME' { & "$ScriptDir\install\disable-msime.ps1" } 'Microsoft IME disabled'

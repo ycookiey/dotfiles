@@ -39,6 +39,8 @@ foreach ($b in $json.buckets) {
 scoop config update_nightly true
 
 # アプリインストール（大きいアプリを後回し）
+# 失敗 (非 0) は集めて最後に一覧を出す。S キーのスキップ ($null) は失敗に数えない
+$failed = @()
 $orderFile = "$ScriptDir\install-order.json"
 if (Test-Path $orderFile) {
     $order = gc $orderFile -Raw | ConvertFrom-Json
@@ -47,28 +49,32 @@ if (Test-Path $orderFile) {
     if ($SkipLarge) { $apps = $apps | ? { $_.Name -notin $large } }
     if ($OnlyLarge) { $apps = $apps | ? { $_.Name -in $large } }
     $installed = scoop list 2>$null | % { $_.Name }
-    $failed = @()
     foreach ($app in $apps) {
         if ($app.Name -notin $installed) {
             $scoopArgs = "-NoProfile -Command `"scoop install $($app.Name); if (`$LASTEXITCODE) { exit `$LASTEXITCODE }`""
-            if ($OnlyLarge) {
-                $result = Invoke-Skippable "Installing $($app.Name)" pwsh $scoopArgs
-                if ($null -ne $result -and $result -ne 0) {
-                    wh "  Failed: $($app.Name)" -Fo Yellow
-                    $failed += $app.Name
-                }
-            } else {
-                Invoke-Skippable "Installing $($app.Name)" pwsh $scoopArgs
+            $rc = Invoke-Skippable "Installing $($app.Name)" pwsh $scoopArgs
+            if ($null -ne $rc -and $rc -ne 0) {
+                wh "  Failed: $($app.Name) (exit $rc)" -Fo Yellow
+                $failed += $app.Name
             }
         }
     }
-    if ($failed.Count -gt 0) {
-        wh "`nFailed large apps: $($failed -join ', ')" -Fo Yellow
-        wh "Retry later: scoop install $($failed -join ' ')" -Fo Yellow
-    }
 } else {
     scoop import $ScoopFile
+    if ($LASTEXITCODE) { $failed += "scoop import $ScoopFile (exit $LASTEXITCODE)" }
+}
+
+if ($failed.Count -gt 0) {
+    wh "`nFailed scoop apps: $($failed -join ', ')" -Fo Yellow
+    if (Test-Path $orderFile) { wh "Retry: scoop install $($failed -join ' ')" -Fo Yellow }
+    # 大きいアプリ (OnlyLarge) の失敗は非致命。それ以外は呼び出し元 (bootstrap Phase 1) が止まれるよう exit 1
+    if (!$OnlyLarge) {
+        wh "Scoop setup finished with failures." -Fo Red
+        exit 1
+    }
 }
 
 wh "`nScoop setup complete." -Fo Green
 wh "Note: node, python, java, awscli は mise で管理 (~/.config/mise/config.toml)" -Fo Yellow
+# 途中の native コマンド (scoop list 等) の $LASTEXITCODE を呼び出し元に残さない
+exit 0
