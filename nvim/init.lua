@@ -80,8 +80,12 @@ vim.api.nvim_create_autocmd({ "BufWinEnter", "WinNew" }, {
 })
 
 -- Windows IME を英数に切り替え (jk 操作を維持するため)
-local has_zenhan = vim.fn.has("win32") == 1 and vim.fn.executable("zenhan") == 1
+-- zenhan は `scoop install zenhan` で入れる。有無は起動時ではなく初回呼び出し時に判定してキャッシュ
+local has_zenhan -- nil = 未判定
 local function ime_off()
+  if has_zenhan == nil then
+    has_zenhan = vim.fn.has("win32") == 1 and vim.fn.executable("zenhan") == 1
+  end
   if has_zenhan then
     vim.fn.jobstart({ "zenhan", "0" }, { detach = true })
   end
@@ -92,11 +96,18 @@ vim.api.nvim_create_autocmd("InsertLeave", {
   callback = ime_off,
 })
 
--- Ctrl+S で保存
+-- Ctrl+S で保存して normal に戻る
+local visual_modes = { v = true, V = true, ["\22"] = true, s = true, S = true, ["\19"] = true }
 vim.keymap.set({ "n", "i", "v" }, "<C-s>", function()
   vim.cmd("update")
-  vim.cmd("stopinsert")
-  ime_off()
+  local mode = vim.fn.mode():sub(1, 1)
+  if visual_modes[mode] then
+    vim.api.nvim_feedkeys(vim.keycode("<Esc>"), "n", false)
+  elseif mode == "i" or mode == "R" then
+    vim.cmd("stopinsert") -- IME オフは InsertLeave に任せる
+  else
+    ime_off()
+  end
 end, { desc = "Save file" })
 
 -- Markdownチェックボックスのトグル (Alt+L)
