@@ -61,14 +61,28 @@ if ($script:IsInteractive) {
     $global:_gitPromptInterval = [timespan]'0:10:0'  # git fetch / pull -r (dotfiles 自動更新)
     $global:_syncInterval = [timespan]'1.0:0:0'      # settings / scoop・winget export / MCP sync
 
-    # --- Proxy auto-detect (同期、PIDファイル + プロセス存在チェック) ---
-    $_pidFile = 'C:\Main\Project\en-hancer-proxy\.en-hancer-proxy.pid'
+    # --- Proxy auto-detect (同期、PID file + process 検証) ---
+    # pid file は `dotcli proxy on` が書く (cargo run の child PID)。消すのは proxy off / status だけなので、
+    # crash や OS 再起動の後は file が残り、無関係な process が同じ PID を再利用しうる。
+    # そこで ProcessName が cargo、かつ pid file の書込みより前に起動した process のときだけ env を設定する。
+    # proxy の起動方法が cargo run 以外に変わったら ProcessName の判定も更新すること。
+    # TCP 接続での確認は起動時間が増えるので行わない
+    $_pidFile = "$Proj\en-hancer-proxy\.en-hancer-proxy.pid"
     if ([IO.File]::Exists($_pidFile)) {
+        $_proxyProc = $null
         try {
-            [void][Diagnostics.Process]::GetProcessById([int][IO.File]::ReadAllText($_pidFile).Trim())
-            $env:HTTP_PROXY = $env:HTTPS_PROXY = $env:ALL_PROXY = 'http://127.0.0.1:18080'
-            $env:NO_PROXY = 'localhost,127.0.0.1'
-        } catch {}
+            $_proxyProc = [Diagnostics.Process]::GetProcessById([int][IO.File]::ReadAllText($_pidFile).Trim())
+            # spawn → pid file 書込みの順なので StartTime <= mtime。時刻の粒度のずれ用に 5 秒の余裕を持たせる。
+            # StartTime は権限不足で例外になりうるが、その場合も catch で未設定 (安全側) になる
+            if ($_proxyProc.ProcessName -eq 'cargo' -and
+                $_proxyProc.StartTime.ToUniversalTime() -le [IO.File]::GetLastWriteTimeUtc($_pidFile).AddSeconds(5)) {
+                $env:HTTP_PROXY = $env:HTTPS_PROXY = $env:ALL_PROXY = 'http://127.0.0.1:18080'
+                $env:NO_PROXY = 'localhost,127.0.0.1'
+            }
+        } catch {
+        } finally {
+            if ($_proxyProc) { $_proxyProc.Dispose() }
+        }
     }
 
     # ==========================================
