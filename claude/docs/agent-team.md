@@ -31,6 +31,7 @@ researcher → planner → implementer → reviewer（並列可）
 - 要件が明確で小規模: implementerから
 - 設計判断・要件整理が必要: plannerから
 - 前提知識・影響範囲の調査が必要: researcherから
+  - researcher・planner は Bash なし(Read/Grep/Glob/Web のみ)。ファイルの実読(バイナリのヘッダー等)・コマンド実行が要る調査は general-purpose・fork に頼むか自分で(頼むと「実行できず未確認」で返る)
 - テスト作成が必要な場合:
   - plannerあり（仕様明確）→ TDD: tester → implementer
   - plannerなし（小規模・バグ修正）→ 後追い: implementer → tester

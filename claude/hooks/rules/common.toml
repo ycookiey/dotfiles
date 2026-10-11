@@ -214,3 +214,15 @@ fields = ["tool_input.command"]
 all = ['''CLAUDE_CONFIG_DIR['"]?[[:space:]]*=[[:space:]]*['"]?[^'";[:space:]]*[/\\]\.claude[/\\]?(['";[:space:]]|$)''']
 action = "deny"
 message = '''CLAUDE_CONFIG_DIR を実体の ~/.claude に向けて claude CLI を動かすと、使われていない ~/.claude/.claude.json が作られ、~/.claude-* へのミラーの対象になりうる(~/.claude/docs/symlinks.md の「マルチアカウント」)。user settings を書く CLI(plugin install・marketplace add 等)は普段のアカウント(~/.claude-N)で動かし、後で ls -la ~/.claude-*/settings.json でリンクが残っているかを確かめる。'''
+
+# With a file name containing '\' (any Windows path), coreutils' *sum print
+# a leading '\' before the hash. A script comparing the hash as a string then
+# fails although the file is fine (a download check failed this way).
+[[rule]]
+id = "hashsum-backslash-reminder"
+event = "PreToolUse"
+tools = '^Bash$'
+fields = ["tool_input.command"]
+all = ['''(^|[;&|(`$[:space:]])(sha256sum|sha1sum|md5sum|sha512sum)[[:space:]]+[^<|[:space:]-]''']
+action = "context"
+message = '''sha256sum などは、ファイル名に \ を含む(Windows のパス)と出力の先頭に \ を付ける。ハッシュを文字列で比べると、中身が合っていても食い違う。比べるなら sha256sum < "$f" | cut -d' ' -f1 のように標準入力で渡す。表示するだけなら気にしなくてよい。'''

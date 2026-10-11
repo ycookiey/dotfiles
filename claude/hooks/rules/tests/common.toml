@@ -458,3 +458,33 @@ name = "config-dir-read"
 rule = "claude-config-dir-guard"
 expect = "quiet"
 command = 'echo "CFG=$CLAUDE_CONFIG_DIR"'
+
+[[case]]
+name = "hashsum-path-arg"
+rule = "hashsum-backslash-reminder"
+expect = "context"
+command = '''sha256sum "C:\Users\me\Downloads\x.iso"'''
+
+[[case]]
+name = "hashsum-in-subst"
+rule = "hashsum-backslash-reminder"
+expect = "context"
+command = '''got="$(sha256sum "$dest" | cut -d' ' -f1)"'''
+
+[[case]]
+name = "hashsum-stdin"
+rule = "hashsum-backslash-reminder"
+expect = "quiet"
+command = '''got="$(sha256sum <"$dest" | cut -d' ' -f1)"'''
+
+[[case]]
+name = "hashsum-pipe"
+rule = "hashsum-backslash-reminder"
+expect = "quiet"
+command = "curl -s https://example.com/x | sha256sum"
+
+[[case]]
+name = "hashsum-check-flag"
+rule = "hashsum-backslash-reminder"
+expect = "quiet"
+command = "sha256sum -c SHA256SUMS"

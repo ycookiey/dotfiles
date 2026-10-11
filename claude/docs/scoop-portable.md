@@ -14,6 +14,12 @@ URI ハンドラ (`scheme:`) や Squirrel が作るスタートメニューシ�
 - dotcli: `type = "exe"`, `path = '{USERPROFILE}\scoop\apps\<app>\current\<app>-portable.exe'`
 - PowerShell: `Start-Process "$env:USERPROFILE\scoop\apps\<app>\current\<app>-portable.exe"`
 
+## scoop の rustup: cargo の置き場所
+
+- `CARGO_HOME` = `%USERPROFILE%\scoop\persist\rustup\.cargo`(既定の `~/.cargo` ではない)
+- crate のソース: `$CARGO_HOME/registry/src/<index>/<crate>-<ver>/`、または `cargo metadata --format-version 1` の `packages[].manifest_path`
+- `~/.cargo` を探して無い → `find /` で探さない(ディスク全体の走査で時間切れ)
+
 ## historical artifact
 
 Discord 本体 / Squirrel が起動時に作る `Discord Inc\Discord.lnk` 等は cold start で再生成されない one-time artifact のことがある (cold start 60 秒検証済み)。残存していれば手動削除で恒久対処。
