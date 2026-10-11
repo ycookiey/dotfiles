@@ -74,7 +74,7 @@ printf 'protocol=https\nhost=credtest.invalid\nusername=test-user\n\n' | git cre
   - 自分の編集が、写しと index で違う行(他人の変更)に触れると拒否(exit 1、index は不変)。新規 file は対象外(`git add`)
   - 改行は index の版に合わせる(autocrlf の CRLF 作業ツリー + LF の blob も可)
 - 後: `git diff --cached` で確認 → commit。test: `bash bin/tests/git-stage-own-edit.test.sh`
-- 編集前に begin し忘れないよう、hook `stage-own-edit-reminder.sh` が Edit/Write の直前に知らせる(追跡済み・HEAD との差分あり・begin 前のときだけ、session ごと file ごとに 1 回)
+- 編集前に begin し忘れないよう、hook(yhooky の組み込みの判定 `stage-own-edit-reminder`)が Edit/Write の直前に知らせる(追跡済み・HEAD との差分あり・begin 前のときだけ、session ごと file ごとに 1 回)
 
 ## ignore の対象の下にある追跡済み file は `git add <path>` が拒否される
 

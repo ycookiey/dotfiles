@@ -82,7 +82,7 @@ meta-update の提案そのものへのユーザーの訂正(置き場所・方�
 
 仕組みの案は「hook を足す」「スクリプトを作る」で止めず、何を作るかまで書く(ユーザーが中身で判断できるように):
 
-- hook: 種類(PreToolUse・PostToolUse・UserPromptSubmit 等)、対象(matcher と `if` の条件、または本体で見る条件)、動き(止める / 文脈に差し込むだけ / 入力を書き換える)、差し込む・返す文の要点、ファイル名と登録先(テンプレートの `settings.json` 等)、常時のコスト(毎回動くか条件のときだけか)
+- hook: 種類(PreToolUse・PostToolUse・Stop 等)、対象(ツールと、入力のどの項目をどう照合するか)、動き(止める / 文脈に差し込むだけ)、差し込む・返す文の要点、書き先、常時のコスト(git やファイルを見るなら毎回の費用)。書き先は yhooky の規則のファイル(全環境: `~/.claude/hooks/rules/common.toml`、project 固有: `<project>/.claude/hooks/rules/*.toml`)。正規表現で書けない判定だけ yhooky の組み込みの判定にする(Rust の変更と release が要る)。詳細 `~/.claude/docs/hooks.md`
 - スクリプト・CI・test: 名前、いつ・誰が動かすか、何を確かめて何を返すか
 
 ### Step 1 のスコープ判定が確定していない場合の選択肢ルール

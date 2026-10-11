@@ -10,6 +10,7 @@ CLAUDE.md「参照ドキュメント」節の主要 docs と異なり起動前�
 - Claude Code Task 機能 → task.md
 - Claude Code 内部挙動の調べ方(agent 定義の frontmatter の項目名・効かない項目、statusline の実入力採取、auto-compact 閾値の式、バイナリからの実装抽出、transcript での実測、公式 docs の仕様は WebFetch 要約でなく .md 原文で確認、settings 変更の反映確認) → claude-code-internals.md
 - Commit 分割戦略(fixup / 新規 commit の要素別判定) → commit-strategy.md
+- Claude Code の hook を足す・直す(yhooky の規則のファイル・test・組み込みの判定、Git Bash 経由の起動で親のないプロセスが一時停止のまま残る罠) → hooks.md
 - Claude in Chrome の操作が効かない(送信無反応・blur 不発は hidden タブ、古い ref、非 ASCII 入力)、hidden タブで遅延読み込み・タイマーが止まる、長い結果の回収(返り値の上限、get_page_text の空白)、LLM Web UI の反復実行(model 確認・上限・長文添付・結果回収・複数リストや件数崩れ・clipboard 衝突)、複数タブの並列実行(Vivaldi タイル表示、フォーカス、別ウィンドウ不可)、窓が見えず screenshot が timeout(headless Chromium を CDP で直接操作して撮る。終了は Browser.close でないと子プロセスが残る) → claude-in-chrome-hidden-tab.md
 - YouTube 動画の内容把握(文字起こし取得) → youtube-transcript.md
 - drizzle(SQLite / D1 の migration のテーブル作り直しで列欠落・子行消失、D1 の batch に `db.run` を入れられない、generate の meta JSON が Prettier 未整形) → drizzle.md

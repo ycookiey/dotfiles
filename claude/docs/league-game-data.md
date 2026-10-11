@@ -38,7 +38,7 @@
   - `MinionPath_Top|Mid|Bot`: `Segments` は transform の原点からの相対 (x, z)。出撃地点 (`Barracks`) の `LinkedPath` がこの placeable の key
   - `Barracks.BarracksConfig` は `map11.bin` の entry の hash。`InitialSpawnTimeSecs` 30 / `WaveSpawnIntervalSecs` 30 / `MinionSpawnIntervalSecs` 0.8、`units` の並び = 出撃順 (MinionType 4 近接・6 大砲・5 遠距離・7 スーパー)
 - character bin (`raw.communitydragon.org/<ver>/game/data/characters/<name>/<name>.bin.json`) は CharacterRecord を複数持ち、record ごとに値が違う。SR の値は key `Characters/<Name>/CharacterRecords/Root` の record。`grep -o … | head -1` で先頭を拾わない
-  - 実例 (16.20 HP): sru_red Root 2300 / 別 record 5000、sru_blue Root 2300 / 3750、sru_razorbeak Root 1200 / 1600、sru_krug Root 1400 / 1650。hook `cdragon-root-record-reminder.sh` が該当 URL の直前に差し込む
+  - 実例 (16.20 HP): sru_red Root 2300 / 別 record 5000、sru_blue Root 2300 / 3750、sru_razorbeak Root 1200 / 1600、sru_krug Root 1400 / 1650。hook(yhooky の規則 `cdragon-root-record-reminder`)が該当 URL の直前に差し込む
 - 視界半径: character bin の Root record の `perceptionBubbleRadius`。既定値のときは項目が無い (Neeko・タワー) → wiki の Sight ページ (チャンピオン・タワー 1350、ミニオン 1200) で補う
 - 移動速度: `baseMoveSpeedModifiable.baseValue` (ミニオン 350)
 - camp の初回出現時刻はゲームデータ (bin) からは取れない (`NeutralCamp` にあるのはミニマップのタイマー表示設定だけ)。wiki の各 monster ページの patch history で確認する (V26.01: 0:55、Gromp・Krugs 1:07)

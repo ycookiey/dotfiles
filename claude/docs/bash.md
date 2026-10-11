@@ -41,7 +41,7 @@ grep -qiF -- "$pat" "$f"; case $? in 0) 一致 ;; 1) 不一致 ;; *) エラー�
 - Git Bash は `/` 始まりの引数を POSIX→Windows パスへ自動変換 → `iscc /DName=val` 等の Windows 形式オプションが壊れる(例: ISCC「You may not specify more than one script filename」)
 - 回避: `MSYS2_ARG_CONV_EXCL="/D" cmd ...`(複数prefixは `;` 区切り、全除外は `*`)
 - 全除外時は引数内のパスを自前で Windows 形式に(`cygpath -w`)
-- 例: `cmd.exe /c <command>` の `/c` が `C:/` に変わり、cmd が対話の画面で起動して入力を待ち止まる → `cmd.exe //c ...`。hook `cmd-switch-guard.sh` が `/c` の形を止める
+- 例: `cmd.exe /c <command>` の `/c` が `C:/` に変わり、cmd が対話の画面で起動して入力を待ち止まる → `cmd.exe //c ...`。hook(yhooky の規則 `cmd-switch-guard`)が `/c` の形を止める
 
 ## Claude Code の Bash ツールで `\\` が縮む・長い heredoc が壊れる
 
@@ -57,7 +57,7 @@ grep -qiF -- "$pat" "$f"; case $? in 0) 一致 ;; 1) 不一致 ;; *) エラー�
 
 - 現象: Git Bash の run_in_background で `pnpm dev` 等を起動 → TaskStop 後も node(vite)と、Cloudflare Vite plugin なら `workerd.exe` が残り port を掴み続ける。`--strictPort` の再起動が失敗、無指定なら別 port にずれる
 - 原因: npm の global の shim(`AppData/Roaming/npm/pnpm`、sh スクリプト)を Git Bash が MSYS の fork/exec で起動する所で Windows の親子のつながりが切れる(根元の `sh.exe` の ParentProcessId の process がもうない)。TaskStop は木をたどって止めるので、切れた先に届かない。bash が `node` を直接起動した場合はつながり、全部止まる(実測)
-- 対処: PowerShell の tool の run_in_background で起動(`Set-Location C:/path/app; pnpm dev --port <port> --strictPort *> <log>`)。claude.exe までつながり、TaskStop で workerd まで止まって port も空く(実測)。hook `devserver-launch-guard.sh` が、Bash の run_in_background での dev server の起動を止める
+- 対処: PowerShell の tool の run_in_background で起動(`Set-Location C:/path/app; pnpm dev --port <port> --strictPort *> <log>`)。claude.exe までつながり、TaskStop で workerd まで止まって port も空く(実測)。hook(yhooky の規則 `devserver-launch-guard`)が、Bash の run_in_background での dev server の起動を止める
 - 残ったものの片付け: `Get-NetTCPConnection -LocalPort <port> -State Listen` の OwningProcess の CommandLine を `Get-CimInstance Win32_Process -Filter "ProcessId=<pid>"` で確認し、自分が起動したものだけ止める。つながりが切れた木は、切れた所の根元(親のない `sh.exe`)を `taskkill /PID <pid> /T /F` で止めると workerd まで止まる
 - 他の session の dev server が同じ PC で動いていることがある。CommandLine の path と port で自分のものか確かめてから止める
 
@@ -90,7 +90,7 @@ grep -qiF -- "$pat" "$f"; case $? in 0) 一致 ;; 1) 不一致 ;; *) エラー�
 - text mode の書込は改行を CRLF に変える: `Path.write_text` / `open(p, "w")` は `\n` を `\r\n` で書く。LF のファイルを置換すると全行 CRLF になる(git の警告「CRLF will be replaced by LF」で気づく)。`read_bytes().decode()` → `write_bytes(s.encode())`、または `open(p, "w", newline="")` を使う。確認は `git ls-files --eol <path>` の `w/lf`
 - `print` も stdout に `\r\n` を書く(Windows の `jq -r` の出力も同じ): bash の `while read a b` で読むと最後の変数の末尾に `\r` が残る(ファイル名なら ffmpeg が「出力の形式を選べない」で失敗)。読む側で `tr -d '\r' <file | while read …`、出す側で `sys.stdout.reconfigure(newline="\n")`
 
-- `python -I` は user site(`pip install --user`、Windows では `AppData/Roaming/Python`)も無効にするので、そこに入れた numpy 等が `ModuleNotFoundError` になる。スクリプトのフォルダや cwd を `sys.path` に入れない目的なら `python -E -P`(3.11+)で足り、user site は残る(実測 3.14)。hook `python-isolated-reminder.sh` が `python -I` の直前に差し込む
+- `python -I` は user site(`pip install --user`、Windows では `AppData/Roaming/Python`)も無効にするので、そこに入れた numpy 等が `ModuleNotFoundError` になる。スクリプトのフォルダや cwd を `sys.path` に入れない目的なら `python -E -P`(3.11+)で足り、user site は残る(実測 3.14)。hook(yhooky の規則 `python-isolated-reminder`)が `python -I` の直前に差し込む
 
 ## ファイルを変数で渡すコマンドは `"$f"` と引用する
 
