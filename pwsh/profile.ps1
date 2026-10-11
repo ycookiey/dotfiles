@@ -72,6 +72,10 @@ if ($script:IsInteractive) {
     if (gcm mise -ea 0) { (mise activate pwsh) -join "`n" | iex }
 
     # --- zoxide (手書き最小版、dot-source不要) ---
+    # bare の zoxide は scoop\shims\zoxide.exe (shim → exe の 2 process) になるので、実体を起動時に 1 回だけ解決する。
+    # scoop 以外の install では PATH 上の zoxide に fallback
+    $_zoxideApp = "$HOME\scoop\apps\zoxide\current\zoxide.exe"
+    $global:_zoxideExe = [IO.File]::Exists($_zoxideApp) ? $_zoxideApp : 'zoxide'
     function global:__zoxide_pwd { $l = gl; if ($l.Provider.Name -eq 'FileSystem') { $l.ProviderPath } }
     function global:__zoxide_cd($dir, $literal) {
         if ($literal) { cd -LiteralPath $dir -PassThru -ea Stop }
@@ -84,12 +88,12 @@ if ($script:IsInteractive) {
         elseif ($args.Length -eq 1 -and (tp -PathType Container -Path $args[0])) { __zoxide_cd $args[0] $false }
         else {
             $r = __zoxide_pwd
-            $result = if ($null -ne $r) { zoxide query --exclude $r "--" @args } else { zoxide query "--" @args }
+            $result = if ($null -ne $r) { & $global:_zoxideExe query --exclude $r "--" @args } else { & $global:_zoxideExe query "--" @args }
             if ($LASTEXITCODE -eq 0) { __zoxide_cd $result $true }
         }
     }
     function global:__zoxide_zi {
-        $result = zoxide query -i "--" @args
+        $result = & $global:_zoxideExe query -i "--" @args
         if ($LASTEXITCODE -eq 0) { __zoxide_cd $result $true }
     }
     $alias:z = '__zoxide_z'
@@ -98,7 +102,7 @@ if ($script:IsInteractive) {
     function global:__zoxide_hook {
         $result = __zoxide_pwd
         if ($result -ne $global:__zoxide_oldpwd) {
-            if ($null -ne $result) { zoxide add "--" $result }
+            if ($null -ne $result) { & $global:_zoxideExe add "--" $result }
             $global:__zoxide_oldpwd = $result
         }
     }
@@ -106,11 +110,44 @@ if ($script:IsInteractive) {
     # --- starship (cached) ---
     $cacheDir = "$HOME\.cache\pwsh"
     if (![IO.Directory]::Exists($cacheDir)) { mkd $cacheDir }
-    $starshipExe = "$HOME\scoop\apps\starship\current\starship.exe"
+    $starshipCur = "$HOME\scoop\apps\starship\current"
+    $starshipExe = "$starshipCur\starship.exe"
     $starshipCache = $global:_starshipCache = "$cacheDir\starship-init.ps1"
-    if (![IO.File]::Exists($starshipCache) -or
-        [IO.File]::GetLastWriteTime($starshipExe) -gt [IO.File]::GetLastWriteTime($starshipCache)) {
-        & $starshipExe init powershell --print-full-init > $starshipCache
+    if ([IO.File]::Exists($starshipExe)) {
+        # 1 行目の key で無効化を判定する。scoop は exe の mtime を archive のまま保持するので、
+        # exe と cache の mtime 比較では古い build 日付の版への更新を検知できない。
+        # key = current junction の解決先 (version dir) | exe の mtime | profile.ps1 の mtime (引数・後処理の変更用)
+        # profile.ps1 は symlink 経由だと link 自身の mtime になるので、解決済みの $Dot 側を見る
+        $_target = [IO.Directory]::ResolveLinkTarget($starshipCur, $false)?.FullName ?? $starshipCur
+        $_key = "# key: $_target|$([IO.File]::GetLastWriteTimeUtc($starshipExe).Ticks)|$([IO.File]::GetLastWriteTimeUtc("$Dot\pwsh\profile.ps1").Ticks)"
+        $_line1 = $null
+        if ([IO.File]::Exists($starshipCache)) {
+            try {
+                $_sr = [IO.StreamReader]::new($starshipCache)
+                try { $_line1 = $_sr.ReadLine() } finally { $_sr.Dispose() }
+            } catch {}
+        }
+        if ($_line1 -ne $_key) {
+            $_init = & $starshipExe init powershell --print-full-init
+            if ($LASTEXITCODE -eq 0 -and $_init) {
+                # starship は shim (scoop\shims\starship.exe) の path を埋め込み、prompt ごとに shim → exe の 2 process になる。
+                # 実体を直接呼ぶよう置換する (出力形式が変わり当たらなくても shim 経由で動作は続く)
+                $_lit = "'" + $starshipExe.Replace("'", "''") + "'"
+                $_init = $_init -replace "Executable '[^']*starship\.exe'", "Executable $($_lit.Replace('$', '$$'))"
+                # 並行起動した別 pwsh が書きかけを dot-source しないよう、一時 file から置き換える
+                $_tmp = "$starshipCache.$PID.tmp"
+                try {
+                    [IO.File]::WriteAllLines($_tmp, [string[]](@($_key) + $_init))
+                    [IO.File]::Move($_tmp, $starshipCache, $true)
+                } catch {
+                    # 置き換えに失敗しても既存 cache で起動を続け、次回起動で再試行する
+                    try { [IO.File]::Delete($_tmp) } catch {}
+                }
+            }
+        }
+    } elseif ([IO.File]::Exists($starshipCache)) {
+        # starship が無いのに古い cache を読むと prompt ごとに exe 不在のエラーになるので消す (簡易プロンプトに fallback)
+        try { [IO.File]::Delete($starshipCache) } catch {}
     }
 
     # --- Dotfiles background jobs (dotcli git-prompt → sync, build --check) ---
