@@ -558,6 +558,7 @@ dependencies = [
  "gix",
  "ignore",
  "image",
+ "memchr",
  "rayon",
  "rmcp",
  "rusqlite",

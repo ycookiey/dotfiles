@@ -1,15 +1,20 @@
 //! Token consumption audit. Replaces bin/token-audit (bash + jq).
 //! Direct std::fs usage (no process spawn) for performance on Windows.
 
+use memchr::memmem;
+use rayon::prelude::*;
+use serde::de::{Deserialize, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::fs;
 use std::io::{BufRead, BufReader};
+use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 /// Assistant message extracted from JSONL line. Equivalent to bash JQ_DEDUP.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct Request {
     req_id: String,
     tools: Vec<ToolUse>,
@@ -18,18 +23,23 @@ struct Request {
     cache_read: i64,
     cache_create: i64,
     /// total_ctx growth from the previous request of the same file
-    /// (populated by parse_requests).
+    /// (populated by parse_file).
     delta_cc: i64,
     /// Index of the file the requestId was first seen in.
     file_idx: usize,
 }
 
-#[derive(Debug, Clone)]
+/// One tool_use block, keeping only the input fields the reports read
+/// (the rest of .input, e.g. Write content, is never copied).
+#[derive(Debug, Clone, PartialEq)]
 struct ToolUse {
     /// tool_use block id; None when the log omits it (never deduplicated).
     id: Option<String>,
     name: String,
-    input: Value, // .input field (for file_path extraction)
+    /// .input.file_path (Read paths, large-op labels).
+    file_path: StrField,
+    /// .input.query when it is a string (ToolSearch).
+    query: Option<String>,
 }
 
 impl Request {
@@ -296,17 +306,49 @@ fn filter_by_project(files: &[JsonlFile], project_path: &str) -> Vec<JsonlFile> 
 // JSONL parsing
 // ============================================================================
 
+/// Requests of a set of session logs, with each file's context stats.
+struct ParsedLogs {
+    /// One Request per requestId (see parse_logs).
+    requests: Vec<Request>,
+    /// Stats of each file that has requests, in file order.
+    sessions: Vec<SessionCtx>,
+}
+
+/// total_ctx stats of one file's own requests: after its lines are merged
+/// and before the cross-file dedup, as if the file were parsed alone.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct SessionCtx {
+    file_idx: usize,
+    first_total_ctx: i64,
+    max_ctx: i64,
+}
+
+/// One file's requests (delta_cc set) and its stats (None without requests).
+struct ParsedFile {
+    requests: Vec<Request>,
+    ctx: Option<SessionCtx>,
+}
+
 /// Parse JSONL files into one Request per requestId, with delta_cc set.
 /// Each file is parsed on its own (see parse_file) and its deltas are taken
 /// over that file's own request sequence. A requestId already seen in an
 /// earlier file (a forked or resumed session repeats its history) is skipped:
 /// the first file's version and position win.
-fn parse_requests(files: &[PathBuf]) -> Vec<Request> {
-    let mut requests: Vec<Request> = Vec::new();
-    let mut seen: HashSet<String> = HashSet::new();
+fn parse_logs(files: &[PathBuf]) -> ParsedLogs {
+    // Files are parsed in parallel; collect keeps file order, so the merge
+    // below sees them in the same order as a sequential parse.
+    let parsed: Vec<ParsedFile> = files
+        .par_iter()
+        .enumerate()
+        .map(|(file_idx, file_path)| parse_file(file_path, file_idx))
+        .collect();
 
-    for (file_idx, file_path) in files.iter().enumerate() {
-        for req in parse_file(file_path, file_idx) {
+    let mut requests: Vec<Request> = Vec::new();
+    let mut sessions: Vec<SessionCtx> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for file in parsed {
+        sessions.extend(file.ctx);
+        for req in file.requests {
             if !seen.contains(&req.req_id) {
                 seen.insert(req.req_id.clone());
                 requests.push(req);
@@ -314,95 +356,453 @@ fn parse_requests(files: &[PathBuf]) -> Vec<Request> {
         }
     }
 
-    requests
+    ParsedLogs { requests, sessions }
 }
+
+/// Every assistant line carries this key; lines without it are not parsed.
+const REQUEST_ID_KEY: &[u8] = b"\"requestId\"";
 
 /// Parse one session log. Lines sharing a requestId are merged into one
 /// Request at the position of its first line (see Request::merge_line), then
 /// delta_cc is computed over the file's requests in that order.
-fn parse_file(file_path: &Path, file_idx: usize) -> Vec<Request> {
+fn parse_file(file_path: &Path, file_idx: usize) -> ParsedFile {
     let mut requests: Vec<Request> = Vec::new();
     let mut id_index: HashMap<String, usize> = HashMap::new();
 
-    let f = match fs::File::open(file_path) {
-        Ok(f) => f,
-        Err(_) => return requests,
-    };
-    for line in BufReader::new(f).lines().flatten() {
-        let val = match serde_json::from_str::<Value>(&line) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        if !is_assistant_message(&val) {
-            continue;
-        }
-        let mut req = match extract_request(&val) {
-            Some(r) => r,
-            None => continue,
-        };
-        req.file_idx = file_idx;
-        match id_index.get(&req.req_id) {
-            Some(&idx) => requests[idx].merge_line(req),
-            None => {
-                id_index.insert(req.req_id.clone(), requests.len());
-                requests.push(req);
+    if let Ok(f) = fs::File::open(file_path) {
+        let mut reader = BufReader::with_capacity(1 << 16, f);
+        let mut line: Vec<u8> = Vec::new();
+        let mut buffers = simd_json::Buffers::default();
+        let has_request_id = memmem::Finder::new(REQUEST_ID_KEY);
+        loop {
+            line.clear();
+            match reader.read_until(b'\n', &mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+            // A Request needs a string requestId, so a line without the key
+            // (user turns, tool results, metadata) is skipped unparsed. The
+            // logs are written by JSON.stringify, which never escapes the
+            // ASCII letters of a key.
+            if has_request_id.find(&line).is_none() {
+                continue;
+            }
+            let mut req = match parse_line(&mut line, &mut buffers) {
+                Some(r) => r,
+                None => continue,
+            };
+            req.file_idx = file_idx;
+            match id_index.get(&req.req_id) {
+                Some(&idx) => requests[idx].merge_line(req),
+                None => {
+                    id_index.insert(req.req_id.clone(), requests.len());
+                    requests.push(req);
+                }
             }
         }
     }
 
     compute_deltas(&mut requests);
-    requests
+    let ctx = requests.first().map(|first| SessionCtx {
+        file_idx,
+        first_total_ctx: first.total_ctx(),
+        max_ctx: requests.iter().map(Request::total_ctx).max().unwrap_or(0),
+    });
+    ParsedFile { requests, ctx }
 }
 
-fn is_assistant_message(v: &Value) -> bool {
-    let has_type = v.get("type").and_then(|x| x.as_str()) == Some("assistant");
-    let has_message_role = v["message"]["role"].as_str() == Some("assistant");
-    let has_usage = v["message"]["usage"].is_object();
-    let has_req_id = v.get("requestId").and_then(|x| x.as_str()).is_some();
+/// Request of one log line, or None when the line is not valid JSON or not
+/// an assistant message: `type` or `message.role` is "assistant",
+/// `message.usage` is an object and `requestId` is a string. The buffer is
+/// rewritten by the parser.
+fn parse_line(line: &mut [u8], buffers: &mut simd_json::Buffers) -> Option<Request> {
+    let line: Obj<LogLine> = simd_json::serde::from_slice_with_buffers(line, buffers).ok()?;
+    let line = line.0?;
+    let message = line.message.0?;
+    let is_assistant = line.typ.as_str() == Some("assistant")
+        || message.role.as_str() == Some("assistant");
+    let usage = message.usage.0?;
+    let req_id = line.request_id.into_string()?;
+    if !is_assistant {
+        return None;
+    }
 
-    (has_type || has_message_role) && has_usage && has_req_id
-}
-
-fn extract_request(v: &Value) -> Option<Request> {
-    let req_id = v.get("requestId")?.as_str()?.to_string();
-    let message = &v["message"];
-
-    let tools = extract_tools(&message["content"]);
-
-    let usage = &message["usage"];
-    let input = usage["input_tokens"].as_i64().unwrap_or(0);
-    let output = usage["output_tokens"].as_i64().unwrap_or(0);
-    let cache_read = usage["cache_read_input_tokens"].as_i64().unwrap_or(0);
-    let cache_create = usage["cache_creation_input_tokens"].as_i64().unwrap_or(0);
+    let tools = message
+        .content
+        .0
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|item| {
+            let item = item.0?;
+            if item.typ.as_str() != Some("tool_use") {
+                return None;
+            }
+            let name = item.name.into_string()?;
+            let input = item.input.0.unwrap_or_default();
+            Some(ToolUse {
+                id: item.id.into_string(),
+                name,
+                file_path: input.file_path,
+                query: input.query.into_string(),
+            })
+        })
+        .collect();
 
     Some(Request {
         req_id,
         tools,
-        input,
-        output,
-        cache_read,
-        cache_create,
+        input: usage.input_tokens.0.unwrap_or(0),
+        output: usage.output_tokens.0.unwrap_or(0),
+        cache_read: usage.cache_read_input_tokens.0.unwrap_or(0),
+        cache_create: usage.cache_creation_input_tokens.0.unwrap_or(0),
         delta_cc: 0, // populated later by compute_deltas()
         file_idx: 0, // populated later by parse_file()
     })
 }
 
-fn extract_tools(content: &Value) -> Vec<ToolUse> {
-    let mut tools = Vec::new();
-    if let Some(arr) = content.as_array() {
-        for item in arr {
-            if item["type"].as_str() == Some("tool_use") {
-                if let Some(name) = item["name"].as_str() {
-                    tools.push(ToolUse {
-                        id: item["id"].as_str().map(str::to_string),
-                        name: name.to_string(),
-                        input: item.get("input").cloned().unwrap_or(Value::Null),
-                    });
+// ----------------------------------------------------------------------------
+// Typed log line
+//
+// Only the fields the reports use are read; everything else is skipped
+// without being copied. A field of an unexpected JSON type never fails the
+// line: it reads as absent, the way serde_json::Value's accessors
+// (`v["x"].as_str()`, `.as_i64()`, `.as_array()`, `.is_object()`) see it,
+// so the result matches a parse into Value. A repeated key keeps its last
+// value, as Value does. #[serde(untagged)] is avoided: it would buffer whole
+// subtrees (Write content and the like) to try each variant.
+// ----------------------------------------------------------------------------
+
+/// A JSON value read leniently: the kinds the type accepts are converted,
+/// any other kind becomes `other()`.
+trait Loose: Sized {
+    fn other() -> Self;
+    fn from_str(_: &str) -> Self {
+        Self::other()
+    }
+    fn from_i64(_: i64) -> Self {
+        Self::other()
+    }
+    fn from_u64(_: u64) -> Self {
+        Self::other()
+    }
+    fn from_seq<'de, A: SeqAccess<'de>>(mut seq: A) -> Result<Self, A::Error> {
+        while seq.next_element::<IgnoredAny>()?.is_some() {}
+        Ok(Self::other())
+    }
+    fn from_map<'de, A: MapAccess<'de>>(mut map: A) -> Result<Self, A::Error> {
+        while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+        Ok(Self::other())
+    }
+}
+
+struct LooseVisitor<T>(PhantomData<T>);
+
+impl<'de, T: Loose> Visitor<'de> for LooseVisitor<T> {
+    type Value = T;
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("any JSON value")
+    }
+    fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<T, E> {
+        Ok(T::other())
+    }
+    fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<T, E> {
+        Ok(T::from_i64(v))
+    }
+    fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<T, E> {
+        Ok(T::from_u64(v))
+    }
+    fn visit_f64<E: serde::de::Error>(self, _: f64) -> Result<T, E> {
+        Ok(T::other())
+    }
+    fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<T, E> {
+        Ok(T::from_str(v))
+    }
+    fn visit_unit<E: serde::de::Error>(self) -> Result<T, E> {
+        Ok(T::other())
+    }
+    fn visit_none<E: serde::de::Error>(self) -> Result<T, E> {
+        Ok(T::other())
+    }
+    fn visit_some<D: Deserializer<'de>>(self, d: D) -> Result<T, D::Error> {
+        d.deserialize_any(self)
+    }
+    fn visit_seq<A: SeqAccess<'de>>(self, seq: A) -> Result<T, A::Error> {
+        T::from_seq(seq)
+    }
+    fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<T, A::Error> {
+        T::from_map(map)
+    }
+}
+
+fn deserialize_loose<'de, D: Deserializer<'de>, T: Loose>(d: D) -> Result<T, D::Error> {
+    d.deserialize_any(LooseVisitor(PhantomData))
+}
+
+/// A string field as Value sees it. NotStr is kept apart from Missing
+/// because the large-op labels print a present non-string value as "".
+#[derive(Debug, Clone, Default, PartialEq)]
+enum StrField {
+    #[default]
+    Missing,
+    Str(String),
+    NotStr,
+}
+
+impl StrField {
+    /// `v["x"].as_str()`
+    fn as_str(&self) -> Option<&str> {
+        match self {
+            StrField::Str(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    fn into_string(self) -> Option<String> {
+        match self {
+            StrField::Str(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// `v.get("x").map(|x| x.as_str().unwrap_or(""))`
+    fn as_label(&self) -> Option<&str> {
+        match self {
+            StrField::Missing => None,
+            StrField::Str(s) => Some(s),
+            StrField::NotStr => Some(""),
+        }
+    }
+}
+
+impl Loose for StrField {
+    fn other() -> Self {
+        StrField::NotStr
+    }
+    fn from_str(v: &str) -> Self {
+        StrField::Str(v.to_owned())
+    }
+}
+
+impl<'de> Deserialize<'de> for StrField {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        deserialize_loose(d)
+    }
+}
+
+/// An integer field: `v["x"].as_i64()` (None for floats, strings and
+/// integers beyond i64).
+#[derive(Debug, Default)]
+struct IntField(Option<i64>);
+
+impl Loose for IntField {
+    fn other() -> Self {
+        IntField(None)
+    }
+    fn from_i64(v: i64) -> Self {
+        IntField(Some(v))
+    }
+    fn from_u64(v: u64) -> Self {
+        IntField(i64::try_from(v).ok())
+    }
+}
+
+impl<'de> Deserialize<'de> for IntField {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        deserialize_loose(d)
+    }
+}
+
+/// The fields an object type reads; `KEYS[i]` is passed to `read` as `i`.
+trait Fields: Default {
+    const KEYS: &'static [&'static str];
+    fn read<'de, A: MapAccess<'de>>(&mut self, key: usize, map: &mut A) -> Result<(), A::Error>;
+}
+
+/// An object read into T, or None when the value is not an object.
+#[derive(Debug)]
+struct Obj<T>(Option<T>);
+
+impl<T> Default for Obj<T> {
+    fn default() -> Self {
+        Obj(None)
+    }
+}
+
+impl<T: Fields> Loose for Obj<T> {
+    fn other() -> Self {
+        Obj(None)
+    }
+    fn from_map<'de, A: MapAccess<'de>>(mut map: A) -> Result<Self, A::Error> {
+        let mut out = T::default();
+        while let Some(key) = map.next_key_seed(KeyIndex(T::KEYS))? {
+            match key {
+                Some(i) => out.read(i, &mut map)?,
+                None => {
+                    map.next_value::<IgnoredAny>()?;
                 }
             }
         }
+        Ok(Obj(Some(out)))
     }
-    tools
+}
+
+impl<'de, T: Fields> Deserialize<'de> for Obj<T> {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        deserialize_loose(d)
+    }
+}
+
+/// An array of T, or None when the value is not an array.
+#[derive(Debug)]
+struct Arr<T>(Option<Vec<T>>);
+
+impl<T> Default for Arr<T> {
+    fn default() -> Self {
+        Arr(None)
+    }
+}
+
+impl<T: for<'de> Deserialize<'de>> Loose for Arr<T> {
+    fn other() -> Self {
+        Arr(None)
+    }
+    fn from_seq<'de, A: SeqAccess<'de>>(mut seq: A) -> Result<Self, A::Error> {
+        let mut out = Vec::new();
+        while let Some(item) = seq.next_element::<T>()? {
+            out.push(item);
+        }
+        Ok(Arr(Some(out)))
+    }
+}
+
+impl<'de, T: for<'a> Deserialize<'a>> Deserialize<'de> for Arr<T> {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        deserialize_loose(d)
+    }
+}
+
+/// Map key seed: the key's index in a field list, None for other keys.
+struct KeyIndex(&'static [&'static str]);
+
+impl<'de> serde::de::DeserializeSeed<'de> for KeyIndex {
+    type Value = Option<usize>;
+    fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<Option<usize>, D::Error> {
+        d.deserialize_str(self)
+    }
+}
+
+impl<'de> Visitor<'de> for KeyIndex {
+    type Value = Option<usize>;
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("an object key")
+    }
+    fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Option<usize>, E> {
+        Ok(self.0.iter().position(|k| *k == v))
+    }
+}
+
+#[derive(Debug, Default)]
+struct LogLine {
+    typ: StrField,
+    request_id: StrField,
+    message: Obj<LogMessage>,
+}
+
+impl Fields for LogLine {
+    const KEYS: &'static [&'static str] = &["type", "requestId", "message"];
+    fn read<'de, A: MapAccess<'de>>(&mut self, key: usize, map: &mut A) -> Result<(), A::Error> {
+        match key {
+            0 => self.typ = map.next_value()?,
+            1 => self.request_id = map.next_value()?,
+            _ => self.message = map.next_value()?,
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Default)]
+struct LogMessage {
+    role: StrField,
+    usage: Obj<Usage>,
+    content: Arr<Obj<ContentItem>>,
+}
+
+impl Fields for LogMessage {
+    const KEYS: &'static [&'static str] = &["role", "usage", "content"];
+    fn read<'de, A: MapAccess<'de>>(&mut self, key: usize, map: &mut A) -> Result<(), A::Error> {
+        match key {
+            0 => self.role = map.next_value()?,
+            1 => self.usage = map.next_value()?,
+            _ => self.content = map.next_value()?,
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Default)]
+struct Usage {
+    input_tokens: IntField,
+    output_tokens: IntField,
+    cache_read_input_tokens: IntField,
+    cache_creation_input_tokens: IntField,
+}
+
+impl Fields for Usage {
+    const KEYS: &'static [&'static str] = &[
+        "input_tokens",
+        "output_tokens",
+        "cache_read_input_tokens",
+        "cache_creation_input_tokens",
+    ];
+    fn read<'de, A: MapAccess<'de>>(&mut self, key: usize, map: &mut A) -> Result<(), A::Error> {
+        let v = map.next_value()?;
+        match key {
+            0 => self.input_tokens = v,
+            1 => self.output_tokens = v,
+            2 => self.cache_read_input_tokens = v,
+            _ => self.cache_creation_input_tokens = v,
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Default)]
+struct ContentItem {
+    typ: StrField,
+    id: StrField,
+    name: StrField,
+    input: Obj<ToolInput>,
+}
+
+impl Fields for ContentItem {
+    const KEYS: &'static [&'static str] = &["type", "id", "name", "input"];
+    fn read<'de, A: MapAccess<'de>>(&mut self, key: usize, map: &mut A) -> Result<(), A::Error> {
+        match key {
+            0 => self.typ = map.next_value()?,
+            1 => self.id = map.next_value()?,
+            2 => self.name = map.next_value()?,
+            _ => self.input = map.next_value()?,
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Default)]
+struct ToolInput {
+    file_path: StrField,
+    query: StrField,
+}
+
+impl Fields for ToolInput {
+    const KEYS: &'static [&'static str] = &["file_path", "query"];
+    fn read<'de, A: MapAccess<'de>>(&mut self, key: usize, map: &mut A) -> Result<(), A::Error> {
+        match key {
+            0 => self.file_path = map.next_value()?,
+            _ => self.query = map.next_value()?,
+        }
+        Ok(())
+    }
 }
 
 /// Compute delta_cc: total_ctx growth from previous request.
@@ -598,7 +998,7 @@ fn collect_requests(
     mode: &str,
     value: &str,
     project: Option<&str>,
-) -> Option<(Vec<PathBuf>, Vec<Request>)> {
+) -> Option<(Vec<PathBuf>, ParsedLogs)> {
     let all_files = find_jsonl_files();
     let all_files = match project {
         Some(path) => filter_by_project(&all_files, path),
@@ -624,13 +1024,13 @@ fn collect_requests(
         return None;
     }
 
-    let requests = parse_requests(&files);
-    Some((files, requests))
+    let parsed = parse_logs(&files);
+    Some((files, parsed))
 }
 
 /// cmd_session: analyze session logs (full report).
 fn cmd_session(mode: &str, value: &str, project: Option<&str>) -> Value {
-    let (files, requests) = match collect_requests(mode, value, project) {
+    let (files, ParsedLogs { requests, sessions }) = match collect_requests(mode, value, project) {
         Some(x) => x,
         None => return json!({"error": "no sessions found"}),
     };
@@ -644,7 +1044,7 @@ fn cmd_session(mode: &str, value: &str, project: Option<&str>) -> Value {
         (json!([]), json!([]))
     };
 
-    let (startup_costs, per_session_max) = per_session_stats(&files);
+    let (startup_costs, per_session_max) = per_session_stats(&files, &sessions);
 
     json!({
         "sessions_analyzed": session_count,
@@ -670,7 +1070,7 @@ fn cmd_session_section(
     value: &str,
     project: Option<&str>,
 ) -> Value {
-    let (files, requests) = match collect_requests(mode, value, project) {
+    let (files, ParsedLogs { requests, sessions }) = match collect_requests(mode, value, project) {
         Some(x) => x,
         None => return json!({"error": "no sessions found"}),
     };
@@ -707,7 +1107,7 @@ fn cmd_session_section(
             );
         }
         "startup" => {
-            let (sc, ms) = per_session_stats(&files);
+            let (sc, ms) = per_session_stats(&files, &sessions);
             obj.insert("startup_costs".into(), sc);
             obj.insert("per_session_max_ctx".into(), ms);
         }
@@ -819,12 +1219,7 @@ fn aggregate_toolsearch(requests: &[Request]) -> Value {
 
         for t in &r.tools {
             if t.name == "ToolSearch" {
-                let query = t
-                    .input
-                    .get("query")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("?")
-                    .to_string();
+                let query = t.query.as_deref().unwrap_or("?").to_string();
                 let entry = by_query.entry(query).or_default();
                 entry.0 += cc_per_search;
                 entry.1 += 1;
@@ -866,7 +1261,7 @@ fn aggregate_top_reads(requests: &[Request]) -> Value {
 
         for tool in &r.tools {
             if tool.name == "Read" {
-                if let Some(fp) = tool.input.get("file_path").and_then(|x| x.as_str()) {
+                if let Some(fp) = tool.file_path.as_str() {
                     let entry = by_file.entry(fp.to_string()).or_default();
                     entry.0 += 1;
                     entry.1 += cc_per_read as i64;
@@ -904,8 +1299,7 @@ fn detect_large_responses(requests: &[Request]) -> Value {
         if r.output > 10000 {
             let tool_key = r.tool_key();
             let file = r.tools.first().and_then(|t| {
-                t.input.get("file_path").and_then(|x| {
-                    let s = x.as_str().unwrap_or("");
+                t.file_path.as_label().and_then(|s| {
                     let trimmed = if s.len() > 100 { &s[..100] } else { s };
                     Some(trimmed.to_string())
                 })
@@ -945,8 +1339,7 @@ fn detect_large_ops(requests: &[Request]) -> Value {
     for r in requests.iter().filter(|r| r.delta_cc > 5000) {
         let tool_key = r.tool_key();
         let file = r.tools.first().and_then(|t| {
-            t.input.get("file_path").and_then(|x| {
-                let s = x.as_str().unwrap_or("");
+            t.file_path.as_label().and_then(|s| {
                 let trimmed = if s.len() > 100 { &s[..100] } else { s };
                 Some(trimmed.to_string())
             })
@@ -983,7 +1376,7 @@ fn detect_dup_reads(requests: &[Request]) -> Value {
 
         for tool in &r.tools {
             if tool.name == "Read" {
-                if let Some(fp) = tool.input.get("file_path").and_then(|x| x.as_str()) {
+                if let Some(fp) = tool.file_path.as_str() {
                     let entry = by_file.entry(fp.to_string()).or_default();
                     entry.0 += 1;
                     entry.1 += cc_per_read as i64;
@@ -1057,26 +1450,19 @@ fn detect_compactions(requests: &[Request]) -> Value {
     json!(items)
 }
 
-/// Per-session stats: first_total_ctx and max_ctx.
-fn per_session_stats(files: &[PathBuf]) -> (Value, Value) {
+/// Per-session stats: first_total_ctx and max_ctx, from the stats parse_logs
+/// took of each file (files without requests have none).
+fn per_session_stats(files: &[PathBuf], sessions: &[SessionCtx]) -> (Value, Value) {
     let mut startup_costs = Vec::new();
     let mut per_session_max = Vec::new();
 
-    for file in files {
-        let requests = parse_requests(&[file.clone()]);
-        if requests.is_empty() {
-            continue;
-        }
-
-        let first_total_ctx = requests[0].total_ctx();
-        let max_ctx = requests.iter().map(|r| r.total_ctx()).max().unwrap_or(0);
-
+    for &SessionCtx { file_idx, first_total_ctx, max_ctx } in sessions {
         // Skip invalid data (negative or zero)
         if first_total_ctx <= 0 {
             continue;
         }
 
-        let session_id = file
+        let session_id = files[file_idx]
             .file_name()
             .and_then(|n| n.to_str())
             .and_then(|s| s.strip_suffix(".jsonl"))
@@ -1125,8 +1511,8 @@ fn cmd_compare(id1: &str, id2: &str) -> Value {
         return json!({"error": "one or both sessions not found"});
     }
 
-    let reqs1 = parse_requests(&[file1.unwrap().clone()]);
-    let reqs2 = parse_requests(&[file2.unwrap().clone()]);
+    let reqs1 = parse_file(file1.unwrap(), 0).requests;
+    let reqs2 = parse_file(file2.unwrap(), 0).requests;
 
     let first_ctx1 = reqs1.first().map(|r| r.total_ctx()).unwrap_or(0);
     let first_ctx2 = reqs2.first().map(|r| r.total_ctx()).unwrap_or(0);
@@ -1406,7 +1792,7 @@ mod tests {
             log_line("r1", tool_block("t2", "Read", json!({"file_path": "B"})), u),
         ]);
 
-        let reqs = parse_requests(&[log]);
+        let reqs = parse_logs(&[log]).requests;
         assert_eq!(reqs.len(), 1);
         let names: Vec<&str> = reqs[0].tools.iter().map(|t| t.name.as_str()).collect();
         assert_eq!(names, vec!["Read", "Read"]);
@@ -1437,7 +1823,7 @@ mod tests {
             log_line("r1", json!([{"type": "tool_use", "name": "Grep", "input": {}}]), (11, 21, 31, 41)),
         ]);
 
-        let reqs = parse_requests(&[log]);
+        let reqs = parse_logs(&[log]).requests;
         assert_eq!(reqs.len(), 1);
         let ids: Vec<Option<&str>> = reqs[0].tools.iter().map(|t| t.id.as_deref()).collect();
         assert_eq!(ids, vec![Some("t1"), Some("t2"), None]);
@@ -1469,7 +1855,7 @@ mod tests {
             log_line("r4", text_block(), r4),
         ]);
 
-        let reqs = parse_requests(&[f1, f2]);
+        let reqs = parse_logs(&[f1, f2]).requests;
         let ids: Vec<&str> = reqs.iter().map(|r| r.req_id.as_str()).collect();
         assert_eq!(ids, vec!["r1", "r2", "r3", "r4"]);
         assert!(reqs[..3].iter().all(|r| r.file_idx == 0), "first file must win");
@@ -1494,7 +1880,7 @@ mod tests {
             log_line("r1", tool_block("t2", "ToolSearch", json!({"query": "q2"})), u),
         ]);
 
-        let reqs = parse_requests(&[log]);
+        let reqs = parse_logs(&[log]).requests;
         assert_eq!(reqs[0].delta_cc, 1000);
         let out = aggregate_toolsearch(&reqs);
         let items = out.as_array().unwrap();
@@ -1505,5 +1891,280 @@ mod tests {
             assert_eq!(it["count"], 1, "query {}", q);
         }
         let _ = fs::remove_dir_all(&root);
+    }
+
+    // ------------------------------------------------------------------
+    // Reference parser: the serde_json::Value reading the typed parser
+    // replaced. parse_line must give the same Request for every line.
+    // ------------------------------------------------------------------
+
+    fn value_str_field(v: Option<&Value>) -> StrField {
+        match v {
+            None => StrField::Missing,
+            Some(Value::String(s)) => StrField::Str(s.clone()),
+            Some(_) => StrField::NotStr,
+        }
+    }
+
+    fn value_parse_line(line: &str) -> Option<Request> {
+        let v: Value = serde_json::from_str(line).ok()?;
+        let has_type = v.get("type").and_then(|x| x.as_str()) == Some("assistant");
+        let has_role = v["message"]["role"].as_str() == Some("assistant");
+        let has_usage = v["message"]["usage"].is_object();
+        let req_id = v.get("requestId").and_then(|x| x.as_str())?.to_string();
+        if !((has_type || has_role) && has_usage) {
+            return None;
+        }
+        let mut tools = Vec::new();
+        if let Some(arr) = v["message"]["content"].as_array() {
+            for item in arr {
+                if item["type"].as_str() != Some("tool_use") {
+                    continue;
+                }
+                if let Some(name) = item["name"].as_str() {
+                    let input = item.get("input").cloned().unwrap_or(Value::Null);
+                    tools.push(ToolUse {
+                        id: item["id"].as_str().map(str::to_string),
+                        name: name.to_string(),
+                        file_path: value_str_field(input.get("file_path")),
+                        query: input.get("query").and_then(|x| x.as_str()).map(str::to_string),
+                    });
+                }
+            }
+        }
+        let usage = &v["message"]["usage"];
+        Some(Request {
+            req_id,
+            tools,
+            input: usage["input_tokens"].as_i64().unwrap_or(0),
+            output: usage["output_tokens"].as_i64().unwrap_or(0),
+            cache_read: usage["cache_read_input_tokens"].as_i64().unwrap_or(0),
+            cache_create: usage["cache_creation_input_tokens"].as_i64().unwrap_or(0),
+            delta_cc: 0,
+            file_idx: 0,
+        })
+    }
+
+    /// The former parse_file: every line through Value, no prefilter.
+    fn value_parse_file(path: &Path, file_idx: usize) -> Vec<Request> {
+        let mut requests: Vec<Request> = Vec::new();
+        let mut id_index: HashMap<String, usize> = HashMap::new();
+        let f = fs::File::open(path).unwrap();
+        for line in BufReader::new(f).lines().flatten() {
+            let Some(mut req) = value_parse_line(&line) else { continue };
+            req.file_idx = file_idx;
+            match id_index.get(&req.req_id) {
+                Some(&idx) => requests[idx].merge_line(req),
+                None => {
+                    id_index.insert(req.req_id.clone(), requests.len());
+                    requests.push(req);
+                }
+            }
+        }
+        compute_deltas(&mut requests);
+        requests
+    }
+
+    fn typed_parse_line(line: &str) -> Option<Request> {
+        let mut buf = line.as_bytes().to_vec();
+        parse_line(&mut buf, &mut simd_json::Buffers::default())
+    }
+
+    #[test]
+    fn typed_line_parse_matches_value_parse() {
+        let lines = [
+            // plain assistant line with a Read and a ToolSearch
+            r#"{"type":"assistant","requestId":"r","message":{"role":"assistant","content":[{"type":"text","text":"x"},{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"C:\\a\\b.rs","limit":5}},{"type":"tool_use","id":"t2","name":"ToolSearch","input":{"query":"select:Read"}}],"usage":{"input_tokens":1,"output_tokens":2,"cache_read_input_tokens":3,"cache_creation_input_tokens":4}}}"#,
+            // usage fields: missing, float, string, null, negative, beyond i64
+            r#"{"type":"assistant","requestId":"r","message":{"usage":{"input_tokens":1.0,"output_tokens":"5","cache_read_input_tokens":null}}}"#,
+            r#"{"type":"assistant","requestId":"r","message":{"usage":{"input_tokens":-7,"output_tokens":18446744073709551615,"cache_read_input_tokens":9223372036854775807,"cache_creation_input_tokens":1e3}}}"#,
+            r#"{"type":"assistant","requestId":"r","message":{"usage":{}}}"#,
+            // usage not an object, or missing: not a request
+            r#"{"type":"assistant","requestId":"r","message":{"usage":[1,2]}}"#,
+            r#"{"type":"assistant","requestId":"r","message":{"usage":null}}"#,
+            r#"{"type":"assistant","requestId":"r","message":{"content":[]}}"#,
+            // role alone, type alone, neither
+            r#"{"type":"progress","requestId":"r","message":{"role":"assistant","usage":{}}}"#,
+            r#"{"type":"assistant","requestId":"r","message":{"role":"user","usage":{}}}"#,
+            r#"{"type":"user","requestId":"r","message":{"role":"user","usage":{}}}"#,
+            r#"{"type":5,"requestId":"r","message":{"role":["assistant"],"usage":{}}}"#,
+            // requestId missing, not a string, or nested only
+            r#"{"type":"assistant","message":{"usage":{},"requestId":"r"}}"#,
+            r#"{"type":"assistant","requestId":7,"message":{"usage":{}}}"#,
+            r#"{"type":"assistant","requestId":null,"message":{"usage":{}}}"#,
+            // message not an object
+            r#"{"type":"assistant","requestId":"r","message":"hi"}"#,
+            r#"{"type":"assistant","requestId":"r","message":null}"#,
+            // content: string, object, items of other types
+            r#"{"type":"assistant","requestId":"r","message":{"content":"text","usage":{}}}"#,
+            r#"{"type":"assistant","requestId":"r","message":{"content":{"type":"tool_use","name":"Read"},"usage":{}}}"#,
+            r#"{"type":"assistant","requestId":"r","message":{"content":[1,"s",null,[{"type":"tool_use","name":"X"}],{"type":"tool_use","name":"Read","input":{"file_path":"A"}}],"usage":{}}}"#,
+            // tool fields of other types
+            r#"{"type":"assistant","requestId":"r","message":{"content":[{"type":"tool_use","name":5,"input":{}},{"type":"tool_use","input":{}},{"type":"tool_use","id":3,"name":"Bash"},{"type":"tool_use","id":"t","name":"Read","input":"x"},{"type":"tool_use","name":"Read","input":{"file_path":null}},{"type":"tool_use","name":"Read","input":{"file_path":{"p":1}}},{"type":"tool_use","name":"ToolSearch","input":{"query":["a"]}}],"usage":{}}}"#,
+            // repeated keys: the last value wins, as in Value
+            r#"{"type":"assistant","requestId":"a","requestId":"b","message":{"usage":{"input_tokens":1,"input_tokens":2},"role":"x","content":[{"type":"text","type":"tool_use","name":"N","name":"M","input":{"file_path":"1","file_path":5}}]}}"#,
+            r#"{"type":"assistant","requestId":"a","message":{"usage":{}},"message":{"role":"user"}}"#,
+            // escapes and non-ASCII in kept strings
+            r#"{"type":"assistant","requestId":"r\u0031","message":{"content":[{"type":"tool_use","id":"t","name":"Read","input":{"file_path":"C:/\u00e9/\"q\"/特許庁/\ud83d\ude00.md"}}],"usage":{}}}"#,
+            // escaped key spelling still parses (only the prefilter misses it)
+            r#"{"type":"assistant","request\u0049d":"r","message":{"usage":{}}}"#,
+            // deep nesting in skipped fields
+            r#"{"type":"assistant","requestId":"r","x":[[[[[{"a":{"b":[1,2,{"c":null}]}}]]]]],"message":{"usage":{},"stop_reason":null}}"#,
+            // whitespace, CR, and broken lines
+            "{\"type\":\"assistant\",\"requestId\":\"r\",\"message\":{\"usage\":{}}}\r",
+            " \t{\"type\":\"assistant\" , \"requestId\" : \"r\" , \"message\" : { \"usage\" : { } } } ",
+            r#"{"type":"assistant","requestId":"r","message":{"usage":{}}"#,
+            r#"{"type":"assistant","requestId":"r","message":{"usage":{}}} x"#,
+            r#"{"type":"assistant","requestId":"r","message":{"usage":{}}}{}"#,
+            r#"[{"type":"assistant","requestId":"r","message":{"usage":{}}}]"#,
+            r#""requestId""#,
+            "",
+        ];
+        for line in lines {
+            assert_eq!(typed_parse_line(line), value_parse_line(line), "line: {}", line);
+        }
+        // The cases above must not all be rejections.
+        let parsed = lines.iter().filter(|l| typed_parse_line(l).is_some()).count();
+        assert!(parsed >= 15, "only {} lines parsed", parsed);
+        let first = typed_parse_line(lines[0]).unwrap();
+        assert_eq!(first.tools[0].file_path, StrField::Str("C:\\a\\b.rs".into()));
+        assert_eq!(first.tools[1].query.as_deref(), Some("select:Read"));
+    }
+
+    #[test]
+    fn non_string_file_path_labels_large_ops_with_an_empty_string() {
+        let reqs = vec![
+            typed_parse_line(r#"{"type":"assistant","requestId":"a","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":null}}],"usage":{"cache_creation_input_tokens":6000}}}"#).unwrap(),
+            typed_parse_line(r#"{"type":"assistant","requestId":"b","message":{"content":[{"type":"tool_use","name":"Bash","input":{}}],"usage":{"cache_creation_input_tokens":12000}}}"#).unwrap(),
+        ];
+        let mut reqs = reqs;
+        compute_deltas(&mut reqs);
+        let ops = detect_large_ops(&reqs);
+        let file_of = |tool: &str| {
+            ops.as_array().unwrap().iter().find(|x| x["tool"] == tool).unwrap()["file"].clone()
+        };
+        assert_eq!(file_of("Read"), json!(""));
+        assert_eq!(file_of("Bash"), Value::Null);
+        // Neither counts as a Read of some file.
+        assert_eq!(aggregate_top_reads(&reqs), json!([]));
+    }
+
+    #[test]
+    fn lines_without_the_request_id_key_are_skipped_unparsed() {
+        let root = scratch("prefilter");
+        let log = root.join("s.jsonl");
+        let u = (0, 1, 0, 100);
+        write_log(&log, &[
+            // Would be a request if parsed, but the key is spelled with an
+            // escape, so the byte prefilter drops it.
+            r#"{"type":"assistant","request\u0049d":"r0","message":{"usage":{}}}"#.to_string(),
+            json!({"type": "user", "message": {"role": "user", "content": "x"}}).to_string(),
+            log_line("r1", text_block(), u),
+            "not json \"requestId\"".to_string(),
+        ]);
+        let reqs = parse_logs(&[log]).requests;
+        let ids: Vec<&str> = reqs.iter().map(|r| r.req_id.as_str()).collect();
+        assert_eq!(ids, vec!["r1"]);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn last_line_without_newline_and_crlf_lines_are_read() {
+        let root = scratch("line-ends");
+        let log = root.join("s.jsonl");
+        let body = format!(
+            "{}\r\n{}",
+            log_line("r1", text_block(), (0, 1, 0, 100)),
+            log_line("r2", text_block(), (0, 1, 100, 50)),
+        );
+        fs::write(&log, body).unwrap();
+        let reqs = parse_logs(&[log]).requests;
+        let ids: Vec<&str> = reqs.iter().map(|r| r.req_id.as_str()).collect();
+        assert_eq!(ids, vec!["r1", "r2"]);
+        assert_eq!(reqs[1].delta_cc, 50);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn session_stats_come_from_each_file_before_the_cross_file_dedup() {
+        let root = scratch("session-stats");
+        let f1 = root.join("a.jsonl");
+        let f2 = root.join("b.jsonl");
+        let f3 = root.join("c.jsonl");
+        write_log(&f1, &[
+            log_line("r1", text_block(), (0, 1, 0, 1000)),  // 1000
+            log_line("r2", text_block(), (0, 1, 0, 400)),   // first line of r2
+            log_line("r2", text_block(), (0, 1, 1000, 2000)), // r2 = 3000
+            log_line("r3", text_block(), (0, 1, 1500, 500)), // 2000
+        ]);
+        // b repeats a's history: its r1/r2 are dropped from the requests
+        // but still count for b's own stats.
+        write_log(&f2, &[
+            log_line("r1", text_block(), (0, 1, 0, 1000)),
+            log_line("r2", text_block(), (0, 1, 1000, 4000)), // 5000
+            log_line("r4", text_block(), (0, 1, 2000, 0)),    // 2000
+        ]);
+        write_log(&f3, &[json!({"type": "user"}).to_string()]);
+        let files = vec![f1, f2, f3];
+
+        let parsed = parse_logs(&files);
+        assert_eq!(parsed.requests.len(), 4);
+        assert_eq!(
+            parsed.sessions,
+            vec![
+                SessionCtx { file_idx: 0, first_total_ctx: 1000, max_ctx: 3000 },
+                SessionCtx { file_idx: 1, first_total_ctx: 1000, max_ctx: 5000 },
+            ]
+        );
+        // Same values as parsing each file alone.
+        for s in &parsed.sessions {
+            let alone = parse_logs(&files[s.file_idx..=s.file_idx]).requests;
+            assert_eq!(s.first_total_ctx, alone[0].total_ctx());
+            assert_eq!(s.max_ctx, alone.iter().map(Request::total_ctx).max().unwrap());
+        }
+
+        let (startup, max) = per_session_stats(&files, &parsed.sessions);
+        assert_eq!(
+            startup,
+            json!([
+                {"session": "a", "first_total_ctx": 1000},
+                {"session": "b", "first_total_ctx": 1000},
+            ])
+        );
+        assert_eq!(
+            max,
+            json!([
+                {"session": "b", "max_ctx": 5000},
+                {"session": "a", "max_ctx": 3000},
+            ])
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Compares the typed parser with the Value parser on every session log
+    /// of this machine (read only). Run on demand:
+    /// cargo test --release token_audit::tests::real_logs -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn real_logs_parse_the_same_as_the_value_parser() {
+        let cutoff = SystemTime::now() - std::time::Duration::from_secs(600);
+        // Files still being written could change between the two reads.
+        let files: Vec<PathBuf> = find_jsonl_files()
+            .into_iter()
+            .filter(|f| f.mtime.map_or(false, |t| t < cutoff))
+            .map(|f| f.path)
+            .collect();
+        let mismatched: Vec<String> = files
+            .par_iter()
+            .enumerate()
+            .filter_map(|(i, f)| {
+                let typed = parse_file(f, i).requests;
+                let value = value_parse_file(f, i);
+                (typed != value).then(|| normalize_path(f))
+            })
+            .collect();
+        let requests: usize = parse_logs(&files).requests.len();
+        eprintln!("{} files, {} requests, {} mismatched", files.len(), requests, mismatched.len());
+        assert!(mismatched.is_empty(), "mismatched: {:?}", mismatched);
     }
 }
