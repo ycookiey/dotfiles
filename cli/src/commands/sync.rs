@@ -493,12 +493,132 @@ fn filter_keys(value: Option<&Value>, keys: &[&str]) -> Value {
 
 // --- 3) Wingetfile ---
 
+/// winget IDs left out of wingetfile.json, compared without regard to case (winget IDs
+/// are case-insensitive). A rule ending in `.` matches every ID that starts with it;
+/// any other rule matches one ID exactly. Keep prefixes ending in `.` so that, for
+/// example, `Microsoft.Edge` does not also drop `Microsoft.Edge.Beta`.
 const WINGET_EXCLUDE: &[&str] = &[
+    // Installed by other means.
     "Amazon.AWSCLI",
     "Oracle.JDK.17",
     "Python.Python.3.12",
     "Python.Python.3.14",
+    // Runtimes that the apps needing them install themselves.
+    "Microsoft.VCRedist.",
+    "Microsoft.VCLibs.",
+    "Microsoft.UI.Xaml.",
+    "Microsoft.WindowsAppRuntime.",
+    "Microsoft.DotNet.Native.Runtime",
+    "EpicGames.EpicOnlineServices",
+    "Nvidia.PhysX",
+    // Shipped with Windows.
+    "Microsoft.AppInstaller",
+    "Microsoft.Edge",
+    "Microsoft.OneDrive",
+    // Set up by install/wsl.ps1.
+    "Microsoft.WSL",
+    "Canonical.Ubuntu",
+    // VS Build Tools come from Microsoft.VisualStudio.BuildTools, which winget.ps1
+    // installs with the C++ workload; an older line would install without workloads.
+    "Microsoft.VisualStudio.2019.BuildTools",
 ];
+
+/// IDs kept although a rule in WINGET_EXCLUDE matches them. The 2015+ x64 runtime is
+/// the one an app installed without its own redistributable is most likely to need.
+const WINGET_KEEP: &[&str] = &["Microsoft.VCRedist.2015+.x64"];
+
+/// winget ID → scoop app name for apps both managers can install. When the scoop name
+/// is in scoopfile.json the app is left to scoop and the winget ID is dropped.
+const WINGET_SCOOP_DUPLICATES: &[(&str, &str)] = &[
+    ("AutoHotkey.AutoHotkey", "autohotkey"),
+    ("Discord.Discord", "discord"),
+    ("EpicGames.EpicGamesLauncher", "epic-games-launcher"),
+    ("junegunn.fzf", "fzf"),
+    ("Parsec.Parsec", "parsec-np"),
+    ("Zoom.Zoom.EXE", "zoom"),
+];
+
+/// Whether `id` stays out of wingetfile.json. `scoop_apps` holds the lowercased app
+/// names from scoopfile.json.
+fn winget_excluded(id: &str, scoop_apps: &HashSet<String>) -> bool {
+    let lower = id.to_ascii_lowercase();
+    if WINGET_KEEP.iter().any(|k| k.eq_ignore_ascii_case(id)) {
+        return false;
+    }
+    let ruled_out = WINGET_EXCLUDE.iter().any(|rule| {
+        let rule = rule.to_ascii_lowercase();
+        if rule.ends_with('.') {
+            lower.starts_with(&rule)
+        } else {
+            lower == rule
+        }
+    });
+    ruled_out
+        || WINGET_SCOOP_DUPLICATES.iter().any(|(winget, scoop)| {
+            winget.eq_ignore_ascii_case(id) && scoop_apps.contains(*scoop)
+        })
+}
+
+/// Lowercased app names in install/scoopfile.json; empty when it is missing or
+/// unreadable, so no winget ID is then dropped as a scoop duplicate.
+fn scoop_app_names(dot: &Path) -> HashSet<String> {
+    let path = dot.join("install").join("scoopfile.json");
+    let Ok(data) = std::fs::read_to_string(&path) else {
+        return HashSet::new();
+    };
+    let Ok(v) = serde_json::from_str::<Value>(&data) else {
+        return HashSet::new();
+    };
+    v.get("apps")
+        .and_then(|a| a.as_array())
+        .map(|apps| {
+            apps.iter()
+                .filter_map(|app| app.get("Name").and_then(|n| n.as_str()))
+                .map(|n| n.to_ascii_lowercase())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// wingetfile.json content for a `winget export` document: the winget-source package
+/// IDs that `winget_excluded` keeps, sorted.
+fn build_wingetfile(export: &Value, scoop_apps: &HashSet<String>) -> Result<String> {
+    let mut ids: Vec<&str> = Vec::new();
+    if let Some(sources) = export.get("Sources").and_then(|v| v.as_array()) {
+        for src in sources {
+            let name = src
+                .get("SourceDetails")
+                .and_then(|d| d.get("Name"))
+                .and_then(|n| n.as_str());
+            if name != Some("winget") {
+                continue;
+            }
+            let Some(packages) = src.get("Packages").and_then(|p| p.as_array()) else {
+                continue;
+            };
+            for pkg in packages {
+                let Some(id) = pkg.get("PackageIdentifier").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                if !winget_excluded(id, scoop_apps) {
+                    ids.push(id);
+                }
+            }
+        }
+    }
+    ids.sort_unstable();
+    let apps: Vec<Value> = ids
+        .into_iter()
+        .map(|id| {
+            let mut m = Map::new();
+            m.insert("Id".into(), Value::String(id.to_string()));
+            Value::Object(m)
+        })
+        .collect();
+    let mut new_obj = Map::new();
+    new_obj.insert("apps".into(), Value::Array(apps));
+    Ok(serde_json::to_string_pretty(&Value::Object(new_obj))?)
+}
 
 fn sync_wingetfile(
     dot: &Path,
@@ -535,41 +655,7 @@ fn export_wingetfile(dot: &Path) -> Result<Option<bool>> {
             return Ok(None);
         }
         let export: Value = serde_json::from_str(&data)?;
-        let mut apps: Vec<Map<String, Value>> = Vec::new();
-        if let Some(sources) = export.get("Sources").and_then(|v| v.as_array()) {
-            for src in sources {
-                let name = src
-                    .get("SourceDetails")
-                    .and_then(|d| d.get("Name"))
-                    .and_then(|n| n.as_str());
-                if name != Some("winget") {
-                    continue;
-                }
-                let Some(packages) = src.get("Packages").and_then(|p| p.as_array()) else {
-                    continue;
-                };
-                for pkg in packages {
-                    let Some(id) = pkg.get("PackageIdentifier").and_then(|v| v.as_str()) else {
-                        continue;
-                    };
-                    if WINGET_EXCLUDE.contains(&id) {
-                        continue;
-                    }
-                    let mut m = Map::new();
-                    m.insert("Id".into(), Value::String(id.to_string()));
-                    apps.push(m);
-                }
-            }
-        }
-        apps.sort_by(|a, b| {
-            let sa = a.get("Id").and_then(|v| v.as_str()).unwrap_or("");
-            let sb = b.get("Id").and_then(|v| v.as_str()).unwrap_or("");
-            sa.cmp(sb)
-        });
-        let apps_value = Value::Array(apps.into_iter().map(Value::Object).collect());
-        let mut new_obj = Map::new();
-        new_obj.insert("apps".into(), apps_value);
-        let new_str = serde_json::to_string_pretty(&Value::Object(new_obj))?;
+        let new_str = build_wingetfile(&export, &scoop_app_names(dot))?;
         let path = dot.join("install").join("wingetfile.json");
         write_if_different(&path, &new_str).map(Some)
     })();
@@ -775,8 +861,13 @@ fn write_if_different(path: &Path, new_content: &str) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::{EXPORT_INTERVAL, is_account_dir_name, run_throttled};
+    use super::{
+        EXPORT_INTERVAL, build_wingetfile, is_account_dir_name, run_throttled, scoop_app_names,
+        winget_excluded,
+    };
+    use serde_json::json;
     use std::cell::Cell;
+    use std::collections::HashSet;
     use std::path::{Path, PathBuf};
     use std::time::{Duration, SystemTime};
 
@@ -818,6 +909,186 @@ mod tests {
     fn base() -> SystemTime {
         // Whole seconds: keeps mtime comparisons exact on every filesystem.
         SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000)
+    }
+
+    /// Package IDs of a real `winget export` from a machine whose scoopfile holds the
+    /// scoop names in `SCOOP_APPS`.
+    const EXPORTED_IDS: &[&str] = &[
+        "Amazon.Kindle", "Anki.Anki", "Anthropic.Claude", "AntibodySoftware.WizTree",
+        "Anysphere.Cursor", "AutoHotkey.AutoHotkey", "Beeper.Beeper", "Canonical.Ubuntu",
+        "Discord.Discord", "Docker.DockerDesktop", "EpicGames.EpicGamesLauncher",
+        "EpicGames.EpicOnlineServices", "GitHub.GitHubDesktop", "Google.AntigravityIDE",
+        "Google.JapaneseIME", "Google.PlayGames", "Henry++.simplewall",
+        "Kenkun.AviUtlExEdit2", "Microsoft.AppInstaller", "Microsoft.DotNet.Native.Runtime",
+        "Microsoft.DotNet.SDK.8", "Microsoft.Edge", "Microsoft.OneDrive", "Microsoft.Outlook",
+        "Microsoft.Teams", "Microsoft.UI.Xaml.2.7", "Microsoft.UI.Xaml.2.8",
+        "Microsoft.VCLibs.14", "Microsoft.VCLibs.Desktop.14", "Microsoft.VCRedist.2010.x64",
+        "Microsoft.VCRedist.2010.x86", "Microsoft.VCRedist.2012.x64",
+        "Microsoft.VCRedist.2012.x86", "Microsoft.VCRedist.2013.x64",
+        "Microsoft.VCRedist.2013.x86", "Microsoft.VCRedist.2015+.x64",
+        "Microsoft.VCRedist.2015+.x86", "Microsoft.VisualStudio.2019.BuildTools",
+        "Microsoft.VisualStudio.BuildTools", "Microsoft.WSL", "Microsoft.WindowsADK",
+        "Microsoft.WindowsAppRuntime.1.5", "Microsoft.WindowsAppRuntime.1.6",
+        "Microsoft.WindowsAppRuntime.1.7", "Microsoft.WindowsAppRuntime.1.8",
+        "Microsoft.WindowsAppRuntime.2", "Microsoft.WindowsSDK.10.0.26100",
+        "Microsoft.WindowsTerminal", "Microsoft.WingetCreate", "Notion.NotionCalendar",
+        "Nvidia.PhysX", "Oracle.VirtualBox", "ParadoxInteractive.ParadoxLauncher",
+        "Parsec.Parsec", "Parsec.ParsecVDD", "Perplexity.Comet", "Python.Launcher",
+        "SlackTechnologies.Slack", "Spotify.Spotify", "XavierRoche.HTTrack", "ZAP.ZAP",
+        "ZhipuAI.AutoClaw", "Zoom.Zoom.EXE", "Zulip.Zulip", "junegunn.fzf",
+    ];
+    const SCOOP_APPS: &[&str] = &[
+        "autohotkey", "discord", "epic-games-launcher", "fzf", "git", "parsec-np", "zoom",
+    ];
+
+    fn scoop_set(names: &[&str]) -> HashSet<String> {
+        names.iter().map(|n| n.to_string()).collect()
+    }
+
+    fn export_of(ids: &[&str]) -> serde_json::Value {
+        let pkgs: Vec<_> = ids.iter().map(|id| json!({ "PackageIdentifier": id })).collect();
+        json!({ "Sources": [
+            { "SourceDetails": { "Name": "msstore" },
+              "Packages": [{ "PackageIdentifier": "9NBLGGH4NNS1" }] },
+            { "SourceDetails": { "Name": "winget" }, "Packages": pkgs },
+        ]})
+    }
+
+    fn wingetfile_ids(export: &serde_json::Value, scoop: &HashSet<String>) -> Vec<String> {
+        let out: serde_json::Value =
+            serde_json::from_str(&build_wingetfile(export, scoop).unwrap()).unwrap();
+        out["apps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["Id"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn winget_exclude_prefix_rules_match_only_ids_below_them() {
+        let none = HashSet::new();
+        for id in [
+            "Microsoft.VCRedist.2013.x86",
+            "Microsoft.VCRedist.2015+.x86",
+            "Microsoft.VCLibs.Desktop.14",
+            "Microsoft.UI.Xaml.2.8",
+            "Microsoft.WindowsAppRuntime.2",
+            "microsoft.windowsappruntime.1.8",
+        ] {
+            assert!(winget_excluded(id, &none), "{id}");
+        }
+        for id in [
+            "Microsoft.VCRedist.2015+.x64",
+            "microsoft.vcredist.2015+.X64",
+            "Microsoft.WindowsADK",
+            "Microsoft.WindowsSDK.10.0.26100",
+            "Microsoft.WindowsTerminal",
+            "Microsoft.UI.XamlExtra",
+        ] {
+            assert!(!winget_excluded(id, &none), "{id}");
+        }
+    }
+
+    #[test]
+    fn winget_exclude_exact_rules_leave_longer_ids() {
+        let none = HashSet::new();
+        for id in [
+            "Microsoft.Edge",
+            "MICROSOFT.EDGE",
+            "Microsoft.OneDrive",
+            "Microsoft.AppInstaller",
+            "Microsoft.WSL",
+            "Canonical.Ubuntu",
+            "Microsoft.VisualStudio.2019.BuildTools",
+            "Amazon.AWSCLI",
+        ] {
+            assert!(winget_excluded(id, &none), "{id}");
+        }
+        for id in [
+            "Microsoft.Edge.Beta",
+            "Microsoft.EdgeWebView2Runtime.Extra",
+            "Microsoft.VisualStudio.BuildTools",
+            "Microsoft.DotNet.SDK.8",
+            "Canonical.Ubuntu.2404",
+        ] {
+            assert!(!winget_excluded(id, &none), "{id}");
+        }
+    }
+
+    #[test]
+    fn winget_scoop_duplicates_drop_only_when_scoop_has_the_app() {
+        let scoop = scoop_set(SCOOP_APPS);
+        assert!(winget_excluded("junegunn.fzf", &scoop));
+        assert!(winget_excluded("Parsec.Parsec", &scoop));
+        assert!(!winget_excluded("Parsec.ParsecVDD", &scoop), "exact ID match only");
+        let without = scoop_set(&["git"]);
+        assert!(!winget_excluded("junegunn.fzf", &without));
+        assert!(!winget_excluded("Zoom.Zoom.EXE", &without));
+    }
+
+    #[test]
+    fn wingetfile_from_export_drops_runtimes_os_wsl_and_scoop_duplicates() {
+        let ids = wingetfile_ids(&export_of(EXPORTED_IDS), &scoop_set(SCOOP_APPS));
+        assert_eq!(EXPORTED_IDS.len(), 65);
+        assert_eq!(ids.len(), 34, "{ids:#?}");
+        let mut sorted = ids.clone();
+        sorted.sort();
+        assert_eq!(ids, sorted);
+        for gone in [
+            "Microsoft.VCRedist.2015+.x86",
+            "Microsoft.WindowsAppRuntime.1.5",
+            "Microsoft.UI.Xaml.2.7",
+            "Microsoft.VCLibs.14",
+            "Microsoft.DotNet.Native.Runtime",
+            "EpicGames.EpicOnlineServices",
+            "Nvidia.PhysX",
+            "Microsoft.AppInstaller",
+            "Microsoft.Edge",
+            "Microsoft.OneDrive",
+            "Microsoft.WSL",
+            "Canonical.Ubuntu",
+            "Microsoft.VisualStudio.2019.BuildTools",
+            "junegunn.fzf",
+            "AutoHotkey.AutoHotkey",
+            "Discord.Discord",
+            "EpicGames.EpicGamesLauncher",
+            "Zoom.Zoom.EXE",
+            "Parsec.Parsec",
+            "9NBLGGH4NNS1",
+        ] {
+            assert!(!ids.iter().any(|i| i == gone), "{gone} must be dropped");
+        }
+        for kept in [
+            "Microsoft.VCRedist.2015+.x64",
+            "Microsoft.VisualStudio.BuildTools",
+            "Microsoft.DotNet.SDK.8",
+            "Microsoft.WindowsTerminal",
+            "Microsoft.WindowsSDK.10.0.26100",
+            "Microsoft.WindowsADK",
+            "Parsec.ParsecVDD",
+            "Python.Launcher",
+        ] {
+            assert!(ids.iter().any(|i| i == kept), "{kept} must stay");
+        }
+        // Without a scoopfile the six scoop duplicates stay in.
+        let ids = wingetfile_ids(&export_of(EXPORTED_IDS), &HashSet::new());
+        assert_eq!(ids.len(), 40);
+    }
+
+    #[test]
+    fn scoop_app_names_reads_lowercased_names_and_tolerates_missing_file() {
+        let t = TempDir::new("scoopnames");
+        assert!(scoop_app_names(&t.0).is_empty());
+        std::fs::create_dir_all(t.0.join("install")).unwrap();
+        std::fs::write(t.0.join("install/scoopfile.json"), "not json").unwrap();
+        assert!(scoop_app_names(&t.0).is_empty());
+        std::fs::write(
+            t.0.join("install/scoopfile.json"),
+            r#"{"buckets":[{"Name":"main"}],"apps":[{"Name":"FZF","Source":"main"},{"Name":"zoom"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(scoop_app_names(&t.0), scoop_set(&["fzf", "zoom"]));
     }
 
     #[test]
