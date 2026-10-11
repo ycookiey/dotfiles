@@ -65,6 +65,7 @@ nvbc() { pwsh -NoProfile -Command 'Start-Process -FilePath "$env:ProgramFiles\NV
 # --- Commands (via dotcli) ---
 proxy() { local _o; _o=$(dotcli proxy "$@"); _dotcli_apply <<<"$_o"; }
 c() { local _o; _o=$(dotcli claude-switch "$@"); _dotcli_apply <<<"$_o"; }
+cz() { local _o; _o=$(dotcli claude-zi "$@"); _dotcli_apply <<<"$_o"; }
 a() { local _o; _o=$(dotcli cursor-agent "$@"); _dotcli_apply <<<"$_o"; }
 cb() { local _o; _o=$(dotcli claude-bedrock "$@"); _dotcli_apply <<<"$_o"; }
 cg() { local _o; _o=$(dotcli claude-glm "$@"); _dotcli_apply <<<"$_o"; }

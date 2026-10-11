@@ -184,9 +184,35 @@ fn find_session_cwd(session_id: &str) -> Option<String> {
     None
 }
 
-pub fn select(query: &[String], dangerously_skip_permissions: bool) -> ShellAction {
+/// custom-title (`claude --name` / `/rename` で付く名前) が完全一致する最新のセッション。
+/// ai-title は自動生成なので対象外。
+pub(crate) fn find_by_title(name: &str) -> Option<SessionInfo> {
+    // scan_sessions は timestamp 降順なので最初の一致が最新
+    scan_sessions()
+        .sessions
+        .into_iter()
+        .find(|s| s.title.as_deref() == Some(name))
+}
+
+/// `dir` 指定時はその cwd のセッションだけを候補にする。
+/// `query` が custom-title と完全一致すれば fzf を出さずに最新の一致を再開する。
+pub fn select(query: &[String], dangerously_skip_permissions: bool, dir: Option<&str>) -> ShellAction {
     let scan = scan_sessions();
-    let sessions = scan.sessions;
+    let mut sessions = scan.sessions;
+    if let Some(d) = dir {
+        sessions.retain(|s| paths_equal(&s.cwd, d));
+        if sessions.is_empty() {
+            return ShellAction {
+                cd: Some(d.to_string()),
+                messages: vec![Message {
+                    text: format!("No Claude Code sessions in {d}"),
+                    level: MessageLevel::Warn,
+                }],
+                exit_code: 1,
+                ..Default::default()
+            };
+        }
+    }
     if sessions.is_empty() {
         return ShellAction {
             messages: vec![Message {
@@ -198,9 +224,19 @@ pub fn select(query: &[String], dangerously_skip_permissions: bool) -> ShellActi
         };
     }
 
-    let cwd_now = env::current_dir()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
+    let q = query.join(" ");
+    if !q.is_empty() {
+        if let Some(s) = sessions.iter().find(|s| s.title.as_deref() == Some(q.as_str())) {
+            return resume_session(s, dangerously_skip_permissions);
+        }
+    }
+
+    let cwd_now = match dir {
+        Some(d) => d.to_string(),
+        None => env::current_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default(),
+    };
 
     // Partition: pwd-match (up to N) first, then the rest
     let mut pwd_group: Vec<(usize, &SessionInfo)> = Vec::new();
@@ -239,7 +275,6 @@ pub fn select(query: &[String], dangerously_skip_permissions: bool) -> ShellActi
     }
     push_rest_with_groups(&mut lines, &rest, proj_width, now_epoch);
 
-    let q = query.join(" ");
     let mut cmd = Command::new("fzf");
     cmd.args(["-d", "\t", "--with-nth", "2..", "--no-sort", "--ansi"]);
     let mut header_parts: Vec<String> = Vec::new();
@@ -313,15 +348,16 @@ pub fn select(query: &[String], dangerously_skip_permissions: bool) -> ShellActi
         };
     };
 
-    let cwd = session.cwd.clone();
-    let session_id = session.session_id.clone();
+    resume_session(session, dangerously_skip_permissions)
+}
 
+fn resume_session(session: &SessionInfo, dangerously_skip_permissions: bool) -> ShellAction {
     ShellAction {
-        cd: Some(cwd),
+        cd: Some(session.cwd.clone()),
         exec: Some(ExecCommand {
             program: "claude".into(),
             args: {
-                let mut a = vec!["--resume".into(), session_id.into()];
+                let mut a = vec!["--resume".into(), session.session_id.clone()];
                 if dangerously_skip_permissions {
                     a.push("--dangerously-skip-permissions".into());
                 }
@@ -337,7 +373,7 @@ pub fn select(query: &[String], dangerously_skip_permissions: bool) -> ShellActi
 // セッションは普段 1〜2 件。なので (path, mtime) を照合して、mtime 未変更分は
 // cache から SessionInfo を流用、変更/新規分のみ再 parse する。
 
-const SCAN_CACHE_VERSION: u32 = 2;
+const SCAN_CACHE_VERSION: u32 = 3;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct ScanCache {
@@ -536,6 +572,37 @@ fn read_head_and_tail(path: &Path, head_bytes: u64, tail_bytes: u64) -> Result<(
     Ok((head, tail))
 }
 
+/// custom-title 行を探す範囲（末尾）。最後の custom-title 行が末尾から離れた位置に
+/// 残ることがあるので、一覧用の TAIL_BASE_BYTES 窓より広く取る。
+const TITLE_SEARCH_BYTES: u64 = 4 * 1024 * 1024;
+
+/// 末尾 TITLE_SEARCH_BYTES から最後の custom-title を取る。
+/// custom-title 無しのセッションが大半なので、全行 JSON parse せずバイト列で行を探し、
+/// 一致した行だけ parse する（本文中の文字列は JSON エスケープされるので一致しない）。
+fn find_last_custom_title(path: &Path) -> Option<String> {
+    const NEEDLE: &[u8] = br#""type":"custom-title""#;
+    let mut f = File::open(path).ok()?;
+    let len = f.metadata().ok()?.len();
+    let off = len.saturating_sub(TITLE_SEARCH_BYTES);
+    f.seek(SeekFrom::Start(off)).ok()?;
+    let mut buf = Vec::with_capacity((len - off) as usize);
+    f.read_to_end(&mut buf).ok()?;
+
+    let mut end = buf.len();
+    while let Some(pos) = buf[..end].windows(NEEDLE.len()).rposition(|w| w == NEEDLE) {
+        let start = buf[..pos].iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
+        let stop = buf[pos..].iter().position(|&b| b == b'\n').map_or(buf.len(), |i| pos + i);
+        // 窓の先頭で切れた行は parse に失敗するので読み飛ばす
+        if let Some(meta) = parse_line(&buf[start..stop]) {
+            if meta.typ.as_deref() == Some("custom-title") && meta.custom_title.is_some() {
+                return meta.custom_title;
+            }
+        }
+        end = start;
+    }
+    None
+}
+
 /// Returns Ok(session) on success, Err(true) if only last_timestamp was missing,
 /// Err(false) for other parse failures.
 ///
@@ -590,26 +657,19 @@ fn parse_session_window(path: &Path, head_bytes: u64, tail_bytes: u64) -> Result
     let tail_for_rev: &[u8] = if tail_buf.is_empty() { &head_buf } else { &tail_buf };
     let lines: Vec<&[u8]> = tail_for_rev.split(|&b| b == b'\n').filter(|s| !s.is_empty()).collect();
 
-    let mut title: Option<String> = None;
+    let title = find_last_custom_title(path);
     let mut last_timestamp: Option<String> = None;
     let mut message_parts: Vec<String> = Vec::new();
     let mut accumulated_len: usize = 0;
     const MIN_MSG_LEN: usize = 40;
     const MAX_MSG_LEN: usize = 120;
     const MSG_SEP: &str = " / ";
-    // custom-title はセッション末尾近くにしか付かないので探索は末尾 N 行のみ。
-    // これがないと、custom-title 無しセッション(全体の~91%)で全行 JSON parse が走る。
-    const TITLE_SCAN_LINES: usize = 100;
+    // ai-title を拾うため、メッセージが揃っても末尾 N 行までは走査を続ける。
+    const MIN_SCAN_LINES: usize = 100;
     for (idx, line) in lines.iter().rev().enumerate() {
         let Some(meta) = parse_line(line) else { continue };
         if last_timestamp.is_none() {
             last_timestamp = meta.timestamp;
-        }
-        if idx < TITLE_SCAN_LINES
-            && title.is_none()
-            && meta.typ.as_deref() == Some("custom-title")
-        {
-            title = meta.custom_title;
         }
         if ai_title.is_none() && meta.typ.as_deref() == Some("ai-title") {
             ai_title = meta.ai_title;
@@ -637,7 +697,7 @@ fn parse_session_window(path: &Path, head_bytes: u64, tail_bytes: u64) -> Result
         }
         if last_timestamp.is_some()
             && accumulated_len >= MIN_MSG_LEN
-            && idx >= TITLE_SCAN_LINES
+            && idx >= MIN_SCAN_LINES
         {
             break;
         }
