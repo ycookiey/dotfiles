@@ -98,6 +98,8 @@ if ($LASTEXITCODE -ne 0) {
 
 # Phase 2: config, symlinks, dotcli, startup (only needs core apps)
 & $pwsh -NoProfile -ExecutionPolicy Bypass -File "$Dir\setup.ps1"
+# TODO: setup.ps1 exits 1 when any step fails (one failed winget app included), which stops here and
+# skips Phases 3-5. Decide whether to keep going and report the setup failures at the end instead.
 if ($LASTEXITCODE -ne 0) {
     throw "Phase 2 (setup) failed with exit code $LASTEXITCODE."
 }

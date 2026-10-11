@@ -317,13 +317,12 @@ Invoke-Step 'Claude multi-account' {
 Invoke-Step 'Fonts' { & "$ScriptDir\install\fonts.ps1" } 'Fonts install checked'
 
 # Winget アプリ (wingetfile.json)
-# winget.ps1 はアプリの失敗を exit 1 で返す。setup を失敗にすると bootstrap が Phase 2 で止まり
-# mise/uv/大きいアプリ/startup まで飛ばすので、警告をログに残すだけにする
+# winget.ps1 はアプリの失敗を一覧と再実行コマンドを出して exit 1 で返す。他の手順と同じく失敗として数える
+# (setup が exit 1 になり bootstrap は Phase 2 の後で止まる。後続 Phase を続けるかは bootstrap 側の判断)
 Invoke-Step 'Winget apps' {
     & "$ScriptDir\install\winget.ps1"
     if ($global:LASTEXITCODE) {
-        "$(Get-Date) - Warning: winget.ps1 exit $global:LASTEXITCODE (failed apps listed above; rerun install\winget.ps1)" >> $LogFile
-        $global:LASTEXITCODE = 0
+        throw "install\winget.ps1 exit $global:LASTEXITCODE (failed apps listed above; rerun install\winget.ps1)"
     }
 } 'Winget apps install checked'
 
