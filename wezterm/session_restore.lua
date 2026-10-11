@@ -691,6 +691,15 @@ function M.restore(window, pane)
   build(window, pane, snap)
 end
 
+-- update-status のたびに呼ぶ (ハンドラは wezterm.lua にまとめてある)。
+-- 復元で開いた窓の最大化と、会話を再開できたかの確認を進める
+function M.on_update_status(window)
+  local ok, err = pcall(maximize_if_pending, window)
+  if not ok then wezterm.log_error("session_restore: maximize failed: " .. tostring(err)) end
+  ok, err = pcall(verify_resumed, window)
+  if not ok then wezterm.log_error("session_restore: verify failed: " .. tostring(err)) end
+end
+
 -- user_opts.pane_args(cwd, session_id, delay_ms) -> 復元する各ペインの起動コマンド (argv) または nil
 function M.setup(user_opts)
   for k, v in pairs(user_opts or {}) do opts[k] = v end
@@ -703,11 +712,6 @@ function M.setup(user_opts)
       wezterm.log_error("session_restore: restore failed: " .. tostring(err))
       window:toast_notification("WezTerm", "復元に失敗: " .. tostring(err), nil, 8000)
     end
-  end)
-  wezterm.on("update-status", function(window)
-    maximize_if_pending(window)
-    local ok, err = pcall(verify_resumed, window)
-    if not ok then wezterm.log_error("session_restore: verify failed: " .. tostring(err)) end
   end)
   wezterm.on("window-config-reloaded", function(window)
     maximize_if_pending(window)

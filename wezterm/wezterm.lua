@@ -262,7 +262,8 @@ config.wsl_domains = {}
 -- 30 秒ごとに窓・タブ・ペイン配置を保存。Claude Code のペインは nushell 上で dotcli の `c r <id>` を実行して再開する
 -- (nu -e は実行後もシェルに残るので、Claude を終えてもペインは閉じない)
 -- WezTerm に渡した cwd が無視されることがあるため、どのペインも nushell で先に cd する
-require("session_restore").setup({
+local session_restore = require("session_restore")
+session_restore.setup({
   pane_args = function(cwd, session_id, delay_ms)
     local cmds = {}
     if cwd then table.insert(cmds, string.format("cd r#'%s'#", cwd)) end
@@ -277,5 +278,16 @@ require("session_restore").setup({
     return "c r " .. session_id
   end,
 })
+
+----------------------------------------------------
+-- ステータス (update-status のハンドラはここだけに置く)
+----------------------------------------------------
+wezterm.on("update-status", function(window, pane)
+  -- 右ステータスに有効なキーテーブルを出す (Alt+S の resize_pane 等)
+  local name = window:active_key_table()
+  window:set_right_status(name and ("TABLE: " .. name) or "")
+  -- セッション復元の後処理 (復元で開いた窓の最大化、会話を再開できたかの確認)
+  session_restore.on_update_status(window)
+end)
 
 return config

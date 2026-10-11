@@ -2,15 +2,6 @@ local wezterm = require("wezterm")
 local act = wezterm.action
 local session_restore = require("session_restore")
 
--- Show which key table is active in the status area
-wezterm.on("update-right-status", function(window, pane)
-  local name = window:active_key_table()
-  if name then
-    name = "TABLE: " .. name
-  end
-  window:set_right_status(name or "")
-end)
-
 -- wezterm cli の実行ファイル。GUI と同じフォルダの本体を直接呼び、scoop の shim を経由する
 -- 分のプロセス起動を省く。見つからなければ PATH 上の wezterm に任せる
 local wezterm_exe = (function()
