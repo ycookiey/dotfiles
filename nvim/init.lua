@@ -1,13 +1,21 @@
 -- Luaモジュールキャッシュ（起動高速化、最優先で有効化）
 if vim.loader then vim.loader.enable() end
 
--- シェル設定（Windows - PowerShell）
+-- シェル設定（Windows - PowerShell）: :h shell-pwsh の推奨値
+-- stderr も quickfix / :r ! に入れ、UTF-8 で受け渡し、色の ESC シーケンスを出さない
+-- 注: リダイレクトが掛かるのは makeprg の最後の文だけ。プロセス内の [Console]::Error 出力は捕捉できない
 vim.opt.shell = "pwsh"
-vim.opt.shellcmdflag = "-NoLogo -NoProfile -ExecutionPolicy RemoteSigned -Command"
+vim.opt.shellcmdflag = "-NoLogo -NoProfile -ExecutionPolicy RemoteSigned -Command "
+  .. "[Console]::InputEncoding=[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new();"
+  .. "$PSDefaultParameterValues['Out-File:Encoding']='utf8';"
+  .. "$PSStyle.OutputRendering='PlainText';"
 vim.opt.shellquote = ""
 vim.opt.shellxquote = ""
-vim.opt.shellpipe = "| Out-File -Encoding UTF8 %s"
-vim.opt.shellredir = "| Out-File -Encoding UTF8 %s"
+vim.opt.shellpipe = "> %s 2>&1"
+vim.opt.shellredir = "2>&1 | Out-File -Encoding UTF8 %s"
+vim.opt.shelltemp = false
+-- pwsh が ANSI を出す回避策 (:h shell-pwsh)。子プロセスに継承される
+vim.env.__SuppressAnsiEscapeSequences = "1"
 
 -- 不要なビルトインプラグインを無効化
 vim.g.loaded_netrw = 1
