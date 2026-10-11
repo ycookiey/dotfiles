@@ -206,7 +206,6 @@ Invoke-Step 'Claude config links' {
     mkd "$HOME\.claude"
     mkl "$HOME\.claude\aliases.ps1" "$ScriptDir\pwsh\aliases.ps1"
     mkl "$HOME\.claude\CLAUDE.md" "$ScriptDir\claude\CLAUDE.md"
-    mkl "$HOME\.claude\rules" "$ScriptDir\claude\rules"
     mkl "$HOME\.claude\docs" "$ScriptDir\claude\docs"
     mkl "$HOME\.claude\agents" "$ScriptDir\claude\agents"
     mkl "$HOME\.claude\statusline-rules.toml" "$ScriptDir\claude\statusline\statusline-models.toml"
