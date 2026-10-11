@@ -1325,6 +1325,19 @@ fn aggregate_top_reads(requests: &[Request]) -> Value {
     json!(items)
 }
 
+/// Longest label kept for a request's file in the large-op/response reports.
+const FILE_LABEL_MAX_CHARS: usize = 100;
+
+/// file_path label of the request's first tool, cut to FILE_LABEL_MAX_CHARS
+/// characters on a char boundary, so a multi-byte path cannot panic. None
+/// when there is no tool or it has no file_path; "" when file_path is not a
+/// string.
+fn first_file_path(r: &Request) -> Option<String> {
+    let s = r.tools.first()?.file_path.as_label()?;
+    let end = s.char_indices().nth(FILE_LABEL_MAX_CHARS).map_or(s.len(), |(i, _)| i);
+    Some(s[..end].to_string())
+}
+
 /// Detect large responses (output > 10000).
 fn detect_large_responses(requests: &[Request]) -> Value {
     let mut items = Vec::new();
@@ -1332,12 +1345,7 @@ fn detect_large_responses(requests: &[Request]) -> Value {
     for (idx, r) in requests.iter().enumerate() {
         if r.output > 10000 {
             let tool_key = r.tool_key();
-            let file = r.tools.first().and_then(|t| {
-                t.file_path.as_label().and_then(|s| {
-                    let trimmed = if s.len() > 100 { &s[..100] } else { s };
-                    Some(trimmed.to_string())
-                })
-            });
+            let file = first_file_path(r);
 
             let efficiency = if r.delta_cc > 0 {
                 (r.output as f64 / r.delta_cc as f64 * 10.0).round() / 10.0
@@ -1377,12 +1385,7 @@ fn detect_large_ops(requests: &[Request]) -> Value {
     // it for items equal in cost, tool and file.
     for r in requests.iter().filter(|r| r.delta_cc > 5000) {
         let tool_key = r.tool_key();
-        let file = r.tools.first().and_then(|t| {
-            t.file_path.as_label().and_then(|s| {
-                let trimmed = if s.len() > 100 { &s[..100] } else { s };
-                Some(trimmed.to_string())
-            })
-        });
+        let file = first_file_path(r);
 
         items.push(json!({
             "tool": tool_key,
@@ -2161,6 +2164,32 @@ mod tests {
         assert_eq!(file_of("Bash"), Value::Null);
         // Neither counts as a Read of some file.
         assert_eq!(aggregate_top_reads(&reqs), json!([]));
+    }
+
+    /// A request whose only tool is a Read of `path`, large in both output
+    /// and delta_cc.
+    fn large_read_of(path: &str) -> Request {
+        let line = log_line("r", tool_block("t", "Read", json!({"file_path": path})), (0, 20000, 0, 9000));
+        let mut reqs = vec![typed_parse_line(&line).unwrap()];
+        compute_deltas(&mut reqs);
+        reqs.pop().unwrap()
+    }
+
+    #[test]
+    fn multibyte_file_paths_are_cut_on_a_char_boundary() {
+        // 120 bytes but 40 chars: kept whole (byte 100 is mid-char).
+        let short = "あ".repeat(40);
+        // 150 chars: cut to the first 100 chars.
+        let long = "あ".repeat(150);
+        for (path, want) in [(short.clone(), short.clone()), (long.clone(), "あ".repeat(100))] {
+            let reqs = vec![large_read_of(&path)];
+            assert_eq!(first_file_path(&reqs[0]).as_deref(), Some(want.as_str()));
+            assert_eq!(detect_large_responses(&reqs)[0]["file"], json!(want));
+            assert_eq!(detect_large_ops(&reqs)[0]["file"], json!(want));
+        }
+        // ASCII labels are cut at 100 bytes as before.
+        let ascii = "a".repeat(130);
+        assert_eq!(first_file_path(&large_read_of(&ascii)).unwrap(), "a".repeat(100));
     }
 
     #[test]

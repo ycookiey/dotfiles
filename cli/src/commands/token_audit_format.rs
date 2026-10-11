@@ -37,18 +37,38 @@ fn fmt_f64_pct(n: f64) -> String {
 }
 
 fn display_path(p: &str) -> String {
-    if let Ok(home) = std::env::var("HOME") {
-        if p.starts_with(&home) {
-            return format!("~{}", p.trim_start_matches(&home));
+    display_path_with(
+        p,
+        std::env::var("HOME").ok().as_deref(),
+        std::env::var("USERPROFILE").ok().as_deref(),
+    )
+}
+
+/// `p` with a leading home directory replaced by `~`. HOME is matched as
+/// written (case-sensitive, either separator), USERPROFILE case-insensitively
+/// after turning `\` into `/`. The home must end at a path separator in `p`,
+/// so `C:/Users/ab` does not shorten `C:/Users/abc/x`.
+fn display_path_with(p: &str, home: Option<&str>, userprofile: Option<&str>) -> String {
+    let is_sep = |c: char| c == '/' || c == '\\';
+    if let Some(home) = home.map(|h| h.trim_end_matches(is_sep)).filter(|h| !h.is_empty()) {
+        if let Some(rest) = p.strip_prefix(home) {
+            if rest.is_empty() || rest.starts_with(is_sep) {
+                return format!("~{}", rest);
+            }
         }
     }
-    if let Ok(home) = std::env::var("USERPROFILE") {
+    if let Some(home) = userprofile {
         let home_norm = home.replace('\\', "/");
+        let home_norm = home_norm.trim_end_matches('/');
         let p_norm = p.replace('\\', "/");
-        if p_norm.len() >= home_norm.len()
-            && p_norm[..home_norm.len()].eq_ignore_ascii_case(&home_norm)
-        {
-            return format!("~{}", &p_norm[home_norm.len()..]);
+        if !home_norm.is_empty() {
+            if let (Some(head), Some(rest)) =
+                (p_norm.get(..home_norm.len()), p_norm.get(home_norm.len()..))
+            {
+                if head.eq_ignore_ascii_case(home_norm) && (rest.is_empty() || rest.starts_with('/')) {
+                    return format!("~{}", rest);
+                }
+            }
         }
     }
     p.to_string()
@@ -541,4 +561,43 @@ pub fn run() {
 
     eprintln!("unrecognized token-audit JSON shape");
     std::process::exit(1);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::display_path_with;
+
+    #[test]
+    fn userprofile_prefix_becomes_tilde() {
+        let up = Some("C:\\Users\\abc");
+        assert_eq!(display_path_with("C:/Users/abc/.claude/CLAUDE.md", None, up), "~/.claude/CLAUDE.md");
+        assert_eq!(display_path_with("c:\\users\\ABC\\x", None, up), "~/x");
+        assert_eq!(display_path_with("C:/Users/abc", None, up), "~");
+        assert_eq!(display_path_with("C:/Users/abc/x", None, Some("C:\\Users\\abc\\")), "~/x");
+        assert_eq!(display_path_with("D:/other/x", None, up), "D:/other/x");
+    }
+
+    #[test]
+    fn home_must_end_at_a_separator() {
+        assert_eq!(display_path_with("C:/Users/abc2/x", None, Some("C:\\Users\\abc")), "C:/Users/abc2/x");
+        assert_eq!(display_path_with("/home/abc2/x", Some("/home/abc"), None), "/home/abc2/x");
+    }
+
+    #[test]
+    fn home_prefix_is_removed_once() {
+        assert_eq!(display_path_with("/h/h/x", Some("/h"), None), "~/h/x");
+        assert_eq!(display_path_with("/home/abc", Some("/home/abc"), None), "~");
+        assert_eq!(display_path_with("C:\\Users\\abc\\x", Some("C:\\Users\\abc"), None), "~\\x");
+        // An empty HOME matches nothing.
+        assert_eq!(display_path_with("/x", Some(""), None), "/x");
+    }
+
+    #[test]
+    fn home_length_inside_a_multibyte_char_does_not_panic() {
+        // "C:/Users/xあ": byte 12 (= len of the home) falls inside あ.
+        let p = "C:/Users/xあいう/f";
+        assert_eq!(display_path_with(p, Some("C:/Users/abc"), Some("C:\\Users\\abc")), p);
+        // Byte 8 is the first byte of あ, a boundary, but the rest is no subpath.
+        assert_eq!(display_path_with("C:/Usersあ/f", None, Some("C:/Users")), "C:/Usersあ/f");
+    }
 }
