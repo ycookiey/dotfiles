@@ -11,7 +11,7 @@ usage (uv経由):
 path はファイル / ディレクトリ(再帰探索) / glob。出力は各入力と同じディレクトリに <name>.txt / <name>.srt。
 既存の出力があるファイルはスキップ(冪等)。--overwrite で上書き。
 """
-import sys, os, time, argparse, glob, importlib.util
+import sys, os, time, argparse, glob, importlib.util, contextlib
 
 DEFAULT_MODEL = "mobiuslabsgmbh/faster-whisper-large-v3-turbo"  # HFキャッシュ利用
 MEDIA_EXTS = {".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v",
@@ -38,15 +38,23 @@ def register_cuda_dlls():
 
 
 def fmt_ts(t):
-    h = int(t // 3600); m = int((t % 3600) // 60); s = t % 60
-    return f"{h:02d}:{m:02d}:{s:06.3f}".replace(".", ",")
+    # ミリ秒の整数に丸めてから桁を分ける(秒で丸めると 59.9996 が "60,000" になる)
+    ms = round(t * 1000)
+    h, r = divmod(ms, 3_600_000)
+    m, r = divmod(r, 60_000)
+    s, ms = divmod(r, 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
 def collect_inputs(paths, recursive):
     """ファイル/ディレクトリ/globを展開してメディアファイル一覧へ"""
     files = []
     for p in paths:
-        matches = glob.glob(p) if any(c in p for c in "*?[") else [p]
+        # 実在するパスはそのまま使う("[2024] talk.mp4" の [ を文字クラスと解釈しない)
+        if os.path.exists(p) or not any(c in p for c in "*?["):
+            matches = [p]
+        else:
+            matches = glob.glob(p)
         if not matches:
             print(f"[warn] マッチなし: {p}")
         for m in matches:
@@ -98,22 +106,45 @@ def transcribe_one(model, path, lang, formats, overwrite):
     t0 = time.time()
     print(f"[run] {path}")
     segments, info = model.transcribe(path, language=lang, vad_filter=True, beam_size=5)
-    ft = open(out_txt, "w", encoding="utf-8") if want_txt else None
-    fs = open(out_srt, "w", encoding="utf-8") if want_srt else None
-    n = 0
-    for i, seg in enumerate(segments, 1):
-        txt = seg.text.strip()
-        if ft: ft.write(txt + "\n")
-        if fs: fs.write(f"{i}\n{fmt_ts(seg.start)} --> {fmt_ts(seg.end)}\n{txt}\n\n")
-        n = i
-    if ft: ft.close()
-    if fs: fs.close()
+    # segments は遅延評価で、推論はループ中に進む。途中で落ちても未完の出力が
+    # [skip] 出力済 と扱われないよう <name>.<ext>.part に書き、最後に置き換える。
+    parts = []  # (書き込み先 .part, 最終の出力先)
+    try:
+        with contextlib.ExitStack() as stack:
+            ft = fs = None
+            if want_txt:
+                parts.append((out_txt + ".part", out_txt))
+                ft = stack.enter_context(open(out_txt + ".part", "w", encoding="utf-8"))
+            if want_srt:
+                parts.append((out_srt + ".part", out_srt))
+                fs = stack.enter_context(open(out_srt + ".part", "w", encoding="utf-8"))
+            n = 0
+            for i, seg in enumerate(segments, 1):
+                txt = seg.text.strip()
+                if ft: ft.write(txt + "\n")
+                if fs: fs.write(f"{i}\n{fmt_ts(seg.start)} --> {fmt_ts(seg.end)}\n{txt}\n\n")
+                n = i
+        for part, final in parts:
+            os.replace(part, final)
+    except BaseException:
+        # KeyboardInterrupt も含め .part を消して再送出(呼び出し側の扱いは変えない)
+        for part, _ in parts:
+            try:
+                os.remove(part)
+            except OSError:
+                pass
+        raise
     el = time.time() - t0
     spd = (info.duration / el) if el else 0
     print(f"[done] {os.path.basename(path)} 音声{info.duration:.0f}s 処理{el:.0f}s ({spd:.1f}x) seg={n}")
 
 
 def main():
+    # パイプ経由でもブロックバッファにせず [run]/[done] を逐次表示する
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except AttributeError:
+        pass
     ap = argparse.ArgumentParser()
     ap.add_argument("paths", nargs="+", help="ファイル/ディレクトリ/glob")
     ap.add_argument("--lang", default="ja")
