@@ -251,3 +251,24 @@ fields = ["tool_input.command", "tool_input.content"]
 all = ['''open\([^)]*["']w[bt+]?["'][^)]*\)\.write\(''']
 action = "context"
 message = '''open(p, "w"/"wb") は開いた時点で file を空にする。open(...).write(f(x)) の f(x) が例外で止まると、中身が消えたまま残る。中身を先に作り終え、一時 file に書いてから os.replace で置き換える。既存の file の一部を直すだけなら Edit ツールを使う。'''
+
+# Text typed into web forms or sent as messages goes out as written: the
+# spacing and bracket rules in docs/external-japanese.md were known and
+# still missed when filling a form.
+[[rule]]
+id = "ja-ascii-space-reminder"
+event = "PreToolUse"
+tools = '^(mcp__claude-in-chrome__(form_input|computer|javascript_tool)|mcp__beeper__send_message)$'
+fields = ["tool_input.value", "tool_input.text"]
+all = ['[\p{Hiragana}\p{Katakana}\p{Han}] [A-Za-z0-9]|[A-Za-z0-9] [\p{Hiragana}\p{Katakana}\p{Han}]']
+action = "context"
+message = '''外に出る文(フォームへの入力・送るメッセージ)は、日本語と英数字の間にスペースを入れない(AI時代、2人、5つ)。docs/external-japanese.md'''
+
+[[rule]]
+id = "ja-kagi-overuse-reminder"
+event = "PreToolUse"
+tools = '^(mcp__claude-in-chrome__(form_input|computer|javascript_tool)|mcp__beeper__send_message)$'
+fields = ["tool_input.value", "tool_input.text"]
+all = ['「[^」]*」.*「[^」]*」.*「']
+action = "context"
+message = '''外に出る文のカギかっこは、画面の表記と発言の引用だけに使う。強調や用語の囲みに使わない(docs/external-japanese.md)。'''

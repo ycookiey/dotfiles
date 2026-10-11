@@ -548,3 +548,45 @@ name = "truncating-read"
 rule = "truncating-write-reminder"
 expect = "quiet"
 command = '''python -c 'print(open("a.txt").read())' '''
+
+[[case]]
+name = "form-ja-ascii-space"
+rule = "ja-ascii-space-reminder"
+expect = "context"
+input = { tool_name = "mcp__claude-in-chrome__form_input", tool_input = { value = "AI 時代の技術力が分かった" } }
+
+[[case]]
+name = "form-ja-number-space"
+rule = "ja-ascii-space-reminder"
+expect = "context"
+input = { tool_name = "mcp__claude-in-chrome__form_input", tool_input = { value = "新卒でリーダーを任された 2 人の話" } }
+
+[[case]]
+name = "form-ja-no-space"
+rule = "ja-ascii-space-reminder"
+expect = "quiet"
+input = { tool_name = "mcp__claude-in-chrome__form_input", tool_input = { value = "AI時代に2人の話を聞いた" } }
+
+[[case]]
+name = "beeper-ja-ascii-space"
+rule = "ja-ascii-space-reminder"
+expect = "context"
+input = { tool_name = "mcp__beeper__send_message", tool_input = { text = "10/24 の EXPO に参加します" } }
+
+[[case]]
+name = "bash-not-target"
+rule = "ja-ascii-space-reminder"
+expect = "quiet"
+command = "echo 'AI 時代'"
+
+[[case]]
+name = "form-kagi-three"
+rule = "ja-kagi-overuse-reminder"
+expect = "context"
+input = { tool_name = "mcp__claude-in-chrome__form_input", tool_input = { value = "「自然」と「資本」が「強い」という話" } }
+
+[[case]]
+name = "form-kagi-one"
+rule = "ja-kagi-overuse-reminder"
+expect = "quiet"
+input = { tool_name = "mcp__claude-in-chrome__form_input", tool_input = { value = "画面の「送信」を押す" } }
