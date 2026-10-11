@@ -1,4 +1,5 @@
-//! Helpers shared by the stdin JSON report formatters (dup-scan, string-dup, literal-dup).
+//! Helpers shared by the stdin JSON report formatters (dup-scan, string-dup,
+//! literal-dup, token-audit).
 
 use serde_json::Value;
 use std::io::{self, Read};
