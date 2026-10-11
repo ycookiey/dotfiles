@@ -1,7 +1,52 @@
 # ==========================================
 # 0. Interactive Detection
 # ==========================================
-$script:IsInteractive = [Environment]::GetCommandLineArgs() -notcontains '-NonInteractive'
+# pwsh 本体の CLI 解析 (src/Microsoft.PowerShell.ConsoleHost/host/msh/CommandLineParameterParser.cs) と同じ規則で
+# 起動引数を読み、prompt を出す起動かを判定する。非対話 = -NonInteractive (後の -Interactive で解除)、または
+# -Command / -File / -EncodedCommand / -CommandWithArgs があり、それより前に -NoExit が無い。
+# 前置は - / -- / / (en/em dash・horizontal bar も可)、名前は最短一意長以上の前方一致 (大小無視)。
+# 表は本体の if-else 連鎖と同じ順 (先に当たったものが勝つ)。位置引数と未知の switch は本体も -File の script path とみなす。
+# -Command / -File / -CommandWithArgs 以降は command・script 側の引数なので見ない (その -NoExit も無効)。
+# pwsh が CLI switch を追加・変更したら表も更新すること
+$script:IsInteractive = & {
+    param([string[]]$a)
+    # @(名前, 最短一致, 種別) 種別: x=help/version (即終了) / noe=-NoExit / noni=-NonInteractive / i=-Interactive /
+    # v=値を 1 つ取る / ec=値を 1 つ取る command / r=以降すべてが command・script / f=値を取らない switch
+    $sw = @(
+        @('version', 'v', 'x'), @('help', 'h', 'x'), @('?', '?', 'x'), @('login', 'l', 'f'),
+        @('noexit', 'noe', 'noe'), @('noprofile', 'nop', 'f'), @('nologo', 'nol', 'f'), @('noninteractive', 'noni', 'noni'),
+        @('socketservermode', 'so', 'f'), @('v2socketservermode', 'v2so', 'f'), @('servermode', 's', 'f'),
+        @('namedpipeservermode', 'nam', 'f'), @('sshservermode', 'sshs', 'f'), @('noprofileloadtime', 'noprofileloadtime', 'f'),
+        @('interactive', 'i', 'i'), @('configurationfile', 'configurationfile', 'v'), @('configurationname', 'config', 'v'),
+        @('custompipename', 'cus', 'v'), @('commandwithargs', 'commandwithargs', 'r'), @('cwa', 'cwa', 'r'),
+        @('command', 'c', 'r'), @('windowstyle', 'w', 'v'), @('file', 'f', 'r'),
+        @('outputformat', 'o', 'v'), @('of', 'o', 'v'), @('inputformat', 'inp', 'v'), @('if', 'if', 'v'),
+        @('executionpolicy', 'ex', 'v'), @('ep', 'ep', 'v'), @('encodedcommand', 'e', 'ec'), @('ec', 'e', 'ec'),
+        @('encodedarguments', 'encodeda', 'v'), @('ea', 'ea', 'v'), @('settingsfile', 'settings', 'v'),
+        @('sta', 'sta', 'f'), @('mta', 'mta', 'f'), @('workingdirectory', 'wo', 'v'), @('wd', 'wd', 'v'),
+        @('removeworkingdirectorytrailingcharacter', 'removeworkingdirectorytrailingcharacter', 'f'),
+        @('token', 'to', 'v'), @('utctimestamp', 'utc', 'v')
+    )
+    $run = $noExit = $noni = $false
+    # [0] は pwsh 自身の path
+    for ($i = 1; $i -lt $a.Length; $i++) {
+        $k = $a[$i].Trim()
+        if (!$k) { continue }
+        if ($k -notmatch '^(?:([-–—―])\1?|/)') { $run = $true; break }
+        $k = $k.Substring($Matches[0].Length)
+        $kind = 'r'
+        foreach ($s in $sw) {
+            if ($k.Length -ge $s[1].Length -and $s[0].StartsWith($k, [StringComparison]::OrdinalIgnoreCase)) { $kind = $s[2]; break }
+        }
+        if ($kind -eq 'noe') { $noExit = $true }
+        elseif ($kind -eq 'noni') { $noni = $true }
+        elseif ($kind -eq 'i') { $noni = $false }
+        elseif ($kind -eq 'v') { $i++ }
+        elseif ($kind -eq 'ec') { $run = $true; $i++ }
+        elseif ($kind -in 'r', 'x') { $run = $true; break }
+    }
+    !$noni -and (!$run -or $noExit)
+} ([Environment]::GetCommandLineArgs())
 
 # ==========================================
 # 1. Config & Environment
