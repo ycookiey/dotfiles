@@ -135,7 +135,10 @@ if ($script:IsInteractive) {
     # ==========================================
 
     # --- mise ---
-    if (gcm mise -ea 0) { (mise activate pwsh) -join "`n" | iex }
+    # 種類を指定しない Get-Command は miss のとき module の command 探索まで走るので、Application に限る。
+    # 候補が複数 (mise.exe と shim 等) でも 1 つに絞り、絶対 path で呼ぶ
+    $_miseExe = (Get-Command mise -CommandType Application -ea 0 | select -First 1).Source
+    if ($_miseExe) { (& $_miseExe activate pwsh) -join "`n" | iex }
 
     # --- zoxide (手書き最小版、dot-source不要) ---
     # bare の zoxide は scoop\shims\zoxide.exe (shim → exe の 2 process) になるので、実体を起動時に 1 回だけ解決する。
