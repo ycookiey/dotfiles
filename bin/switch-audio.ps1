@@ -11,9 +11,10 @@ $recording = @($all | ? Type -eq 'Recording')
 
 # 重複ベース名があればフル名、なければベース名を ShortName として付与
 function Resolve-DisplayNames([object[]]$Devices) {
-    $bases = $Devices | % {
+    # @() で常に配列化 (1 台だと文字列になり $bases[0] が先頭 1 文字を返す)
+    $bases = @($Devices | % {
         if ($_.Name -match '^(.+?)\s*\(') { $Matches[1].Trim() } else { $_.Name }
-    }
+    })
     for ($i = 0; $i -lt $Devices.Count; $i++) {
         $dups = ($bases | ? { $_ -eq $bases[$i] }).Count
         $name = if ($dups -gt 1) { $Devices[$i].Name } else { $bases[$i] }
