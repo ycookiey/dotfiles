@@ -189,3 +189,28 @@ fields = ["tool_input.command"]
 all = ['(^|[;&|(`[:space:]])(curl|wget)([[:space:]]|$)', '''(-A|-H|-U|--user-agent|--header)[[:space:]=]*(['"][^'"]*|[^[:space:]'"]*)[[:alnum:]._%+-]+@[[:alnum:]-]+\.[[:alpha:]]''']
 action = "context"
 message = '''外部のサービスへ送る header(User-Agent 等)にメールアドレスが入っている。ユーザーのアドレスなら、ユーザーが頼んだときだけ入れる。連絡先を求める API には、ツールの repo の URL などを使う。'''
+
+# statusLine.refreshInterval was dropped in 2026-06 (dotfiles bfc2621): run
+# every second in each of 9 sessions, up to 90 claude-statusline processes
+# were alive at once and left-behind ones piled up. It was proposed again
+# without knowing that.
+[[rule]]
+id = "statusline-refresh-reminder"
+event = "PreToolUse"
+tools = '^(Edit|Write)$'
+fields = ["tool_input.new_string", "tool_input.content"]
+all = ['refreshInterval']
+action = "context"
+message = '''statusLine の refreshInterval は 2026-06 に外した(dotfiles bfc2621)。1 秒ごとだと 9 セッションで最大 90 個の claude-statusline が同時に動き、終わらずに残るものが積み上がった(~/.claude/docs/hooks.md の「罠」)。待たずに出したい表示は、plugin の $.ui.status など、プロセスを起動しない方法を先に検討する。'''
+
+# Running the claude CLI with CLAUDE_CONFIG_DIR set to ~/.claude itself (the
+# folder the accounts ~/.claude-* mirror) created ~/.claude/.claude.json,
+# which the mirroring could then link into every account.
+[[rule]]
+id = "claude-config-dir-guard"
+event = "PreToolUse"
+tools = '^(Bash|PowerShell)$'
+fields = ["tool_input.command"]
+all = ['''CLAUDE_CONFIG_DIR['"]?[[:space:]]*=[[:space:]]*['"]?[^'";[:space:]]*[/\\]\.claude[/\\]?(['";[:space:]]|$)''']
+action = "deny"
+message = '''CLAUDE_CONFIG_DIR を実体の ~/.claude に向けて claude CLI を動かすと、使われていない ~/.claude/.claude.json が作られ、~/.claude-* へのミラーの対象になりうる(~/.claude/docs/symlinks.md の「マルチアカウント」)。user settings を書く CLI(plugin install・marketplace add 等)は普段のアカウント(~/.claude-N)で動かし、後で ls -la ~/.claude-*/settings.json でリンクが残っているかを確かめる。'''

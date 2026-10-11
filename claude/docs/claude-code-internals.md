@@ -47,3 +47,11 @@
 - 項目名は docs (sub-agents.md「Supported frontmatter fields」) の表と完全一致 (camelCase)。未知の項目はエラーなしで無視
 - 権限は `permissionMode` (`mode:` は効かない)。未指定・親が bypassPermissions/acceptEdits/auto なら親のモードを継承
 - `color` は red/blue/green/yellow/purple/orange/pink/cyan のみ
+
+## plugin (mod) の実測 (v2.1.296)
+
+- `claude -p --settings '{"disableAllHooks":true}'` では plugin の hooks module も動かず、mod の tool が登録されない(外すと登録。推定)
+- `$` を渡せるのはファイル最上位で宣言した関数のみ(`claude plugin validate` が拒否)。`$` の型は `EngineInterface`(`Engine` は test 用)。型検査は types の先頭の tsconfig + tsc
+- `$.ui.status`: 入力欄の下・statusline の上に 1 行。先頭に `⚠<plugin名>:` が付く。改行は 1 行につながり(◆)、ANSI は文字のまま。`undefined` で行ごと消える
+- `ui.render` の AbovePrompt: 入力欄の真上に 1 行と右端の `[-]`。`Text` の `color`(theme key・16 進・名前)が効かず白
+- directory marketplace の plugin も、install 時に `~/.claude/plugins/cache/<marketplace>/<name>/<version>` へ写して読む。元の編集が反映されるかは要確認(公式 docs は「直接読む」と記載)
