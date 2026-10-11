@@ -12,6 +12,20 @@ $Pwsh       = (Get-Command pwsh).Source
 $ScriptPath = "$PSScriptRoot\manager.ps1"
 $RegKey     = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
 
+# Every 5 minutes, stops processes left with no parent (bin/reap-orphans.ps1).
+# conhost --headless keeps a console window from flashing up each time.
+$ReaperTask   = "OrphanReaper"
+$ReaperScript = (Resolve-Path "$PSScriptRoot\..\bin\reap-orphans.ps1").Path
+
+function Register-Reaper {
+    $action    = New-ScheduledTaskAction -Execute "conhost.exe" -Argument "--headless `"$Pwsh`" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$ReaperScript`""
+    $trigger   = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval ([timespan]'0:5:0')
+    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Limited -LogonType Interactive
+    $settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([timespan]'0:2:0') -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    [void](Register-ScheduledTask -TaskName $ReaperTask -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force)
+    wh "Registered: $ReaperTask (TaskScheduler)" -Fo Green
+}
+
 function Register-Startup {
     if (!(tp $ScriptPath)) {
         wh "Error: manager.ps1 not found" -Fo Red
@@ -32,6 +46,7 @@ function Register-Startup {
     $settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([timespan]'0:5:0')
     [void](Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force)
     wh "Registered: $TaskName (TaskScheduler)" -Fo Green
+    Register-Reaper
 }
 
 function Unregister-Startup {
@@ -40,6 +55,10 @@ function Unregister-Startup {
         wh "Unregistered: $TaskName" -Fo Green
     } else {
         wh "Not registered" -Fo Yellow
+    }
+    if (Get-ScheduledTask -TaskName $ReaperTask -ea 0) {
+        Unregister-ScheduledTask -TaskName $ReaperTask -Con:$false
+        wh "Unregistered: $ReaperTask" -Fo Green
     }
 }
 
