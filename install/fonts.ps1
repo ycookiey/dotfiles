@@ -17,16 +17,32 @@ $tmp = "$env:TEMP\hackgen_nf"
 rm $tmp -Recurse -Force -ea 0
 mkd $tmp
 
-# gh CLI で latest リリースの NF zip をダウンロード
-gh release download --repo yuru7/HackGen --pattern "HackGen_NF_*.zip" --dir $tmp
-$zip = (gci "$tmp\HackGen_NF_*.zip")[0]
-Expand-Archive $zip.FullName "$tmp\extracted"
+# GitHub API で latest リリースの NF zip をダウンロード（gh 認証不要。新 PC では gh 未認証）
+# 失敗時は警告のみ: フォントが無くても後続の setup は続けられる
+$ProgressPreference = 'SilentlyContinue'
+try {
+    $rel = Invoke-RestMethod "https://api.github.com/repos/yuru7/HackGen/releases/latest"
+    $asset = $rel.assets | ? name -like 'HackGen_NF_*.zip' | select -First 1
+    if (!$asset) { throw "HackGen_NF_*.zip not found in release $($rel.tag_name)" }
+    $zip = "$tmp\$($asset.name)"
+    Invoke-WebRequest $asset.browser_download_url -OutFile $zip -UseBasicParsing
+    Expand-Archive $zip "$tmp\extracted"
+} catch {
+    wh "HackGen Console NF: download failed, skipped ($_)" -Fo Yellow
+    rm $tmp -Recurse -Force -ea 0
+    return
+}
 
 # HackGenConsoleNF のみインストール（per-user）
 $RegKey = "HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts"
 if (!(tp $RegKey)) { [void](ni $RegKey -Force) }
 
 $ttfs = gci "$tmp\extracted" -Recurse -Filter "HackGenConsoleNF-*.ttf"
+if (!$ttfs) {
+    wh "HackGen Console NF: no HackGenConsoleNF-*.ttf in $($asset.name), skipped" -Fo Yellow
+    rm $tmp -Recurse -Force -ea 0
+    return
+}
 foreach ($f in $ttfs) {
     $dest = "$FontsDir\$($f.Name)"
     cp $f.FullName $dest -Force
