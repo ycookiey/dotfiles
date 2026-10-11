@@ -17,6 +17,7 @@ if (!$needed) { exit }
 # bw ログイン/アンロック
 $status = (bw status 2>$null | ConvertFrom-Json).status
 $session = $null
+$authOk = $false
 function Show-InputBanner($label) {
     wh ""
     wh " [入力待ち] $label ↓" -ForegroundColor Black -BackgroundColor Yellow
@@ -25,11 +26,17 @@ function Show-InputBanner($label) {
 if ($status -eq 'unauthenticated') {
     Show-InputBanner 'Bitwarden ログイン (メール/パスワード)'
     $session = bw login --raw
+    $authOk = $LASTEXITCODE -eq 0
 } elseif ($status -eq 'locked') {
     Show-InputBanner 'Bitwarden アンロック (マスターパスワード)'
     $session = bw unlock --raw
+    $authOk = $LASTEXITCODE -eq 0
+} elseif ($status -eq 'unlocked') {
+    # BW_SESSION を継承したシェルから実行された場合。bw status が unlocked を返すのは有効なセッションキーがあるとき
+    $session = $env:BW_SESSION
+    $authOk = $true
 }
-if (!$session -or $LASTEXITCODE -ne 0) {
+if (!$session -or !$authOk) {
     wh "Bitwarden: 認証失敗" -ForegroundColor Red
     "$(Get-Date) - Error: Bitwarden authentication failed" >> $LogFile
     exit 1
