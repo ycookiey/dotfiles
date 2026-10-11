@@ -12,6 +12,9 @@
 	editor = nvim
 	# ファイル名の大文字小文字を区別
 	ignorecase = false
+	# untracked ファイル走査の結果をディレクトリ mtime 付きで index に保存し、status/diff を速くする (NTFS で安全)
+	untrackedCache = true
+	# TODO: fsmonitor は未採用。全体で有効にする / 大きな repo だけ ([includeIf] か repo の config) / 入れない のどれにするか未定
 
 [init]
 	# デフォルトブランチ名
