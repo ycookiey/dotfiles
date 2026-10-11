@@ -408,12 +408,111 @@ fn provider_badge_with_rules(name: &str, rules: &[ProviderRule]) -> Option<Strin
 // ========================================
 
 const CACHE_TTL_SECONDS: u64 = 60;
+// After a failed fetch, skip the network for this long. Without it every run
+// past the TTL blocks on the HTTPS timeout while z.ai is down or offline.
+const FAIL_CACHE_TTL_SECONDS: u64 = 30;
+const GLM_API_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
-#[derive(Deserialize, Serialize, Default)]
+#[derive(Deserialize, Serialize, Default, Clone)]
 struct CachedRateLimits {
+    /// Time the rate_limits were last fetched successfully (0 = never).
+    /// ycusage reads it to label stale data, so failures leave it unchanged.
     cached_at: u64,
     provider: Option<String>,
-    rate_limits: RateLimits,
+    /// None (written as null) until a fetch has succeeded, so readers such
+    /// as ycusage treat the file as having no data rather than as 0% usage.
+    #[serde(default)]
+    rate_limits: Option<RateLimits>,
+    /// Time of the last failed fetch (0 = the last attempt succeeded).
+    /// Absent in caches written before this field existed.
+    #[serde(default)]
+    failed_at: u64,
+}
+
+/// Whether the cache can be used without calling the API.
+fn cache_is_fresh(cached: &CachedRateLimits, now: u64) -> bool {
+    if cached.provider.as_deref() != Some("z.ai") {
+        return false;
+    }
+    if cached.cached_at > 0 && now.saturating_sub(cached.cached_at) < CACHE_TTL_SECONDS {
+        return true;
+    }
+    cached.failed_at > 0 && now.saturating_sub(cached.failed_at) < FAIL_CACHE_TTL_SECONDS
+}
+
+/// Cache to write after a failed fetch: keeps the previous data and its
+/// cached_at, and records the failure so the next runs skip the network.
+/// Without a previous success (cached_at 0) there is no data to keep.
+fn failure_cache(prev: Option<CachedRateLimits>, now: u64) -> CachedRateLimits {
+    let prev = prev.unwrap_or_default();
+    CachedRateLimits {
+        cached_at: prev.cached_at,
+        provider: Some("z.ai".into()),
+        rate_limits: if prev.cached_at > 0 { prev.rate_limits } else { None },
+        failed_at: now,
+    }
+}
+
+/// Plain overwrite, not temp + rename: ~/.claude-N/.glm-rate-limits.json is a
+/// symlink shared by all accounts, and a rename would replace the link.
+fn write_glm_cache(cache_path: &str, data: &CachedRateLimits) {
+    if let Ok(json_str) = serde_json::to_string(data) {
+        let _ = std::fs::write(cache_path, json_str);
+    }
+}
+
+/// What get_glm_rate_limits found in the cache file before fetching.
+enum GlmCacheRead {
+    /// No file, or it could not be read.
+    Missing,
+    /// The file was read but did not parse, and was modified moments ago.
+    /// fs::write truncates before writing, so this can be another run's
+    /// write caught midway.
+    Unparsable,
+    Parsed(CachedRateLimits),
+}
+
+/// An unparsable cache last modified longer ago than this is broken rather
+/// than a write in progress, and is treated as missing so a failed fetch can
+/// replace it. Without this, a file left torn by a killed writer would keep
+/// every run blocking on the HTTPS timeout while z.ai is down.
+const TORN_WRITE_WINDOW: std::time::Duration = std::time::Duration::from_secs(5);
+
+fn read_glm_cache(path: &str) -> GlmCacheRead {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return GlmCacheRead::Missing;
+    };
+    if let Ok(v) = serde_json::from_str::<CachedRateLimits>(&text) {
+        return GlmCacheRead::Parsed(v);
+    }
+    // Unknown or future mtime counts as recent, which keeps the file.
+    let recent = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| std::time::SystemTime::now().duration_since(t).ok())
+        .is_none_or(|age| age < TORN_WRITE_WINDOW);
+    if recent {
+        GlmCacheRead::Unparsable
+    } else {
+        GlmCacheRead::Missing
+    }
+}
+
+/// Records a failed fetch and returns the rate limits to display.
+/// An unparsable file is left alone: it may be a good cache being written by
+/// a concurrent run, and replacing it would drop the last fetched data.
+fn glm_fetch_failed(cache_path: &str, prev: GlmCacheRead, now: u64, msg: &str) -> RateLimits {
+    if env_truthy("STATUSLINE_DEBUG") {
+        eprintln!("{msg}");
+    }
+    let prev = match prev {
+        GlmCacheRead::Unparsable => return RateLimits::default(),
+        GlmCacheRead::Missing => None,
+        GlmCacheRead::Parsed(c) => Some(c),
+    };
+    let cache = failure_cache(prev, now);
+    write_glm_cache(cache_path, &cache);
+    cache.rate_limits.unwrap_or_default()
 }
 
 fn get_glm_rate_limits() -> RateLimits {
@@ -431,16 +530,12 @@ fn get_glm_rate_limits() -> RateLimits {
     let now = now_unix() as u64;
 
     // Read cache without provider filter (will check after parsing)
-    let parsed_cache: Option<CachedRateLimits> = std::fs::read_to_string(&cache_path)
-        .ok()
-        .and_then(|c| serde_json::from_str(&c).ok());
+    let parsed_cache = read_glm_cache(&cache_path);
 
-    // Check if cache is fresh AND is from z.ai
-    if let Some(ref cached_data) = parsed_cache {
-        let age = now.saturating_sub(cached_data.cached_at);
-        let is_zai = cached_data.provider.as_deref() == Some("z.ai");
-        if age < CACHE_TTL_SECONDS && is_zai {
-            return cached_data.rate_limits.clone();
+    // Fresh z.ai cache (successful, or a recent failure) skips the API
+    if let GlmCacheRead::Parsed(ref cached_data) = parsed_cache {
+        if cache_is_fresh(cached_data, now) {
+            return cached_data.rate_limits.clone().unwrap_or_default();
         }
     }
 
@@ -459,13 +554,13 @@ fn get_glm_rate_limits() -> RateLimits {
 
     let resp = match ureq::get("https://api.z.ai/api/monitor/usage/quota/limit")
         .set("Authorization", &api_key)
-        .timeout(std::time::Duration::from_secs(3))
+        .timeout(GLM_API_TIMEOUT)
         .call() {
         Ok(r) => r,
         Err(e) => {
             // API failed: use stale cache if available
-            eprintln!("GLM API request failed: {e}");
-            return parsed_cache.unwrap_or_default().rate_limits;
+            let msg = format!("GLM API request failed: {e}");
+            return glm_fetch_failed(&cache_path, parsed_cache, now, &msg);
         }
     };
 
@@ -473,22 +568,25 @@ fn get_glm_rate_limits() -> RateLimits {
         Ok(s) => match serde_json::from_str(&s) {
             Ok(v) => v,
             Err(e) => {
-                eprintln!("Failed to parse GLM JSON: {e}, body: {s}");
-                return parsed_cache.unwrap_or_default().rate_limits;
+                let msg = format!("Failed to parse GLM JSON: {e}, body: {s}");
+                return glm_fetch_failed(&cache_path, parsed_cache, now, &msg);
             }
         },
         Err(e) => {
-            eprintln!("Failed to read GLM response body: {e}");
-            return parsed_cache.unwrap_or_default().rate_limits;
+            let msg = format!("Failed to read GLM response body: {e}");
+            return glm_fetch_failed(&cache_path, parsed_cache, now, &msg);
         }
     };
 
-    let limits_vec: Vec<serde_json::Value> = body.get("data")
+    // An invalid token comes back as HTTP 200 with {"code":401,"success":false}
+    // and no data; treat it as a failure so the previous numbers are kept.
+    let Some(limits) = body.get("data")
         .and_then(|d| d.get("limits"))
         .and_then(|l| l.as_array())
-        .map(|v| v.to_vec())
-        .unwrap_or_default();
-    let limits = limits_vec.as_slice();
+    else {
+        let msg = format!("GLM response has no data.limits: {body}");
+        return glm_fetch_failed(&cache_path, parsed_cache, now, &msg);
+    };
 
     let mut five_hour_pct: f64 = 0.0;
     let mut five_hour_reset: Option<serde_json::Value> = None;
@@ -521,9 +619,6 @@ fn get_glm_rate_limits() -> RateLimits {
         }
     }
 
-    eprintln!("GLM parsed: five_hour_pct={}, seven_day_pct={}, five_hour_reset={:?}, seven_day_reset={:?}",
-        five_hour_pct, seven_day_pct, five_hour_reset, seven_day_reset);
-
     let rl = RateLimits {
         five_hour: Some(Window {
             used_percentage: Some(five_hour_pct),
@@ -539,10 +634,10 @@ fn get_glm_rate_limits() -> RateLimits {
     let cache_data = CachedRateLimits {
         cached_at: now,
         provider: Some("z.ai".into()),
-        rate_limits: rl.clone(),
+        rate_limits: Some(rl.clone()),
+        failed_at: 0,
     };
-    let json_str = serde_json::to_string(&cache_data).unwrap_or_default();
-    let _ = std::fs::write(&cache_path, json_str);
+    write_glm_cache(&cache_path, &cache_data);
 
     rl
 }
@@ -654,7 +749,7 @@ fn main() {
     // Claude Code が in-flight 実行をキャンセルした際、Windows では
     // 孫プロセスとして取り残されることがあり、stdin の EOF が来ず
     // read_to_string で永遠にブロックしてゾンビ化する。
-    // 正常実行は数ms〜3秒(GLM API timeout=3s)なので 5秒で強制終了する。
+    // 正常実行は数ms〜2秒(GLM API timeout=2s)なので 5秒で強制終了する。
     std::thread::spawn(|| {
         std::thread::sleep(std::time::Duration::from_secs(5));
         std::process::exit(2);
@@ -792,4 +887,167 @@ fn main() {
         }
     }
     print!("{out}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn zai_cache(cached_at: u64, failed_at: u64) -> CachedRateLimits {
+        CachedRateLimits {
+            cached_at,
+            provider: Some("z.ai".into()),
+            rate_limits: Some(RateLimits::default()),
+            failed_at,
+        }
+    }
+
+    #[test]
+    fn success_cache_fresh_until_ttl() {
+        let now = 1_000_000;
+        let c = zai_cache(now - (CACHE_TTL_SECONDS - 1), 0);
+        assert!(cache_is_fresh(&c, now));
+        let c = zai_cache(now - CACHE_TTL_SECONDS, 0);
+        assert!(!cache_is_fresh(&c, now));
+    }
+
+    #[test]
+    fn failure_cache_fresh_until_fail_ttl() {
+        let now = 1_000_000;
+        // last success long ago, recent failure
+        let c = zai_cache(now - 3600, now - (FAIL_CACHE_TTL_SECONDS - 1));
+        assert!(cache_is_fresh(&c, now));
+        let c = zai_cache(now - 3600, now - FAIL_CACHE_TTL_SECONDS);
+        assert!(!cache_is_fresh(&c, now));
+        // never succeeded
+        let c = zai_cache(0, now - 1);
+        assert!(cache_is_fresh(&c, now));
+        let c = zai_cache(0, now - FAIL_CACHE_TTL_SECONDS);
+        assert!(!cache_is_fresh(&c, now));
+    }
+
+    #[test]
+    fn non_zai_cache_is_never_fresh() {
+        let now = 1_000_000;
+        let mut c = zai_cache(now, now);
+        c.provider = None;
+        assert!(!cache_is_fresh(&c, now));
+    }
+
+    #[test]
+    fn legacy_cache_without_failed_at_is_success() {
+        let json = r#"{"cached_at":1000,"provider":"z.ai","rate_limits":{"five_hour":{"used_percentage":12.0,"resets_at":2000},"seven_day":null}}"#;
+        let c: CachedRateLimits = serde_json::from_str(json).unwrap();
+        assert_eq!(c.failed_at, 0);
+        assert_eq!(c.cached_at, 1000);
+        assert!(cache_is_fresh(&c, 1000 + CACHE_TTL_SECONDS - 1));
+        assert!(!cache_is_fresh(&c, 1000 + CACHE_TTL_SECONDS));
+    }
+
+    #[test]
+    fn failure_cache_keeps_data_and_skips_network_next_run() {
+        let now = 1_000_000;
+        let mut prev = zai_cache(now - 3600, 0);
+        prev.rate_limits.as_mut().unwrap().five_hour = Some(Window {
+            used_percentage: Some(42.0),
+            resets_at: None,
+        });
+        let c = failure_cache(Some(prev), now);
+        assert_eq!(c.cached_at, now - 3600);
+        assert_eq!(c.failed_at, now);
+        assert_eq!(c.provider.as_deref(), Some("z.ai"));
+        assert_eq!(
+            c.rate_limits.as_ref().and_then(|r| r.five_hour.as_ref()).and_then(|w| w.used_percentage),
+            Some(42.0)
+        );
+        assert!(cache_is_fresh(&c, now + 1));
+        assert!(!cache_is_fresh(&c, now + FAIL_CACHE_TTL_SECONDS));
+
+        // no previous cache
+        let c = failure_cache(None, now);
+        assert_eq!(c.cached_at, 0);
+        assert!(c.rate_limits.is_none());
+        assert!(cache_is_fresh(&c, now + 1));
+
+        // a previous cache that never succeeded has no data to keep
+        let c = failure_cache(Some(zai_cache(0, now - 100)), now);
+        assert!(c.rate_limits.is_none());
+    }
+
+    #[test]
+    fn failure_cache_without_data_writes_null_rate_limits() {
+        // ycusage treats a null rate_limits as no cache; an object with null
+        // windows would show as 0% usage.
+        let v = serde_json::to_value(failure_cache(None, 1_000)).unwrap();
+        assert!(v.get("rate_limits").is_some_and(|r| r.is_null()));
+        let back: CachedRateLimits = serde_json::from_value(v).unwrap();
+        assert!(back.rate_limits.is_none());
+        // a cache without the key also deserializes
+        let c: CachedRateLimits =
+            serde_json::from_str(r#"{"cached_at":0,"provider":"z.ai","failed_at":5}"#).unwrap();
+        assert!(c.rate_limits.is_none());
+    }
+
+    #[test]
+    fn fetch_failure_does_not_overwrite_unparsable_cache() {
+        // a torn read of a good cache must not be replaced by an empty one
+        let partial = br#"{"cached_at":1000,"provider":"z.ai","rate_li"#;
+        let f = TempFile::new("glm-torn", partial);
+        let rl = glm_fetch_failed(f.path(), GlmCacheRead::Unparsable, 2_000, "test");
+        assert!(rl.five_hour.is_none() && rl.seven_day.is_none());
+        assert_eq!(std::fs::read(f.path()).unwrap(), partial);
+
+        // a missing cache gets a failure record with null rate_limits
+        let f = TempFile::new("glm-missing", b"");
+        std::fs::remove_file(f.path()).unwrap();
+        glm_fetch_failed(f.path(), GlmCacheRead::Missing, 2_000, "test");
+        let c: CachedRateLimits =
+            serde_json::from_str(&std::fs::read_to_string(f.path()).unwrap()).unwrap();
+        assert_eq!(c.failed_at, 2_000);
+        assert!(c.rate_limits.is_none());
+    }
+
+    #[test]
+    fn read_glm_cache_treats_only_recent_unparsable_file_as_torn() {
+        let f = TempFile::new("glm-read", b"{\"cached_at\":1");
+        assert!(matches!(read_glm_cache(f.path()), GlmCacheRead::Unparsable));
+
+        let old = std::time::SystemTime::now() - TORN_WRITE_WINDOW * 2;
+        std::fs::File::options().write(true).open(f.path()).unwrap().set_modified(old).unwrap();
+        assert!(matches!(read_glm_cache(f.path()), GlmCacheRead::Missing));
+
+        std::fs::write(f.path(), r#"{"cached_at":1,"provider":"z.ai","rate_limits":null}"#).unwrap();
+        assert!(matches!(read_glm_cache(f.path()), GlmCacheRead::Parsed(_)));
+
+        std::fs::remove_file(f.path()).unwrap();
+        assert!(matches!(read_glm_cache(f.path()), GlmCacheRead::Missing));
+    }
+
+    struct TempFile(std::path::PathBuf);
+
+    impl TempFile {
+        fn new(name: &str, content: &[u8]) -> Self {
+            let path = std::env::temp_dir()
+                .join(format!("claude-statusline-test-{}-{name}.jsonl", std::process::id()));
+            std::fs::write(&path, content).unwrap();
+            TempFile(path)
+        }
+        fn path(&self) -> &str {
+            self.0.to_str().unwrap()
+        }
+    }
+
+    impl Drop for TempFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    #[test]
+    fn cache_json_keeps_key_names() {
+        let v = serde_json::to_value(zai_cache(5, 0)).unwrap();
+        for key in ["cached_at", "provider", "rate_limits", "failed_at"] {
+            assert!(v.get(key).is_some(), "missing {key}");
+        }
+    }
 }
