@@ -2,18 +2,6 @@ local wezterm = require("wezterm")
 local act = wezterm.action
 local session_restore = require("session_restore")
 
--- フォーカス中のペインのプロセス名を取得
-local function fg_name(pane)
-  local proc = pane:get_foreground_process_name()
-  if not proc then return "" end
-  return proc:match("([^/\\]+)$") or ""
-end
-
-local function is_nushell(pane)
-  local name = fg_name(pane)
-  return name == "nu.exe" or name == "nu"
-end
-
 -- Show which key table is active in the status area
 wezterm.on("update-right-status", function(window, pane)
   local name = window:active_key_table()
@@ -204,18 +192,8 @@ return {
     -- タブ/ペイン統合ナビゲーション
     { key = "Tab", mods = "CTRL", action = navigate(1) },
     { key = "Tab", mods = "SHIFT|CTRL", action = navigate(-1) },
-    -- タブ新規作成（nushellペインならnushellで開く）
-    {
-      key = "t",
-      mods = "CTRL",
-      action = wezterm.action_callback(function(window, pane)
-        if is_nushell(pane) then
-          window:perform_action(act.SpawnCommandInNewTab({ args = { "nu" } }), pane)
-        else
-          window:perform_action(act.SpawnTab("CurrentPaneDomain"), pane)
-        end
-      end),
-    },
+    -- タブ新規作成 (default_prog で開き、cwd は現在ペインから引き継ぐ)
+    { key = "t", mods = "CTRL", action = act.SpawnTab("CurrentPaneDomain") },
     -- 新規ウィンドウ
     { key = "n", mods = "SHIFT|CTRL", action = act.SpawnWindow },
     -- nvimを新規ウィンドウで開く（現在ペインのCWDを引き継ぐ）
@@ -259,27 +237,9 @@ return {
     -- 貼り付け
     { key = "v", mods = "CTRL", action = act.PasteFrom("Clipboard") },
 
-    -- ペイン作成（nushellペインならnushellで開く）
-    {
-      key = "d",
-      mods = "ALT",
-      action = wezterm.action_callback(function(window, pane)
-        local split = is_nushell(pane)
-          and act.SplitVertical({ args = { "nu" }, domain = "CurrentPaneDomain" })
-          or act.SplitVertical({ domain = "CurrentPaneDomain" })
-        window:perform_action(split, pane)
-      end),
-    },
-    {
-      key = "r",
-      mods = "ALT",
-      action = wezterm.action_callback(function(window, pane)
-        local split = is_nushell(pane)
-          and act.SplitHorizontal({ args = { "nu" }, domain = "CurrentPaneDomain" })
-          or act.SplitHorizontal({ domain = "CurrentPaneDomain" })
-        window:perform_action(split, pane)
-      end),
-    },
+    -- ペイン作成 (default_prog で開き、cwd は現在ペインから引き継ぐ)
+    { key = "d", mods = "ALT", action = act.SplitVertical({ domain = "CurrentPaneDomain" }) },
+    { key = "r", mods = "ALT", action = act.SplitHorizontal({ domain = "CurrentPaneDomain" }) },
     -- ペインを閉じる
     { key = "x", mods = "ALT", action = act({ CloseCurrentPane = { confirm = true } }) },
     -- ペイン移動 (Alt+矢印。Alt+hjkl は nvim の編集操作用に解放)
