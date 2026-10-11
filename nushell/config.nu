@@ -1,6 +1,10 @@
 # config.nu — nushell 設定
 # user コマンド追加は cli/definitions.toml (dotcli generate)。ここは nushell 固有(env/hooks/直操作 def)。
 
+# source/use の基準ディレクトリ。$nu.default-config-dir ではなくこのファイル自身の場所を使い、
+# `nu --config <repo>/nushell/config.nu` でもその repo のファイルを読む
+const NU_DIR = path self .
+
 $env.config.show_banner = "short"
 
 # 端末 (WezTerm) に今いるフォルダを OSC 7 で知らせる。Windows では既定で無効。
@@ -9,24 +13,27 @@ $env.config.show_banner = "short"
 $env.config.shell_integration.osc7 = true
 
 # --- PATH ---
+# gtr は repo と同じ親ディレクトリに置いた git-worktree-runner (pwsh/profile.ps1 の $gtrBin と同じ導出)。
+# 存在しないディレクトリは継承分 (User PATH の古いエントリ等) も含めて落とす
 $env.PATH = ($env.PATH | split row (char esep)
-  | append 'C:\Main\Script\git-worktree-runner\bin'
+  | append ($env.DOT | path dirname | path join 'git-worktree-runner' 'bin')
   | append ($env.USERPROFILE | path join 'scoop\apps\miktex\current\texmfs\install\miktex\bin\x64')
   | append ($env.LOCALAPPDATA | path join 'Android\Sdk\platform-tools')
   | append ($env.USERPROFILE | path join '.opencode/bin')
+  | where {|p| $p | path exists }
   | uniq)
 
 # --- starship ---
-use ($nu.default-config-dir | path join 'cache/starship.nu')
+use ($NU_DIR | path join 'cache/starship.nu')
 
 # --- zoxide ---
-source ($nu.default-config-dir | path join 'cache/zoxide.nu')
+source ($NU_DIR | path join 'cache/zoxide.nu')
 
 # --- Generated aliases (from dotcli) ---
-source ($nu.default-config-dir | path join 'generated-aliases.nu')
+source ($NU_DIR | path join 'generated-aliases.nu')
 
 # --- run-task (F5) ---
-source ($nu.default-config-dir | path join 'run-task.nu')
+source ($NU_DIR | path join 'run-task.nu')
 
 $env.config = ($env.config | upsert keybindings (
     ($env.config.keybindings? | default []) | append {
@@ -48,10 +55,10 @@ if $env.DOTCLI_AVAILABLE {
 # --- Background starship/zoxide cache refresh (stale のときだけ spawn) ---
 # 先頭行の key を inline で比較し、fresh なら nu 子プロセスを起動しない。
 # $nu.current-exe は scoop shim を経由しない実体の nu.exe
-use ($nu.default-config-dir | path join 'cache-key.nu') cache-stale
-if (cache-stale 'starship' ($nu.default-config-dir | path join 'cache/starship.nu')) or (cache-stale 'zoxide' ($nu.default-config-dir | path join 'cache/zoxide.nu')) {
+use ($NU_DIR | path join 'cache-key.nu') cache-stale
+if (cache-stale 'starship' ($NU_DIR | path join 'cache/starship.nu')) or (cache-stale 'zoxide' ($NU_DIR | path join 'cache/zoxide.nu')) {
     job spawn {
-        ^$nu.current-exe -n ($nu.default-config-dir | path join 'generate-cache.nu') | ignore
+        ^$nu.current-exe -n ($NU_DIR | path join 'generate-cache.nu') | ignore
     } | ignore
 }
 

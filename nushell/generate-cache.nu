@@ -15,8 +15,12 @@
 
 use cache-key.nu [scoop-exe expected-key cache-stale]
 
+# config.nu が読む <このファイルのディレクトリ>/cache に書く ($nu.default-config-dir は
+# `nu --config <repo>/nushell/config.nu` で起動した repo と別の場所を指しうる)
+const NU_DIR = path self .
+
 def main [--force] {
-    let cache_dir = ($nu.default-config-dir | path join 'cache')
+    let cache_dir = ($NU_DIR | path join 'cache')
     mkdir $cache_dir
 
     let starship_cache = ($cache_dir | path join 'starship.nu')
