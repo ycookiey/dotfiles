@@ -14,6 +14,7 @@ pub mod cursor;
 pub mod dup_scan;
 pub mod dup_scan_format;
 pub mod fd_fzf;
+pub mod fmt_util;
 pub mod literal_dup;
 pub mod literal_dup_format;
 pub mod frun;
