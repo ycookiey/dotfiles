@@ -8,21 +8,20 @@ _dotcli_msg() {
     esac
 }
 
-# Bash's exec skips PATHEXT and command_not_found_handle, so resolve .cmd/.bat first.
-# TODO: exec replaces this shell (the pane closes when the program exits), while pwsh and
-# nushell run the program as a child. Drop `exec` here to match them if that is preferred.
+# Runs the action's program as a child, as pwsh and nushell do, so the shell outlives it.
+# Bash's command lookup skips PATHEXT, so resolve .cmd/.bat first.
 _dotcli_exec() {
     local _dotcli_prog
     _dotcli_prog=$(type -P -- "$1" || type -P -- "$1.cmd" || type -P -- "$1.bat") || _dotcli_prog=$1
     # Tag pane for WezTerm Alt+Z redraw detection (app=claude).
     [ "$1" = claude ] && printf '\033]1337;SetUserVar=app=Y2xhdWRl\007'
     shift
-    exec "$_dotcli_prog" "$@"
+    "$_dotcli_prog" "$@"
 }
 
 # Usage: _dotcli_apply JSON [RC]
-# Applies the JSON a dotcli subcommand printed. Returns the action's exit_code, the exec'd
-# program's status, or else RC (the dotcli exit status).
+# Applies the JSON a dotcli subcommand printed. Returns the action's exit_code, the
+# program's status when it runs one, or else RC (the dotcli exit status).
 _dotcli_apply() {
     [ -z "$1" ] && return "${2:-0}"
     if ! command -v jq >/dev/null 2>&1; then
