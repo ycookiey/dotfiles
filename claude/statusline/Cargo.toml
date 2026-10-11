@@ -7,8 +7,11 @@ edition = "2024"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
-ureq = { version = "2", features = ["tls"] }
+# default-features = false drops gzip (flate2); the z.ai quota API needs only TLS
+ureq = { version = "2", default-features = false, features = ["tls"] }
 
 [profile.release]
 strip = true
 lto = true
+codegen-units = 1
+panic = "abort"

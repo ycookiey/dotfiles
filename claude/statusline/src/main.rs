@@ -110,8 +110,7 @@ fn fmt_num(n: u64) -> String {
 fn now_unix() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs_f64()
+        .map_or(0.0, |d| d.as_secs_f64())
 }
 
 fn parse_resets_at(v: &serde_json::Value) -> Option<f64> {
@@ -389,7 +388,8 @@ fn load_rules(dir: Option<&str>) -> RulesFile {
         .unwrap_or_else(|| include_str!("../statusline-models.toml").to_string());
     toml::from_str::<RulesFile>(&content)
         .unwrap_or_else(|e| {
-            eprintln!("Failed to parse statusline rules: {e}");
+            use std::io::Write as _;
+            let _ = writeln!(io::stderr(), "Failed to parse statusline rules: {e}");
             RulesFile::default()
         })
 }
@@ -580,7 +580,8 @@ fn read_glm_cache(path: &str) -> GlmCacheRead {
 /// a concurrent run, and replacing it would drop the last fetched data.
 fn glm_fetch_failed(cache_path: &str, prev: GlmCacheRead, now: u64, msg: &str) -> RateLimits {
     if env_truthy("STATUSLINE_DEBUG") {
-        eprintln!("{msg}");
+        use std::io::Write as _;
+        let _ = writeln!(io::stderr(), "{msg}");
     }
     let prev = match prev {
         GlmCacheRead::Unparsable => return RateLimits::default(),
@@ -1019,7 +1020,12 @@ fn main() {
             out.push('\n');
         }
     }
-    print!("{out}");
+    // print! panics when the pipe is gone (parent bash killed); with
+    // panic = "abort" that would be a crash, so write and ignore errors.
+    use std::io::Write as _;
+    let mut stdout = io::stdout().lock();
+    let _ = stdout.write_all(out.as_bytes());
+    let _ = stdout.flush();
 }
 
 #[cfg(test)]
