@@ -278,21 +278,27 @@ Invoke-Step 'WSL' { & "$ScriptDir\install\wsl.ps1" }
 Invoke-Step 'Claude multi-account' {
     # settings.json / keybindings.json: Claude Code が symlink を上書き破壊するため除外（マージ型で dotcli sync が管理）
     $claudeExclude = '.credentials*', '.statusline_debug.json', 'settings.json', 'keybindings.json', '.rate-limits.json'
-    foreach ($dir in gci "$HOME\.claude-*" -Dir -Force) {
-        gci "$HOME\.claude" -Force | ? {
-            $name = $_.Name
-            !($claudeExclude | ? { $name -like $_ })
-        } | % {
-            $l = "$dir\$($_.Name)"
-            if (tp $l) { rm $l -Force -Recurse -ea 0 }
-            mkl $l $_.FullName
-        }
-        # skills/配下のsymlinkをミラー（個別skillが増えても自動対応）
-        if (tp "$HOME\.claude\skills") {
-            mkd "$dir\skills"
-            gci "$HOME\.claude\skills" -Force | ? { $_.Attributes -match 'ReparsePoint' } | % {
-                mkl "$dir\skills\$($_.Name)" $_.Target
+    $shared = @(gci "$HOME\.claude" -Force | ? {
+        $name = $_.Name
+        !($claudeExclude | ? { $name -like $_ })
+    })
+    # アカウントディレクトリは .claude-<数字> だけ (.claude-browsers や .claude-1.lock は別物)
+    foreach ($dir in gci $HOME -Dir -Force | ? Name -match '^\.claude-\d+$') {
+        foreach ($src in $shared) {
+            $l = Join-Path $dir.FullName $src.Name
+            # Test-Path はリンク切れを「無い」と答えるので Get-Item で見る
+            $item = gi -LiteralPath $l -Force -ea 0
+            if ($item) {
+                # 実体 (アカウント固有のデータ) は消さない
+                if ($item.Attributes -notmatch 'ReparsePoint') {
+                    "$(Get-Date) - Warning: skip mirror (real entry): $l" >> $LogFile
+                    continue
+                }
+                if ("$($item.Target)".TrimEnd('\') -eq $src.FullName.TrimEnd('\')) { continue }
+                # リンク自体だけを消す (-Recurse はリンク先をたどって中身を消しうる)
+                $item.Delete()
             }
+            mkl $l $src.FullName
         }
     }
 }
