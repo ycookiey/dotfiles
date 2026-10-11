@@ -14,8 +14,10 @@ mkdir -p ~/.vscode-server/data/Machine/
 mkdir -p ~/.vscode-server/extensions/
 
 # VS Code設定をコピー
+# TODO: vscode/ の正本を repo / Settings Sync / 参照用の写しのどれにするか未決定。
+#       Settings Sync を正本にする場合はこのスクリプトごと削除する
 echo "VSCode設定をコピーしています..." | tee -a "$LOG_FILE"
-if cp "$SCRIPT_DIR/settings/vscode.json" ~/.vscode-server/data/Machine/settings.json; then
+if cp "$SCRIPT_DIR/vscode/settings.json" ~/.vscode-server/data/Machine/settings.json; then
   echo "  ✓ 設定ファイルのコピー成功" | tee -a "$LOG_FILE"
 else
   echo "  ✗ 設定ファイルのコピー失敗" | tee -a "$LOG_FILE"
@@ -23,7 +25,7 @@ fi
 
 # キーバインド設定をコピー
 echo "キーバインド設定をコピーしています..." | tee -a "$LOG_FILE"
-if cp "$SCRIPT_DIR/settings/keybindings.json" ~/.vscode-server/data/Machine/keybindings.json; then
+if cp "$SCRIPT_DIR/vscode/keybindings.json" ~/.vscode-server/data/Machine/keybindings.json; then
   echo "  ✓ キーバインド設定のコピー成功" | tee -a "$LOG_FILE"
 else
   echo "  ✗ キーバインド設定のコピー失敗" | tee -a "$LOG_FILE"
