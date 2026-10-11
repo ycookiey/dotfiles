@@ -236,39 +236,39 @@ fn find_session_files(files: &[JsonlFile], id: &str) -> Vec<JsonlFile> {
         .collect()
 }
 
-/// Encode a project path into project directory name prefixes (both conventions).
-/// e.g. C:\Main\Project\Foo -> ["C--Main-Project-Foo", "C--Main--Project--Foo"]
+/// Encode a project path into the project directory names Claude Code gives it
+/// (both conventions), e.g.
+/// C:\Main\Project\Foo -> ["C--Main-Project-Foo", "C--Main--Project--Foo"],
+/// C:\Main\Project\Foo\.claude\worktrees\b4 -> ["C--Main-Project-Foo--claude-worktrees-b4", ...].
+/// Accepts C:\..., C:/... and the Git Bash form /c/...; a drive alone (C:, C:\, /c)
+/// is the drive root, "C--". Any other input yields no names (no filtering).
 fn encode_project_prefixes(project_path: &str) -> Vec<String> {
-    // Normalize to forward slashes, strip trailing slash
     let normalized = project_path.replace('\\', "/");
-    let normalized = normalized.trim_end_matches('/');
-
-    // Extract drive letter and components
-    // Handle: /c/Main/Project/Foo, C:/Main/Project/Foo, C:\Main\Project\Foo
-    let (drive, components) = if normalized.starts_with('/') && normalized.len() >= 2 {
-        // Unix-style: /c/Main/Project/Foo
-        let drive = normalized[1..2].to_uppercase();
-        let rest = &normalized[3..]; // skip /c/
-        let comps: Vec<&str> = rest.split('/').filter(|s| !s.is_empty()).collect();
-        (drive, comps)
-    } else if normalized.len() >= 2 && normalized.as_bytes()[1] == b':' {
-        // Windows-style: C:/Main/Project/Foo
-        let drive = normalized[..1].to_uppercase();
-        let rest = &normalized[3..]; // skip C:/
-        let comps: Vec<&str> = rest.split('/').filter(|s| !s.is_empty()).collect();
-        (drive, comps)
-    } else {
-        return Vec::new();
+    let mut chars = normalized.chars();
+    // Drive letter and the rest, without byte slicing (the input may be any UTF-8).
+    let (drive, rest) = match (chars.next(), chars.next(), chars.next()) {
+        // Windows-style: C:/Main/Project/Foo, C:
+        (Some(d), Some(':'), next) if d.is_ascii_alphabetic() && matches!(next, None | Some('/')) => {
+            (d, &normalized[2..])
+        }
+        // Git Bash style: /c/Main/Project/Foo, /c
+        (Some('/'), Some(d), next) if d.is_ascii_alphabetic() && matches!(next, None | Some('/')) => {
+            (d, &normalized[2..])
+        }
+        _ => return Vec::new(),
     };
+    let drive = drive.to_ascii_uppercase();
+    let components: Vec<&str> = rest.split('/').filter(|s| !s.is_empty()).collect();
 
-    if components.is_empty() {
-        return Vec::new();
-    }
-
-    // New convention: C--Main-Project-Foo (single dash separator)
-    let new_conv = format!("{}--{}", drive, components.join("-"));
-    // Old convention: C--Main--Project--Foo (double dash separator)
-    let old_conv = format!("{}--{}", drive, components.join("--"));
+    // Current convention: the whole path with every char but [A-Za-z0-9] turned into '-'
+    // (C:\Main\.claude -> C--Main--claude).
+    let new_conv = encode_dir_name(&format!("{}:/{}", drive, components.join("/")));
+    // Old convention: C--Main--Project--Foo (double dash between components)
+    let old_conv = format!(
+        "{}--{}",
+        drive,
+        components.iter().map(|c| encode_dir_name(c)).collect::<Vec<_>>().join("--")
+    );
 
     if new_conv == old_conv {
         vec![new_conv]
@@ -277,8 +277,36 @@ fn encode_project_prefixes(project_path: &str) -> Vec<String> {
     }
 }
 
-/// Filter JSONL files to those belonging to a project (prefix match on parent dir name).
-/// Includes worktree sessions (e.g. C--Main-Project-Foo--claude-worktrees-*).
+/// Claude Code's project dir encoding: each char outside [A-Za-z0-9] becomes '-'.
+/// TODO: assumed from observed names (all ASCII and under 120 chars): a non-ASCII char
+/// is taken as one '-' per UTF-16 unit (a JS regex replace), and Claude Code's handling
+/// of very long names (truncation) is not reproduced.
+fn encode_dir_name(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for c in path.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else {
+            for _ in 0..c.len_utf16() {
+                out.push('-');
+            }
+        }
+    }
+    out
+}
+
+/// Whether a project dir name belongs to the project encoded as `enc`: the project
+/// itself, or one of its worktrees (enc--claude-worktrees-*). Sessions started in a
+/// subdirectory (enc-sub) are not included: the encoding cannot tell them from a
+/// sibling project (C:\Main\ch-data vs C:\Main\ch-data-model).
+fn project_dir_matches(name: &str, enc: &str) -> bool {
+    name == enc
+        || name
+            .strip_prefix(enc)
+            .is_some_and(|rest| rest.starts_with("--claude-worktrees-"))
+}
+
+/// Filter JSONL files to those belonging to a project (see project_dir_matches).
 fn filter_by_project(files: &[JsonlFile], project_path: &str) -> Vec<JsonlFile> {
     let prefixes = encode_project_prefixes(project_path);
     if prefixes.is_empty() {
@@ -291,7 +319,7 @@ fn filter_by_project(files: &[JsonlFile], project_path: &str) -> Vec<JsonlFile> 
             // Walk up to find the project directory (parent of the JSONL or subagents/ dir)
             for ancestor in f.path.ancestors().skip(1) {
                 if let Some(name) = ancestor.file_name().and_then(|n| n.to_str()) {
-                    if prefixes.iter().any(|prefix| name.starts_with(prefix)) {
+                    if prefixes.iter().any(|enc| project_dir_matches(name, enc)) {
                         return true;
                     }
                 }
@@ -1701,6 +1729,77 @@ mod tests {
     #[cfg(unix)]
     fn link_dir(target: &Path, link: &Path) -> std::io::Result<()> {
         std::os::unix::fs::symlink(target, link)
+    }
+
+    #[test]
+    fn encode_project_turns_every_non_alphanumeric_into_dash() {
+        let enc = encode_project_prefixes(r"C:\Main\Project\AnalyzerCH\.claude\worktrees\builder-b4");
+        assert_eq!(enc[0], "C--Main-Project-AnalyzerCH--claude-worktrees-builder-b4");
+        assert_eq!(
+            encode_project_prefixes(r"C:\Main\Project\Foo"),
+            vec!["C--Main-Project-Foo", "C--Main--Project--Foo"]
+        );
+        assert_eq!(encode_project_prefixes(r"C:\Users\me\v2.5_x y")[0], "C--Users-me-v2-5-x-y");
+    }
+
+    #[test]
+    fn encode_project_accepts_each_path_form() {
+        let want = encode_project_prefixes(r"C:\Main\Foo");
+        for p in ["C:/Main/Foo", "/c/Main/Foo", "c:\\Main\\Foo\\", "C:/Main//Foo/", "/c/Main/Foo/"] {
+            assert_eq!(encode_project_prefixes(p), want, "{p}");
+        }
+    }
+
+    #[test]
+    fn encode_project_drive_alone_is_the_drive_root() {
+        for p in ["C:", "C:/", r"C:\", "/c", "/c/", "c:"] {
+            assert_eq!(encode_project_prefixes(p), vec!["C--"], "{p}");
+        }
+    }
+
+    #[test]
+    fn encode_project_rejects_other_input_without_panicking() {
+        for p in ["", "/", "C", "C:foo", "/é/x", "é:/x", "/cc/x", "relative/dir", "日本"] {
+            assert!(encode_project_prefixes(p).is_empty(), "{p}");
+        }
+    }
+
+    #[test]
+    fn project_match_takes_the_project_and_its_worktrees_only() {
+        let enc = &encode_project_prefixes(r"C:\Main\Project\AnalyzerCH")[0];
+        assert!(project_dir_matches("C--Main-Project-AnalyzerCH", enc));
+        assert!(project_dir_matches("C--Main-Project-AnalyzerCH--claude-worktrees-builder-b4", enc));
+        assert!(!project_dir_matches("C--Main-Project-AnalyzerCH-design", enc));
+        assert!(!project_dir_matches("C--Main-Project-AnalyzerCH2", enc));
+
+        let enc = &encode_project_prefixes(r"C:\Main\Project\ch-data")[0];
+        assert!(project_dir_matches("C--Main-Project-ch-data", enc));
+        assert!(!project_dir_matches("C--Main-Project-ch-data-collector", enc));
+        assert!(!project_dir_matches("C--Main-Project-ch-data-model", enc));
+
+        let enc = &encode_project_prefixes(r"C:\Main\Project")[0];
+        assert!(!project_dir_matches("C--Main-Project-AnalyzerCH", enc));
+    }
+
+    #[test]
+    fn filter_by_project_keeps_old_convention_worktrees_and_subagents() {
+        let file = |dir: &str, rest: &str| JsonlFile {
+            path: PathBuf::from(format!("C:/h/.claude/projects/{dir}/{rest}")),
+            mtime: None,
+        };
+        let files = vec![
+            file("C--Main-Project-dotfiles", "a.jsonl"),
+            file("C--Main--Project--dotfiles", "b.jsonl"),
+            file("C--Main-Project-dotfiles--claude-worktrees-x", "c.jsonl"),
+            file("C--Main-Project-dotfiles", "s1/subagents/d.jsonl"),
+            file("C--Main-Project-dotfiles-idle-notify2", "e.jsonl"),
+            file("C--Main-Project-other", "f.jsonl"),
+        ];
+        let names: Vec<String> = filter_by_project(&files, r"C:\Main\Project\dotfiles")
+            .iter()
+            .map(|f| f.path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["a.jsonl", "b.jsonl", "c.jsonl", "d.jsonl"]);
     }
 
     #[test]
