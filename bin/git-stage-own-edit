@@ -53,8 +53,10 @@ def fail(message):
     sys.exit(1)
 
 
-top = git("rev-parse", "--show-toplevel").decode().strip()
-store = os.path.join(top, git("rev-parse", "--git-path", "stage-own-edit").decode().strip())
+# One rev-parse, run from the caller's directory (top is still None), so a
+# relative --git-path is relative to that directory.
+top, store = git("rev-parse", "--show-toplevel", "--git-path", "stage-own-edit").decode().rstrip("\n").split("\n")
+store = os.path.abspath(store)
 real_top = os.path.realpath(top)
 
 
@@ -88,13 +90,15 @@ def lines_of(data):
     return [line.rstrip("\r") for line in lines], has_final_newline
 
 
-def staged_version(path):
+def index_entry(path):
+    # The mode and blob id in the index; begin needs only this check, not
+    # the blob itself.
     entry = git("ls-files", "-s", "--", path).decode().split()
     if not entry:
         fail(f"{path} is not tracked; stage a new file with git add")
     if entry[2] != "0":
         fail(f"{path} has unresolved conflicts")
-    return entry[0], git("cat-file", "blob", entry[1])
+    return entry[0], entry[1]
 
 
 def stage(file):
@@ -106,7 +110,8 @@ def stage(file):
         before, before_newline = lines_of(handle.read())
     with open(file, "rb") as handle:
         after, after_newline = lines_of(handle.read())
-    mode, blob = staged_version(path)
+    mode, blob_id = index_entry(path)
+    blob = git("cat-file", "blob", blob_id)
     staged, staged_newline = lines_of(blob)
     crlf = b"\r\n" in blob
 
@@ -163,7 +168,7 @@ if command == "begin":
     os.makedirs(store, exist_ok=True)
     for file in files:
         path = repo_path(file)
-        staged_version(path)
+        index_entry(path)
         with open(file, "rb") as source, open(copy_of(path), "wb") as target:
             target.write(source.read())
 elif command == "stage":

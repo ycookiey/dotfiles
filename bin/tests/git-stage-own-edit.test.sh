@@ -114,6 +114,10 @@ git -C "$d" add sub/g.txt && git -C "$d" commit -qm sub
 sed -i '1s/.*/A-other/' "$d/sub/g.txt"
 (cd "$d/sub" && "$TOOL" begin g.txt && sed -i '2s/.*/B-mine/' g.txt && "$TOOL" stage g.txt >/dev/null)
 check "subdir: only mine is staged" "$(printf '%s\n' a B-mine)" "$(git -C "$d" show :sub/g.txt)"
+# begin from the subdirectory and stage from the top find the same copy
+# (A-other is still unstaged on line 1).
+(cd "$d/sub" && "$TOOL" begin g.txt && sed -i '2s/.*/B-mine2/' g.txt && cd .. && "$TOOL" stage sub/g.txt >/dev/null)
+check "subdir then top: only mine is staged" "$(printf '%s\n' a B-mine2)" "$(git -C "$d" show :sub/g.txt)"
 
 # 10. My insertion and my edit of the next line land in order, even with
 # someone else's line between them in the working tree.
