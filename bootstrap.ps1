@@ -34,8 +34,12 @@ if ($isAdmin) {
     $personalization = Get-ItemProperty $personalizationPath -ea 0
     if ($personalization.NoLockScreen -ne 1) {
         Write-Host "Disabling lock screen..." -ForegroundColor Yellow
+        # The policy key does not exist by default, and Set-ItemProperty does not create it
+        if (!(Test-Path $personalizationPath)) { $null = New-Item $personalizationPath -Force }
         Set-ItemProperty $personalizationPath -Name NoLockScreen -Value 1 -Force
     }
+} else {
+    Write-Host 'Skipping HKLM settings (UTF-8 locale / UAC / lock screen): run as admin to apply' -ForegroundColor DarkGray
 }
 
 # HKCU settings
@@ -84,7 +88,9 @@ $scoopSnapshot = Join-Path $env:TEMP 'dotfiles-scoopfile.snapshot.json'
 Copy-Item "$Dir\install\scoopfile.json" $scoopSnapshot -Force
 
 # Phase 1: core apps (skip large -- abort on failure)
-$pwsh = Join-Path $scoopShims 'pwsh.exe'
+# pwsh may come from MSI/winget instead of scoop, so there may be no scoop shim
+$pwsh = (Get-Command pwsh -CommandType Application -ea 0 | Select-Object -First 1).Source
+if (!$pwsh) { $pwsh = Join-Path $scoopShims 'pwsh.exe' }
 & $pwsh -NoProfile -ExecutionPolicy Bypass -File "$Dir\install\scoop.ps1" -SkipLarge -ScoopFile $scoopSnapshot
 if ($LASTEXITCODE -ne 0) {
     throw "Phase 1 failed with exit code $LASTEXITCODE."
