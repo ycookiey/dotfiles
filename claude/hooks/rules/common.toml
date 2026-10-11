@@ -252,6 +252,18 @@ all = ['''open\([^)]*["']w[bt+]?["'][^)]*\)\.write\(''']
 action = "context"
 message = '''open(p, "w"/"wb") は開いた時点で file を空にする。open(...).write(f(x)) の f(x) が例外で止まると、中身が消えたまま残る。中身を先に作り終え、一時 file に書いてから os.replace で置き換える。既存の file の一部を直すだけなら Edit ツールを使う。'''
 
+# Git Bash's find started at / or a drive root walks the whole drive for
+# tens of minutes, and keeps a core busy after the Bash tool gives up on it
+# (2026-10-11: three sessions each left one running for hours).
+[[rule]]
+id = "find-root-guard"
+event = "PreToolUse"
+tools = '^Bash$'
+fields = ["tool_input.command"]
+all = ['''(^|[;&|(`[:space:]])find([[:space:]]+-[HLP])*[[:space:]]+["']?(/|/[[:alpha:]]/?|/mnt/[[:alpha:]]/?|[[:alpha:]]:[/\\]?)["']?([[:space:];&|)]|$)''']
+action = "deny"
+message = '''Git Bash の find を / やドライブのルート(/c・C:/・/mnt/c)から始めると、ドライブ全体をたどって何十分も終わらない。Bash ツールが時間切れで諦めた後も裏で残り、1 コアを使い続ける(親のない find は bin/reap-orphans.ps1 が後で止める)。名前で探すなら fd を使う(例: fd -HI -g 'base.json' ~、ディレクトリは -t d)。find を使うなら、心当たりのある場所から始める。'''
+
 # Text typed into web forms or sent as messages goes out as written: the
 # spacing and bracket rules in docs/external-japanese.md were known and
 # still missed when filling a form.

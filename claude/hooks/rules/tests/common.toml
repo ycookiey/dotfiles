@@ -550,6 +550,54 @@ expect = "quiet"
 command = '''python -c 'print(open("a.txt").read())' '''
 
 [[case]]
+name = "find-root"
+rule = "find-root-guard"
+expect = "deny"
+command = "find / -maxdepth 6 -name 'live.py'"
+
+[[case]]
+name = "find-root-path"
+rule = "find-root-guard"
+expect = "deny"
+command = "find / -path '*/@ycookiey/tsconfig/base.json' -not -path '*/proc/*' 2>/dev/null | head -3"
+
+[[case]]
+name = "find-drive"
+rule = "find-root-guard"
+expect = "deny"
+command = "cd x && find /c/ -type d -name tokenizers-0.23.2"
+
+[[case]]
+name = "find-drive-windows"
+rule = "find-root-guard"
+expect = "deny"
+command = "find -L 'C:/' -name a.txt"
+
+[[case]]
+name = "find-wsl-drive"
+rule = "find-root-guard"
+expect = "deny"
+command = "find /mnt/c -name a.txt"
+
+[[case]]
+name = "find-folder"
+rule = "find-root-guard"
+expect = "quiet"
+command = "find /c/Main/Project/app -name '*.ts'"
+
+[[case]]
+name = "find-here"
+rule = "find-root-guard"
+expect = "quiet"
+command = "find . -path / -prune"
+
+[[case]]
+name = "find-in-text"
+rule = "find-root-guard"
+expect = "quiet"
+command = '''grep -n "find /" notes.md'''
+
+[[case]]
 name = "form-ja-ascii-space"
 rule = "ja-ascii-space-reminder"
 expect = "context"
