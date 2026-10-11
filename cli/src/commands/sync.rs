@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail};
 use serde_json::{Map, Value};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime};
@@ -20,10 +21,18 @@ pub fn run(dot_arg: Option<String>, force: bool) {
     };
 
     let mut synced = false;
-    if let Err(e) = sync_claude_settings(&dot) {
+    let home = dirs::home_dir();
+    let claude_dirs = match &home {
+        Some(h) => claude_dirs(h),
+        None => {
+            eprintln!("dotcli sync: home dir not found");
+            Vec::new()
+        }
+    };
+    if let Err(e) = sync_claude_settings(&dot, &claude_dirs) {
         eprintln!("dotcli sync settings: {e}");
     }
-    if let Err(e) = sync_claude_keybindings(&dot) {
+    if let Err(e) = sync_claude_keybindings(&dot, &claude_dirs) {
         eprintln!("dotcli sync keybindings: {e}");
     }
     let stamp_dir = stamp_dir();
@@ -38,10 +47,12 @@ pub fn run(dot_arg: Option<String>, force: bool) {
         Ok(false) => {}
         Err(e) => eprintln!("dotcli sync winget: {e}"),
     }
-    match sync_mcp_servers(&dot) {
-        Ok(true) => synced = true,
-        Ok(false) => {}
-        Err(e) => eprintln!("dotcli sync mcp: {e}"),
+    if let Some(home) = &home {
+        match sync_mcp_servers(&dot, home, &claude_dirs) {
+            Ok(true) => synced = true,
+            Ok(false) => {}
+            Err(e) => eprintln!("dotcli sync mcp: {e}"),
+        }
     }
     if synced {
         println!("synced");
@@ -62,7 +73,7 @@ fn resolve_dotfiles(arg: Option<String>) -> Result<PathBuf> {
 
 // --- 1) Claude settings.json merge ---
 
-fn sync_claude_settings(dot: &Path) -> Result<()> {
+fn sync_claude_settings(dot: &Path, claude_dirs: &[PathBuf]) -> Result<()> {
     let template_path = dot.join("claude").join("settings.json");
     if !template_path.exists() {
         return Ok(());
@@ -73,8 +84,8 @@ fn sync_claude_settings(dot: &Path) -> Result<()> {
         .as_object()
         .context("claude/settings.json is not a JSON object")?;
 
-    for dir in claude_dirs()? {
-        let target = dir.join("settings.json");
+    // `.claude-<n>/settings.json` is usually a symlink to `~/.claude`'s: merge each file once.
+    for target in unique_files(claude_dirs.iter().map(|d| d.join("settings.json"))) {
         let mut existing: Map<String, Value> = match std::fs::read_to_string(&target) {
             Ok(s) => match serde_json::from_str::<Value>(&s) {
                 Ok(Value::Object(m)) => m,
@@ -104,7 +115,7 @@ fn sync_claude_settings(dot: &Path) -> Result<()> {
 //
 // prev が存在しない初回 sync 時は削除判定をスキップし、単純マージとして振る舞う。
 
-fn sync_claude_keybindings(dot: &Path) -> Result<()> {
+fn sync_claude_keybindings(dot: &Path, claude_dirs: &[PathBuf]) -> Result<()> {
     let template_path = dot.join("claude").join("keybindings.json");
     if !template_path.exists() {
         return Ok(());
@@ -115,9 +126,27 @@ fn sync_claude_keybindings(dot: &Path) -> Result<()> {
         .as_object()
         .context("claude/keybindings.json is not a JSON object")?;
 
-    for dir in claude_dirs()? {
+    // The prev file of every dir is read before any is rewritten: in the usual setup the
+    // `.claude-<n>` prev files are symlinks to `~/.claude`'s, so updating it first would
+    // make the later dirs see prev == template and keep bindings the template dropped.
+    // Snapshots are keyed by the resolved file, so separate prev files also work.
+    let prev_path = |dir: &Path| dir.join(".dotcli-keybindings-prev.json");
+    let mut prev_snapshots: HashMap<PathBuf, Option<Value>> = HashMap::new();
+    for dir in claude_dirs {
+        let p = prev_path(dir);
+        prev_snapshots.entry(file_key(&p)).or_insert_with(|| {
+            std::fs::read_to_string(&p)
+                .ok()
+                .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        });
+    }
+
+    let mut seen_targets = HashSet::new();
+    for dir in claude_dirs {
         let target = dir.join("keybindings.json");
-        let prev_path = dir.join(".dotcli-keybindings-prev.json");
+        if !seen_targets.insert(file_key(&target)) {
+            continue;
+        }
 
         let mut existing: Map<String, Value> = match std::fs::read_to_string(&target) {
             Ok(s) => match serde_json::from_str::<Value>(&s) {
@@ -127,11 +156,10 @@ fn sync_claude_keybindings(dot: &Path) -> Result<()> {
             Err(_) => Map::new(),
         };
 
-        let prev: Option<Value> = std::fs::read_to_string(&prev_path)
-            .ok()
-            .and_then(|s| serde_json::from_str::<Value>(&s).ok());
+        let prev = prev_snapshots
+            .get(&file_key(&prev_path(dir)))
+            .and_then(|v| v.as_ref());
         let prev_bindings = prev
-            .as_ref()
             .and_then(|v| v.as_object())
             .and_then(|o| o.get("bindings"));
 
@@ -146,9 +174,11 @@ fn sync_claude_keybindings(dot: &Path) -> Result<()> {
         }
         let serialized = serde_json::to_string_pretty(&Value::Object(existing))?;
         write_if_different(&target, &serialized)?;
+    }
 
-        // 今回適用したテンプレートを次回比較用に保存
-        std::fs::write(&prev_path, &template_str)?;
+    // 今回適用したテンプレートを次回比較用に保存 (全 keybindings.json の更新後、実体ごとに 1 回)
+    for p in unique_files(claude_dirs.iter().map(|d| prev_path(d))) {
+        write_if_different(&p, &template_str)?;
     }
     Ok(())
 }
@@ -158,7 +188,7 @@ fn three_way_merge_keybindings_array(
     existing: Option<&Value>,
     template: &Value,
 ) -> Value {
-    use std::collections::{BTreeSet, HashMap};
+    use std::collections::BTreeSet;
 
     let template_arr = match template.as_array() {
         Some(a) => a,
@@ -183,7 +213,6 @@ fn three_way_merge_keybindings_array(
     // template: context -> bindings & extras（context, bindings 以外のキー）
     let mut tpl_bindings_by_ctx: HashMap<String, Map<String, Value>> = HashMap::new();
     let mut tpl_extras_by_ctx: HashMap<String, Map<String, Value>> = HashMap::new();
-    let mut tpl_ctx_order: Vec<String> = Vec::new();
     for entry in template_arr {
         let Some(obj) = entry.as_object() else { continue };
         let Some(ctx) = obj.get("context").and_then(|v| v.as_str()) else { continue };
@@ -200,9 +229,6 @@ fn three_way_merge_keybindings_array(
             }
         }
         tpl_extras_by_ctx.insert(ctx.to_string(), extras);
-        if !tpl_ctx_order.contains(&ctx.to_string()) {
-            tpl_ctx_order.push(ctx.to_string());
-        }
     }
 
     let mut result: Vec<Value> = match existing.and_then(|v| v.as_array()) {
@@ -286,22 +312,24 @@ fn three_way_merge_keybindings_array(
     Value::Array(result)
 }
 
-fn claude_dirs() -> Result<Vec<PathBuf>> {
-    let home = dirs::home_dir().context("home dir not found")?;
+/// Claude config dirs in `home`: `~/.claude` first, then the account dirs
+/// (`is_account_dir_name`) in name order. Read once per sync and shared by every step.
+fn claude_dirs(home: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let primary = home.join(".claude");
     if primary.is_dir() {
         out.push(primary);
     }
-    if let Ok(entries) = std::fs::read_dir(&home) {
-        for e in entries.flatten() {
-            let name = e.file_name().to_string_lossy().to_string();
-            if is_account_dir_name(&name) && e.path().is_dir() {
-                out.push(e.path());
-            }
-        }
-    }
-    Ok(out)
+    let mut accounts: Vec<PathBuf> = std::fs::read_dir(home)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| is_account_dir_name(&e.file_name().to_string_lossy()) && e.path().is_dir())
+        .map(|e| e.path())
+        .collect();
+    accounts.sort();
+    out.extend(accounts);
+    out
 }
 
 /// Extra Claude account config dirs are named `.claude-<digits>` (`^\.claude-\d+$`).
@@ -551,7 +579,7 @@ fn export_wingetfile(dot: &Path) -> Result<Option<bool>> {
 
 // --- 4) MCP servers placeholder expansion + injection ---
 
-fn sync_mcp_servers(dot: &Path) -> Result<bool> {
+fn sync_mcp_servers(dot: &Path, home: &Path, claude_dirs: &[PathBuf]) -> Result<bool> {
     // node availability is not required (Rust handles JSON injection directly)
     let mcp_file = dot.join("claude").join("mcp-servers.json");
     if !mcp_file.exists() {
@@ -559,7 +587,6 @@ fn sync_mcp_servers(dot: &Path) -> Result<bool> {
     }
     let raw = std::fs::read_to_string(&mcp_file)?;
 
-    let home = dirs::home_dir().context("home dir not found")?;
     let projects = dot.parent().unwrap_or(dot).to_path_buf();
     let localappdata = std::env::var("LOCALAPPDATA").unwrap_or_default();
     let appdata = std::env::var("APPDATA").unwrap_or_default();
@@ -593,28 +620,18 @@ fn sync_mcp_servers(dot: &Path) -> Result<bool> {
     }
     let resolved_value = Value::Object(resolved);
 
-    let mut dirs: Vec<PathBuf> = Vec::new();
-    let primary = home.join(".claude");
-    if primary.join(".claude.json").exists() {
-        dirs.push(primary);
-    }
-    if let Ok(entries) = std::fs::read_dir(&home) {
-        for e in entries.flatten() {
-            let name = e.file_name().to_string_lossy().to_string();
-            if is_account_dir_name(&name) && e.path().is_dir() {
-                if e.path().join(".claude.json").exists() {
-                    dirs.push(e.path());
-                }
-            }
-        }
-    }
-    if dirs.is_empty() {
+    let json_paths = unique_files(
+        claude_dirs
+            .iter()
+            .map(|d| d.join(".claude.json"))
+            .filter(|p| p.exists()),
+    );
+    if json_paths.is_empty() {
         return Ok(false);
     }
 
     let mut changed = false;
-    for d in &dirs {
-        let json_path = d.join(".claude.json");
+    for json_path in &json_paths {
         let raw = match std::fs::read_to_string(&json_path) {
             Ok(s) => s,
             Err(_) => continue,
@@ -709,6 +726,22 @@ fn command_exists(cmd: &str) -> bool {
         return p.exists();
     }
     which(cmd).is_some()
+}
+
+/// Identity of a file for de-duplication: its canonical path (symlinks resolved), or the
+/// path as given when that fails (missing file, dangling link). Only used as a key.
+fn file_key(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// `paths` in order, without later paths that resolve to a file already listed (e.g.
+/// `~/.claude-1/settings.json` symlinked to `~/.claude/settings.json`).
+fn unique_files(paths: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
+    let mut seen = HashSet::new();
+    paths
+        .into_iter()
+        .filter(|p| seen.insert(file_key(p)))
+        .collect()
 }
 
 fn write_if_different(path: &Path, new_content: &str) -> Result<bool> {
@@ -849,5 +882,210 @@ mod tests {
         assert!(!is_account_dir_name(".claude-4.lock"));
         assert!(!is_account_dir_name(".claude-1a"));
         assert!(!is_account_dir_name(".claude-１"));
+    }
+
+    // --- settings / keybindings sync on a temp home ---
+
+    const PREV_V1: &str = r#"{"bindings":[{"context":"Chat","bindings":{"a":"x","b":"y"}}]}"#;
+    const TEMPLATE_V2: &str = r#"{"bindings":[{"context":"Chat","bindings":{"a":"x2"}}]}"#;
+    const LOCAL: &str = r#"{"bindings":[{"context":"Chat","bindings":{"a":"x","b":"y","c":"mine"}}]}"#;
+
+    /// `<tmp>/dot/claude/{keybindings,settings}.json` and `<tmp>/home` with `.claude`
+    /// and `.claude-1`, each holding a real keybindings.json; prev only in `.claude`.
+    fn temp_home(name: &str) -> (TempDir, PathBuf, PathBuf) {
+        let tmp = TempDir::new(name);
+        let dot = tmp.0.join("dot");
+        let home = tmp.0.join("home");
+        std::fs::create_dir_all(dot.join("claude")).unwrap();
+        std::fs::write(dot.join("claude/keybindings.json"), TEMPLATE_V2).unwrap();
+        std::fs::write(dot.join("claude/settings.json"), r#"{"k":1}"#).unwrap();
+        for d in [".claude", ".claude-1", ".claude-browsers", ".claude-1.lock"] {
+            std::fs::create_dir_all(home.join(d)).unwrap();
+        }
+        for d in [".claude", ".claude-1"] {
+            std::fs::write(home.join(d).join("keybindings.json"), LOCAL).unwrap();
+        }
+        std::fs::write(home.join(".claude/.dotcli-keybindings-prev.json"), PREV_V1).unwrap();
+        (tmp, dot, home)
+    }
+
+    fn chat_keys(path: &Path) -> Vec<String> {
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let mut keys: Vec<String> = v["bindings"][0]["bindings"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        keys.sort();
+        keys
+    }
+
+    fn assert_template_removal_reaches_every_dir(home: &Path, dot: &Path) {
+        let dirs = super::claude_dirs(home);
+        super::sync_claude_keybindings(dot, &dirs).unwrap();
+        for d in [".claude", ".claude-1"] {
+            assert_eq!(
+                chat_keys(&home.join(d).join("keybindings.json")),
+                ["a", "c"],
+                "{d}: b was removed from the template"
+            );
+        }
+        let prev = std::fs::read_to_string(home.join(".claude/.dotcli-keybindings-prev.json"));
+        assert_eq!(prev.unwrap().trim_end(), TEMPLATE_V2);
+    }
+
+    #[test]
+    fn claude_dirs_lists_primary_and_numbered_accounts_only() {
+        let (_tmp, _dot, home) = temp_home("dirs");
+        std::fs::create_dir_all(home.join(".claude-10")).unwrap();
+        let names: Vec<String> = super::claude_dirs(&home)
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, [".claude", ".claude-1", ".claude-10"]);
+    }
+
+    #[test]
+    fn keybinding_removal_reaches_dirs_sharing_prev_by_hard_link() {
+        let (_tmp, dot, home) = temp_home("kb-hard");
+        std::fs::hard_link(
+            home.join(".claude/.dotcli-keybindings-prev.json"),
+            home.join(".claude-1/.dotcli-keybindings-prev.json"),
+        )
+        .unwrap();
+        assert_template_removal_reaches_every_dir(&home, &dot);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn keybinding_removal_reaches_dirs_sharing_prev_by_symlink() {
+        let (_tmp, dot, home) = temp_home("kb-sym");
+        if let Err(e) = std::os::windows::fs::symlink_file(
+            home.join(".claude/.dotcli-keybindings-prev.json"),
+            home.join(".claude-1/.dotcli-keybindings-prev.json"),
+        ) {
+            // The hard-link test covers the same sharing; symlinks need Developer Mode.
+            eprintln!("symlink unavailable ({e}); covered by the hard-link test");
+            return;
+        }
+        assert_template_removal_reaches_every_dir(&home, &dot);
+        assert!(
+            std::fs::symlink_metadata(home.join(".claude-1/.dotcli-keybindings-prev.json"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+
+    #[test]
+    fn keybinding_removal_with_separate_prev_files() {
+        let (_tmp, dot, home) = temp_home("kb-sep");
+        std::fs::write(home.join(".claude-1/.dotcli-keybindings-prev.json"), PREV_V1).unwrap();
+        assert_template_removal_reaches_every_dir(&home, &dot);
+        let prev1 = std::fs::read_to_string(home.join(".claude-1/.dotcli-keybindings-prev.json"));
+        assert_eq!(prev1.unwrap().trim_end(), TEMPLATE_V2);
+    }
+
+    #[test]
+    fn second_sync_rewrites_nothing() {
+        let (_tmp, dot, home) = temp_home("idem");
+        std::fs::hard_link(
+            home.join(".claude/.dotcli-keybindings-prev.json"),
+            home.join(".claude-1/.dotcli-keybindings-prev.json"),
+        )
+        .unwrap();
+        let dirs = super::claude_dirs(&home);
+        super::sync_claude_settings(&dot, &dirs).unwrap();
+        super::sync_claude_keybindings(&dot, &dirs).unwrap();
+
+        let files: Vec<PathBuf> = [".claude", ".claude-1"]
+            .iter()
+            .flat_map(|d| {
+                ["settings.json", "keybindings.json", ".dotcli-keybindings-prev.json"]
+                    .map(|f| home.join(d).join(f))
+            })
+            .collect();
+        for f in &files {
+            std::fs::File::options()
+                .write(true)
+                .open(f)
+                .unwrap()
+                .set_modified(base())
+                .unwrap();
+        }
+        super::sync_claude_settings(&dot, &dirs).unwrap();
+        super::sync_claude_keybindings(&dot, &dirs).unwrap();
+        for f in &files {
+            let m = std::fs::metadata(f).unwrap().modified().unwrap();
+            assert_eq!(m, base(), "{} was rewritten", f.display());
+        }
+        // Non-account dirs got nothing.
+        for d in [".claude-browsers", ".claude-1.lock"] {
+            assert_eq!(std::fs::read_dir(home.join(d)).unwrap().count(), 0, "{d}");
+        }
+    }
+
+    #[test]
+    fn unique_files_drops_paths_to_the_same_file() {
+        let tmp = TempDir::new("unique");
+        let a = tmp.0.join("a.json");
+        std::fs::write(&a, "{}").unwrap();
+        let missing = tmp.0.join("missing.json");
+        let mut paths = vec![a.clone(), missing.clone(), tmp.0.join(".").join("a.json")];
+        #[cfg(windows)]
+        {
+            // A junction needs no privilege (file symlinks need Developer Mode).
+            let junction = tmp.0.join("junction");
+            let ok = std::process::Command::new("cmd")
+                .args(["/d", "/c", "mklink", "/J"])
+                .arg(&junction)
+                .arg(&tmp.0)
+                .stdout(std::process::Stdio::null())
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok, "mklink /J failed");
+            paths.push(junction.join("a.json"));
+            paths.push(junction.join("missing.json"));
+            let link = tmp.0.join("link.json");
+            if std::os::windows::fs::symlink_file(&a, &link).is_ok() {
+                paths.push(link);
+            }
+        }
+        let n = paths.len();
+        let unique = super::unique_files(paths);
+        assert!(n >= 5);
+        // A missing file cannot be resolved, so the junction path to it stays distinct.
+        #[cfg(windows)]
+        assert_eq!(unique, [a, missing, tmp.0.join("junction").join("missing.json")]);
+        #[cfg(not(windows))]
+        assert_eq!(unique, [a, missing]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn account_dir_junction_to_primary_is_synced_once() {
+        let (_tmp, dot, home) = temp_home("junction");
+        let ok = std::process::Command::new("cmd")
+            .args(["/d", "/c", "mklink", "/J"])
+            .arg(home.join(".claude-2"))
+            .arg(home.join(".claude"))
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "mklink /J failed");
+        let dirs = super::claude_dirs(&home);
+        assert_eq!(dirs.len(), 3);
+        super::sync_claude_settings(&dot, &dirs).unwrap();
+        super::sync_claude_keybindings(&dot, &dirs).unwrap();
+        // .claude-2 is .claude: its prev was read before the update, so b is removed.
+        assert_eq!(chat_keys(&home.join(".claude-2/keybindings.json")), ["a", "c"]);
+        // .claude-1 has no prev of its own: a first sync only merges.
+        assert_eq!(chat_keys(&home.join(".claude-1/keybindings.json")), ["a", "b", "c"]);
+        let settings = std::fs::read_to_string(home.join(".claude/settings.json")).unwrap();
+        assert!(settings.contains("\"k\": 1"));
     }
 }
