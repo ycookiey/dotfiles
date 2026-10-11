@@ -205,7 +205,6 @@ if (gcm nu -ea 0) {
 Invoke-Step 'Claude config links' {
     mkd "$HOME\.claude"
     mkl "$HOME\.claude\aliases.ps1" "$ScriptDir\pwsh\aliases.ps1"
-    mkl "$HOME\.claude\statusline.py" "$ScriptDir\claude\statusline.py"
     mkl "$HOME\.claude\CLAUDE.md" "$ScriptDir\claude\CLAUDE.md"
     mkl "$HOME\.claude\rules" "$ScriptDir\claude\rules"
     mkl "$HOME\.claude\docs" "$ScriptDir\claude\docs"
