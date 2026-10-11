@@ -173,3 +173,32 @@ $env.config = ($env.config | upsert hooks.pre_prompt {|cfg|
         }
     }
 })
+
+# --- Right prompt (cmd_duration) ---
+# starship.toml の right_format は $cmd_duration だけなので、毎プロンプト `starship prompt --right` を
+# 起動せず nushell 内で同じ表示を作る (cache/starship.nu の PROMPT_COMMAND_RIGHT を上書き)。
+# starship.toml の [cmd_duration] (min_time = 500, format = "took [$duration](bold yellow)") を
+# 変えたら、ここの閾値・書式も合わせる。right_format に他の module を足した場合も同様に追従しない
+const CMD_DURATION_MIN_MS = 500
+
+# starship の cmd_duration と同じ表記 (show_milliseconds = false): 先頭の 0 の単位を省き、
+# 秒は常に出す。例 0s / 59s / 2m0s / 1h0m0s / 1d0h0m1s
+def format-cmd-duration [ms: int]: nothing -> string {
+    let s = ($ms // 1000)
+    [
+        [n u];
+        [($s // 86400) d]
+        [(($s mod 86400) // 3600) h]
+        [(($s mod 3600) // 60) m]
+        [($s mod 60) s]
+    ] | skip while {|p| $p.n == 0 and $p.u != 's' } | each {|p| $"($p.n)($p.u)" } | str join
+}
+
+$env.PROMPT_COMMAND_RIGHT = {||
+    # CMD_DURATION_MS の初期値 "0823" は未実行の意味 (starship init と同じく 0 扱い)
+    let raw = ($env.CMD_DURATION_MS? | default '0823')
+    let ms = if $raw == '0823' { 0 } else { $raw | into int }
+    if $ms < $CMD_DURATION_MIN_MS { '' } else {
+        $"took (ansi yellow_bold)(format-cmd-duration $ms)(ansi reset)"
+    }
+}
