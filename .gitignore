@@ -54,5 +54,10 @@ node_modules/
 .cursor-prompt.md
 .cursor-agent.log
 
+# Codex agent temp files
+.codex-summary.md
+.codex-plan.md
+.codex-agent.log
+
 # Agent team output
 .agent-output/
