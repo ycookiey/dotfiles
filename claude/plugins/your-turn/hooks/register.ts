@@ -101,9 +101,48 @@ async function record($: Engine, file: string | undefined, verdict: Record<strin
   await $.fs.write(file, lines.slice(-MAX_VERDICTS).join('\n') + '\n').catch(() => undefined)
 }
 
-// Shows `text` while `id` is still the latest turn.
-function show($: Engine, id: string, text: string): void {
-  if (turnId === id) $.ui.status(text)
+// When the latest turn ended, and the timer redrawing its line.
+let endedAt = 0
+let ticker: { cancel: () => void } | undefined
+
+type Kind = 'user' | 'error' | 'refusal'
+
+// `2 min`, `1h 15m`; nothing under a minute.
+function duration(ms: number): string | undefined {
+  const minutes = Math.floor(ms / 60_000)
+  if (minutes < 1) return undefined
+  const hours = Math.floor(minutes / 60)
+  if (hours === 0) return `${minutes} min`
+  return minutes % 60 === 0 ? `${hours}h` : `${hours}h ${minutes % 60}m`
+}
+
+// The status text, read after the `⚠your-turn:` the engine puts first
+// (`⚠your-turn: for 2 min`).
+function line(kind: Kind, bg: number, now: number): string {
+  const t = duration(now - endedAt)
+  const head =
+    kind === 'user'
+      ? t === undefined ? 'just now' : `for ${t}`
+      : `${kind === 'error' ? 'stopped on an API error' : 'stopped on a refusal'}${t === undefined ? '' : ` · ${t} ago`}`
+  return bg > 0 ? `${head} · ${bg} task${bg === 1 ? '' : 's'} in bg` : head
+}
+
+// Shows the line while `id` is still the latest turn, with the time since
+// that turn ended, redrawn every minute until the next turn starts.
+async function show($: Engine, id: string, kind: Kind, bg = 0): Promise<void> {
+  const now = await $.clock.now()
+  if (turnId !== id) return
+  $.ui.status(line(kind, bg, now))
+  ticker?.cancel()
+  ticker = $.clock.every(60_000, () => {
+    if (turnId !== id) {
+      ticker?.cancel()
+      return
+    }
+    void $.clock.now().then(t => {
+      if (turnId === id) $.ui.status(line(kind, bg, t))
+    })
+  })
 }
 
 async function judge($: Engine, id: string, reason: string, answer: string): Promise<void> {
@@ -114,22 +153,22 @@ async function judge($: Engine, id: string, reason: string, answer: string): Pro
 
   if (reason === 'aborted') return record($, file, { ...base, decision: 'none' })
   if (reason === 'error') {
-    show($, id, 'API のエラーで止まった')
+    await show($, id, 'error')
     return record($, file, { ...base, decision: 'error' })
   }
   if (reason === 'refusal') {
-    show($, id, '応答を断って止まった')
+    await show($, id, 'refusal')
     return record($, file, { ...base, decision: 'refusal' })
   }
   const stop = dir === undefined ? undefined : await readStop($, `${dir}/${session}.stop.json`)
   // No record from this turn's Stop (yhooky missing or failed): nothing
   // shows Claude will resume by itself, so it is the user's turn.
   if (stop === undefined || stop.at < startedAt) {
-    show($, id, '入力を待っている')
+    await show($, id, 'user')
     return record($, file, { ...base, decision: 'user', stop: 'missing' })
   }
   if (stop.tasks.length === 0 && stop.crons === 0) {
-    show($, id, '入力を待っている')
+    await show($, id, 'user')
     return record($, file, { ...base, decision: 'user', tasks: 0, dropped: stop.dropped.length })
   }
   const r = await $.model.complete({
@@ -142,7 +181,7 @@ async function judge($: Engine, id: string, reason: string, answer: string): Pro
   const extra = { tasks: stop.tasks.length, crons: stop.crons, label, usage: r.usage }
   if (label === 'WAIT') return record($, file, { ...base, decision: 'wait', ...extra })
   // A failed call counts as the user's turn: a line too many beats a miss.
-  show($, id, `入力を待っている(裏で ${stop.tasks.length + stop.crons} 件が動作中)`)
+  await show($, id, 'user', stop.tasks.length + stop.crons)
   return record($, file, { ...base, decision: 'user', ...extra })
 }
 
@@ -153,12 +192,15 @@ export const register: Register = on => {
     const text = e.text.trimStart()
     started = text === '' || text.startsWith('<task-notification>') ? 'notification' : 'user'
     promptHead = text.slice(0, 20)
+    ticker?.cancel()
+    ticker = undefined
     $.ui.status(undefined)
     return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
     const done = await next(e)
+    endedAt = await $.clock.now()
     // Nobody sees the line where nothing draws (a plain -p run): skip the
     // model call there, unless YOUR_TURN_HEADLESS is set to test the mod.
     const isDrawn = (await $.session.surfaces()).length > 0 || Boolean(await $.env.get('YOUR_TURN_HEADLESS'))
