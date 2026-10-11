@@ -858,77 +858,71 @@ pub(crate) fn strip_json_blobs(s: &str) -> String {
 
 /// "2026-04-03T11:05:19.155Z" → " 4/ 3 20:05" (UTC+9)
 fn format_timestamp(ts: &str) -> String {
-    if ts.len() >= 16 {
-        let mm: u32 = ts[5..7].parse().unwrap_or(0);
-        let dd: u32 = ts[8..10].parse().unwrap_or(0);
-        let hh: u32 = ts[11..13].parse().unwrap_or(0);
-        let mn = &ts[14..16];
-
-        let (hh, dd, mm) = {
-            let h = hh + 9;
-            if h >= 24 {
-                let d = dd + 1;
-                let days_in_month = match mm {
-                    2 => 28,
-                    4 | 6 | 9 | 11 => 30,
-                    _ => 31,
-                };
-                if d > days_in_month {
-                    (h - 24, 1, mm + 1)
-                } else {
-                    (h - 24, d, mm)
-                }
-            } else {
-                (h, dd, mm)
-            }
-        };
-
-        return format!("{mm:2}/{dd:2} {hh:2}:{mn}");
+    if ts.len() < 16 {
+        return ts.to_string();
     }
-    ts.to_string()
+    let Some(utc) = parse_epoch_minute(ts) else {
+        return ts.to_string();
+    };
+    let jst = utc + JST_OFFSET;
+    let (_, mm, dd) = civil_from_days(jst.div_euclid(86400));
+    let sec_of_day = jst.rem_euclid(86400);
+    let hh = sec_of_day / 3600;
+    let mn = sec_of_day % 3600 / 60;
+    format!("{mm:2}/{dd:2} {hh:2}:{mn:02}")
+}
+
+const JST_OFFSET: i64 = 9 * 3600;
+
+/// "2026-04-03T11:05..." の先頭 16 文字 (分まで) → epoch秒 (UTC、秒は 0)
+fn parse_epoch_minute(ts: &str) -> Option<i64> {
+    let num = |a: usize, b: usize| -> Option<i64> {
+        let s = ts.get(a..b)?;
+        if !s.bytes().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        s.parse().ok()
+    };
+    let y = num(0, 4)?;
+    let mo = num(5, 7)?;
+    let d = num(8, 10)?;
+    let h = num(11, 13)?;
+    let mi = num(14, 16)?;
+    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 {
+        return None;
+    }
+    Some(days_from_civil(y, mo as u32, d as u32) * 86400 + h * 3600 + mi * 60)
 }
 
 /// "2026-04-03T11:05:19.155Z" → epoch秒 (UTC)
 fn parse_epoch(ts: &str) -> Option<i64> {
-    if ts.len() < 19 {
-        return None;
-    }
-    let y: i64 = ts[0..4].parse().ok()?;
-    let mo: i64 = ts[5..7].parse().ok()?;
-    let d: i64 = ts[8..10].parse().ok()?;
-    let h: i64 = ts[11..13].parse().ok()?;
-    let mi: i64 = ts[14..16].parse().ok()?;
-    let s: i64 = ts[17..19].parse().ok()?;
-
-    // days from epoch (1970-01-01) — simplified, no leap second
-    let mut days: i64 = 0;
-    for yr in 1970..y {
-        days += if is_leap(yr) { 366 } else { 365 };
-    }
-    let month_days = [
-        31,
-        if is_leap(y) { 29 } else { 28 },
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31,
-    ];
-    for m in 0..(mo - 1) as usize {
-        days += month_days[m] as i64;
-    }
-    days += d - 1;
-
-    Some(days * 86400 + h * 3600 + mi * 60 + s)
+    let s: i64 = ts.get(17..19)?.parse().ok()?;
+    Some(parse_epoch_minute(ts)? + s)
 }
 
-fn is_leap(y: i64) -> bool {
-    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+/// 先発グレゴリオ暦の年月日 → 1970-01-01 からの日数 (Howard Hinnant の days_from_civil)
+fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (m as i64 + 9) % 12; // 3月=0 .. 2月=11
+    let doy = (153 * mp + 2) / 5 + d as i64 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146097 + doe - 719468
+}
+
+/// 1970-01-01 からの日数 → 先発グレゴリオ暦の (年, 月, 日) (Howard Hinnant の civil_from_days)
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
+    (y, m, d)
 }
 
 /// セッションのタイムスタンプからグループラベルを返す
@@ -951,12 +945,11 @@ pub(crate) fn time_group_label(ts: &str, now_epoch: i64) -> &'static str {
     }
 
     // 日付ベースの分類（JST = UTC+9）
-    let jst_offset: i64 = 9 * 3600;
-    let now_jst = now_epoch + jst_offset;
-    let ts_jst = ts_epoch + jst_offset;
+    let now_jst = now_epoch + JST_OFFSET;
+    let ts_jst = ts_epoch + JST_OFFSET;
 
-    let now_day = now_jst / 86400; // JST日数
-    let ts_day = ts_jst / 86400;
+    let now_day = now_jst.div_euclid(86400); // JST日数
+    let ts_day = ts_jst.div_euclid(86400);
     let day_diff = now_day - ts_day;
 
     if day_diff == 0 {
@@ -970,7 +963,7 @@ pub(crate) fn time_group_label(ts: &str, now_epoch: i64) -> &'static str {
     }
 
     // 曜日: 1970-01-01 = 木曜 → (day + 3) % 7: 0=月
-    let now_weekday = (now_day + 3) % 7; // 0=Mon
+    let now_weekday = (now_day + 3).rem_euclid(7); // 0=Mon
     let this_monday = now_day - now_weekday;
     let last_monday = this_monday - 7;
 
@@ -988,49 +981,16 @@ pub(crate) fn time_group_label(ts: &str, now_epoch: i64) -> &'static str {
     if now_month == ts_month {
         return "今月";
     }
-    if now_month == ts_month + 1 || (now_month == 1 && ts_month == 12) {
+    if now_month == ts_month + 1 {
         return "先月";
     }
     "それ以前"
 }
 
-/// JST epoch秒 → year*12+month (比較用)
-fn now_jst_month(jst_epoch: i64) -> i32 {
-    // 簡易: epoch日数から年月を逆算
-    let days = jst_epoch / 86400;
-    let mut y = 1970i32;
-    let mut rem = days;
-    loop {
-        let yd = if is_leap(y as i64) { 366 } else { 365 };
-        if rem < yd {
-            break;
-        }
-        rem -= yd;
-        y += 1;
-    }
-    let month_days = [
-        31,
-        if is_leap(y as i64) { 29 } else { 28 },
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31,
-    ];
-    let mut m = 0i32;
-    for md in &month_days {
-        if rem < *md as i64 {
-            break;
-        }
-        rem -= *md as i64;
-        m += 1;
-    }
-    y * 12 + m
+/// JST epoch秒 → year*12+month (比較用。年跨ぎも差 1 で前月になる)
+fn now_jst_month(jst_epoch: i64) -> i64 {
+    let (y, m, _) = civil_from_days(jst_epoch.div_euclid(86400));
+    y * 12 + m as i64
 }
 
 /// restリストにタイムグループセパレータを挿入してlines に追加
@@ -1363,6 +1323,46 @@ mod tests {
             cache.len(),
             names.len()
         );
+    }
+
+    #[test]
+    fn format_timestamp_converts_to_jst_across_day_month_and_year_ends() {
+        assert_eq!(format_timestamp("2026-04-03T11:05:19.155Z"), " 4/ 3 20:05");
+        assert_eq!(format_timestamp("2028-02-28T16:00:00.000Z"), " 2/29  1:00");
+        assert_eq!(format_timestamp("2026-02-28T16:00:00.000Z"), " 3/ 1  1:00");
+        assert_eq!(format_timestamp("2026-12-31T16:00:00.000Z"), " 1/ 1  1:00");
+        assert_eq!(format_timestamp("2026-04-30T15:00"), " 5/ 1  0:00");
+        assert_eq!(format_timestamp("2026-04-03T11"), "2026-04-03T11");
+        assert_eq!(format_timestamp("not a timestamp!"), "not a timestamp!");
+    }
+
+    #[test]
+    fn civil_days_round_trip() {
+        for days in -800_000..800_000i64 {
+            let (y, m, d) = civil_from_days(days);
+            assert_eq!(days_from_civil(y, m, d), days, "{y}-{m}-{d}");
+        }
+        assert_eq!(days_from_civil(1970, 1, 1), 0);
+        assert_eq!(civil_from_days(0), (1970, 1, 1));
+        assert_eq!(civil_from_days(days_from_civil(2000, 2, 29) + 1), (2000, 3, 1));
+        assert_eq!(civil_from_days(days_from_civil(2100, 2, 28) + 1), (2100, 3, 1));
+    }
+
+    #[test]
+    fn parse_epoch_matches_known_values() {
+        assert_eq!(parse_epoch("1970-01-01T00:00:00.000Z"), Some(0));
+        assert_eq!(parse_epoch("2026-04-03T11:05:19.155Z"), Some(1_775_214_319));
+        assert_eq!(parse_epoch("2026-13-03T11:05:19.155Z"), None);
+        assert_eq!(parse_epoch("2026-04-03T11:05"), None);
+    }
+
+    #[test]
+    fn time_group_label_counts_december_as_last_month_in_january() {
+        let now = parse_epoch("2027-01-10T03:00:00.000Z").unwrap();
+        assert_eq!(time_group_label("2026-12-05T03:00:00.000Z", now), "先月");
+        assert_eq!(time_group_label("2026-11-20T03:00:00.000Z", now), "それ以前");
+        let now = parse_epoch("2027-01-31T03:00:00.000Z").unwrap();
+        assert_eq!(time_group_label("2027-01-05T03:00:00.000Z", now), "今月");
     }
 }
 
