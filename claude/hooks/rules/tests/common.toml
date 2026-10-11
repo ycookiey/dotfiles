@@ -488,3 +488,63 @@ name = "hashsum-check-flag"
 rule = "hashsum-backslash-reminder"
 expect = "quiet"
 command = "sha256sum -c SHA256SUMS"
+
+[[case]]
+name = "crlf-write-in-written-script"
+rule = "crlf-write-reminder"
+expect = "context"
+input = { tool_name = "Write", tool_input = { file_path = 'C:\tmp\edit.py', content = '''p = "a.md"
+open(p, "w").write(s)''' } }
+
+[[case]]
+name = "own-edit-update-index-shell"
+rule = "own-edit-staging-reminder"
+expect = "context"
+command = '''git update-index --cacheinfo "100644,$blob,plan.md"'''
+
+[[case]]
+name = "own-edit-hash-object-in-script"
+rule = "own-edit-staging-reminder"
+expect = "context"
+input = { tool_name = "Write", tool_input = { file_path = 'C:\tmp\stage.py', content = '''blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], input=b, capture_output=True).stdout
+subprocess.run(["git", "update-index", "--cacheinfo", "100644," + blob + "," + p])''' } }
+
+[[case]]
+name = "own-edit-hash-object-read-only"
+rule = "own-edit-staging-reminder"
+expect = "quiet"
+command = "git hash-object README.md"
+
+[[case]]
+name = "own-edit-stage-own-edit"
+rule = "own-edit-staging-reminder"
+expect = "quiet"
+command = "git stage-own-edit stage plan.md"
+
+[[case]]
+name = "truncating-write-inline"
+rule = "truncating-write-reminder"
+expect = "context"
+input = { tool_name = "Write", tool_input = { file_path = 'C:\tmp\edit.py', content = '''work = open(plan, "rb").read().decode("utf-8")
+open(plan, "wb").write(add_line(work).encode("utf-8"))''' } }
+
+[[case]]
+name = "truncating-write-text-mode"
+rule = "truncating-write-reminder"
+expect = "context"
+command = '''python -c 'open("a.txt", "w", newline="").write(build())' '''
+
+[[case]]
+name = "truncating-write-built-first"
+rule = "truncating-write-reminder"
+expect = "quiet"
+input = { tool_name = "Write", tool_input = { file_path = 'C:\tmp\edit.py', content = '''new = add_line(work)
+with open(tmp, "wb") as f:
+    f.write(new.encode("utf-8"))
+os.replace(tmp, plan)''' } }
+
+[[case]]
+name = "truncating-read"
+rule = "truncating-write-reminder"
+expect = "quiet"
+command = '''python -c 'print(open("a.txt").read())' '''

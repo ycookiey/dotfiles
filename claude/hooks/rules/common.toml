@@ -35,12 +35,13 @@ message = '''Bash ツールでは set -e が効かない(errexit の効かない
 
 # Windows' Python turns \n into \r\n when writing in text mode, so
 # replacing an LF file makes every line CRLF (docs/bash.md had it, and it
-# was missed). Not for commands that pass `newline=`.
+# was missed). Not for commands that pass `newline=`. A script written with
+# the Write tool and run later is read from its content.
 [[rule]]
 id = "crlf-write-reminder"
 event = "PreToolUse"
-tools = '^Bash$'
-fields = ["tool_input.command"]
+tools = '^(Bash|Write)$'
+fields = ["tool_input.command", "tool_input.content"]
 all = ['''write_text\(|open\([^)]*["'](w|a|x)[t+]?["']''']
 none = ['newline=']
 action = "context"
@@ -226,3 +227,27 @@ fields = ["tool_input.command"]
 all = ['''(^|[;&|(`$[:space:]])(sha256sum|sha1sum|md5sum|sha512sum)[[:space:]]+[^<|[:space:]-]''']
 action = "context"
 message = '''sha256sum などは、ファイル名に \ を含む(Windows のパス)と出力の先頭に \ を付ける。ハッシュを文字列で比べると、中身が合っていても食い違う。比べるなら sha256sum < "$f" | cut -d' ' -f1 のように標準入力で渡す。表示するだけなら気にしなくてよい。'''
+
+# Staging only one's own lines by hand (hash-object + update-index from a
+# script) skips the stage-own-edit-reminder, which watches Edit and Write,
+# and a script that rewrites the file can lose the other sessions' edits
+# (a plan.md with another session's changes was emptied this way).
+[[rule]]
+id = "own-edit-staging-reminder"
+event = "PreToolUse"
+tools = '^(Bash|Write)$'
+fields = ["tool_input.command", "tool_input.content"]
+all = ['''update-index[[:space:]]+--cacheinfo|hash-object[[:space:]]+(-[^[:space:]]+[[:space:]]+)*-w|"update-index",[[:space:]]*"--cacheinfo"|"hash-object",[[:space:]]*"-w"''']
+action = "context"
+message = '''他の session の未コミットの変更がある file で自分の行だけを stage するなら、git stage-own-edit begin <file> → Edit ツールで編集 → git stage-own-edit stage <file> を使う(~/.claude/docs/git.md の「他人の未コミットの変更がある file で、自分の編集だけを stage する」)。hash-object・update-index を組む script で file を書き換えると、途中で止まったときに他の session の変更ごと消えうる。'''
+
+# open(p, "w") empties the file before the value passed to write() is built,
+# so an exception there leaves it empty.
+[[rule]]
+id = "truncating-write-reminder"
+event = "PreToolUse"
+tools = '^(Bash|Write)$'
+fields = ["tool_input.command", "tool_input.content"]
+all = ['''open\([^)]*["']w[bt+]?["'][^)]*\)\.write\(''']
+action = "context"
+message = '''open(p, "w"/"wb") は開いた時点で file を空にする。open(...).write(f(x)) の f(x) が例外で止まると、中身が消えたまま残る。中身を先に作り終え、一時 file に書いてから os.replace で置き換える。既存の file の一部を直すだけなら Edit ツールを使う。'''

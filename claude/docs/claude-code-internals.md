@@ -37,6 +37,13 @@
 - 原文 Markdown: `curl -sL https://code.claude.com/docs/en/<page>.md -o <scratchpad>/<page>.md` → `grep -n <キー名>` → 該当節を `sed -n` で全部読む
 - ページ一覧: `https://code.claude.com/docs/llms.txt`
 
+## file-history から作業ツリーの file を戻す
+
+- git にない変更(他 session の未コミットの変更など)を壊したとき、Claude Code の file-history に写しが残っていることがある
+- 置き場: `~/.claude*/file-history/<session の id>/<path の hash>@v<N>`。Claude の編集の区切りごとに、その時の作業ツリーのバイトのまま(CRLF なら CRLF)。同じ file を見ている複数の session に同じ写しが並ぶ
+- 探し方: `find ~/.claude*/file-history -type f -mmin -<分> -size +<下限>k -size -<上限>k | xargs grep -l '<file に必ずある文字列>'`(全部を grep すると数分かかる)。時刻で並べ、壊す前で最も新しいものを採る
+- 戻す前に確かめる: 改行を揃えて(`tr -d '\r'`)HEAD の版と diff し、差分が他の変更として覚えている量と合うか、写しの時刻より後にその file の commit がないかを見る。合えば `cp` で戻し、`git diff --stat` で元の差分の量に戻ったことを確かめる
+
 ## settings 変更の反映確認
 
 - commit/PR の attribution はモデルが書く。settings の値は system-reminder の指示文として届く
