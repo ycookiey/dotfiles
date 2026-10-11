@@ -86,7 +86,6 @@
     "powermode.combo.location": "editor",
     "powermode.explosions.offset": 0.4,
     "powermode.shake.enabled": false,
-    "codic.ACCESS_TOKEN": "s7EJ1raRsK6lH4Xx9mXBbACGSBwd6b637n",
     "codic.case": "no case",
     "discord.removeRemoteRepository": true,
     "vscord.app.name": "Visual Studio Code",
