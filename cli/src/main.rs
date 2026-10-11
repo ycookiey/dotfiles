@@ -98,24 +98,15 @@ enum Commands {
         args: Vec<String>,
     },
     /// Scan source files for duplicate token sequences (refactor candidates)
-    DupScan {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
+    DupScan(commands::dup_scan::DupScanArgs),
     /// Format dup-scan JSON output (stdin)
     DupScanFormat,
     /// Scan source files for duplicate string literals (Tailwind, SQL, prompts, etc.)
-    StringDup {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
+    StringDup(commands::string_dup::StringDupArgs),
     /// Format string-dup JSON output (stdin)
     StringDupFormat,
     /// Scan for duplicate array/object data literals (single-source constant candidates)
-    LiteralDup {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
+    LiteralDup(commands::literal_dup::LiteralDupArgs),
     /// Format literal-dup JSON output (stdin)
     LiteralDupFormat,
     /// Git prompt info: dirty/updated check for background job
@@ -224,11 +215,11 @@ fn main() {
         Commands::TokenAuditHook => commands::token_audit_hook::run(),
         Commands::TokenAuditFormat => commands::token_audit_format::run(),
         Commands::TokenAudit { args } => commands::token_audit::run(&args),
-        Commands::DupScan { args } => commands::dup_scan::run(&args),
+        Commands::DupScan(args) => commands::dup_scan::run(args),
         Commands::DupScanFormat => commands::dup_scan_format::run(),
-        Commands::StringDup { args } => commands::string_dup::run(&args),
+        Commands::StringDup(args) => commands::string_dup::run(args),
         Commands::StringDupFormat => commands::string_dup_format::run(),
-        Commands::LiteralDup { args } => commands::literal_dup::run(&args),
+        Commands::LiteralDup(args) => commands::literal_dup::run(args),
         Commands::LiteralDupFormat => commands::literal_dup_format::run(),
         Commands::GitPrompt { path } => commands::git_prompt::run(&path),
         Commands::CheckDirty => commands::check_dirty::run(),
@@ -246,5 +237,115 @@ fn main() {
             CasAction::Gc { days } => commands::cas_admin::gc(days),
             CasAction::Inspect { session, path } => commands::cas_admin::inspect(session.as_deref(), path.as_deref()),
         },
+    }
+}
+
+#[cfg(test)]
+mod scanner_args_tests {
+    use super::{Cli, Commands};
+    use clap::error::ErrorKind;
+    use clap::{CommandFactory, Parser};
+    use std::path::PathBuf;
+
+    fn parse(args: &[&str]) -> Result<Commands, clap::Error> {
+        Cli::try_parse_from(std::iter::once("dotcli").chain(args.iter().copied())).map(|c| c.command)
+    }
+
+    fn dup_scan(args: &[&str]) -> crate::commands::dup_scan::DupScanArgs {
+        match parse(&[&["dup-scan"], args].concat()) {
+            Ok(Commands::DupScan(a)) => a,
+            Ok(_) => panic!("not dup-scan"),
+            Err(e) => panic!("{args:?}: {e}"),
+        }
+    }
+
+    fn string_dup(args: &[&str]) -> crate::commands::string_dup::StringDupArgs {
+        match parse(&[&["string-dup"], args].concat()) {
+            Ok(Commands::StringDup(a)) => a,
+            Ok(_) => panic!("not string-dup"),
+            Err(e) => panic!("{args:?}: {e}"),
+        }
+    }
+
+    fn literal_dup(args: &[&str]) -> crate::commands::literal_dup::LiteralDupArgs {
+        match parse(&[&["literal-dup"], args].concat()) {
+            Ok(Commands::LiteralDup(a)) => a,
+            Ok(_) => panic!("not literal-dup"),
+            Err(e) => panic!("{args:?}: {e}"),
+        }
+    }
+
+    fn error_kind(args: &[&str]) -> ErrorKind {
+        match parse(args) {
+            Ok(_) => panic!("{args:?} parsed"),
+            Err(e) => e.kind(),
+        }
+    }
+
+    #[test]
+    fn cli_definition_is_valid() {
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn unknown_flags_and_bad_values_are_errors() {
+        assert_eq!(error_kind(&["dup-scan", "--min-token", "50"]), ErrorKind::UnknownArgument);
+        assert_eq!(error_kind(&["string-dup", "--top", "abc"]), ErrorKind::ValueValidation);
+        assert_eq!(error_kind(&["string-dup", "--threshold", "high"]), ErrorKind::ValueValidation);
+        assert_eq!(error_kind(&["string-dup", "--similarity", "cosine"]), ErrorKind::InvalidValue);
+        assert_eq!(error_kind(&["literal-dup", "--min-elements", "x"]), ErrorKind::ValueValidation);
+        assert_eq!(error_kind(&["literal-dup", "--gap", "3"]), ErrorKind::UnknownArgument);
+        assert_eq!(error_kind(&["dup-scan", "stray"]), ErrorKind::UnknownArgument);
+        assert!(parse(&["dup-scan", "--path"]).is_err());
+        assert!(parse(&["dup-scan", "--top", "-1"]).is_err());
+    }
+
+    // The values the hand-written parsers used before the scanners moved to clap.
+    #[test]
+    fn defaults_are_unchanged() {
+        let d = dup_scan(&[]);
+        assert_eq!((d.min_tokens, d.min_lines, d.top, d.gap), (30, 3, 50, 0));
+        let s = string_dup(&[]);
+        assert_eq!((s.min_chars, s.min_words, s.min_occurrences, s.top), (30, 3, 2, 50));
+        assert_eq!((s.similarity, s.threshold), (None, 0.7));
+        let l = literal_dup(&[]);
+        assert_eq!((l.min_occurrences, l.min_elements, l.min_chars, l.top), (3, 3, 10, 30));
+        for scan in [&d.scan, &s.scan, &l.scan] {
+            assert_eq!(scan.path, None);
+            assert_eq!(scan.ext, None);
+            assert!(scan.exclude.is_empty());
+            assert!(!scan.no_gitignore);
+            assert_eq!(scan.root(), std::env::current_dir().unwrap());
+            assert_eq!(scan.exts(&["a", "b"]), ["a", "b"]);
+        }
+    }
+
+    // The calls in skills/restructure/SKILL.md.
+    #[test]
+    fn restructure_skill_calls_parse() {
+        assert_eq!(dup_scan(&["--top", "10"]).top, 10);
+        let d = dup_scan(&["--gap", "3", "--top", "10"]);
+        assert_eq!((d.gap, d.top), (3, 10));
+        assert_eq!(string_dup(&["--top", "10"]).top, 10);
+        let s = string_dup(&["--similarity", "jaccard", "--threshold", "0.7", "--top", "10"]);
+        assert_eq!((s.similarity.as_deref(), s.threshold, s.top), (Some("jaccard"), 0.7, 10));
+        assert_eq!(literal_dup(&["--top", "10"]).top, 10);
+        let l = literal_dup(&["--min-occurrences", "2", "--min-elements", "3", "--top", "10"]);
+        assert_eq!((l.min_occurrences, l.min_elements, l.top), (2, 3, 10));
+    }
+
+    #[test]
+    fn shared_options_parse_like_the_old_parsers() {
+        let d = dup_scan(&[
+            "--path", "src", "--ext", "rs, ps1", "--exclude", "a/b", "--exclude", "c",
+            "--no-gitignore", "--top", "5", "--top", "7",
+        ]);
+        assert_eq!(d.scan.root(), PathBuf::from("src"));
+        assert_eq!(d.scan.exts(&["x"]), ["rs", "ps1"]);
+        assert_eq!(d.scan.exclude, ["a/b", "c"]);
+        assert!(d.scan.no_gitignore);
+        // A repeated single-value option keeps its last value, as before.
+        assert_eq!(d.top, 7);
+        assert_eq!(string_dup(&["--ext", "md", "--ext", "ts"]).scan.exts(&[]), ["ts"]);
     }
 }

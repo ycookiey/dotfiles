@@ -15,62 +15,42 @@ use rayon::prelude::*;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
 
 use super::dup_scan::DEFAULT_EXTS;
-use super::scan_common::{display_path, walk_files, CodeKind, Event, Lexer, Syntax};
+use super::scan_common::{display_path, CodeKind, Event, Lexer, ScanArgs, Syntax};
 
 const DEFAULT_MIN_OCCURRENCES: usize = 3;
 const DEFAULT_MIN_ELEMENTS: usize = 3;
 const DEFAULT_MIN_CHARS: usize = 10;
 const DEFAULT_TOP: usize = 30;
 
-struct Args {
-    path: PathBuf,
-    exts: Vec<String>,
-    min_occurrences: usize,
-    min_elements: usize,
-    min_chars: usize,
-    top: usize,
-    excludes: Vec<String>,
-    no_gitignore: bool,
+// literal-dup's options. A plain comment, not a doc comment: the subcommand's about text
+// comes from the Commands variant in main.rs.
+#[derive(clap::Args, Debug)]
+#[command(args_override_self = true)]
+pub(crate) struct LiteralDupArgs {
+    #[command(flatten)]
+    pub(crate) scan: ScanArgs,
+    /// Fewest occurrences a reported literal has
+    #[arg(long, value_name = "N", default_value_t = DEFAULT_MIN_OCCURRENCES)]
+    pub(crate) min_occurrences: usize,
+    /// Fewest top-level elements a reported literal has
+    #[arg(long, value_name = "N", default_value_t = DEFAULT_MIN_ELEMENTS)]
+    pub(crate) min_elements: usize,
+    /// Shortest reported literal, in characters of its normalized form
+    #[arg(long, value_name = "N", default_value_t = DEFAULT_MIN_CHARS)]
+    pub(crate) min_chars: usize,
+    /// Number of clusters to output
+    #[arg(long, value_name = "N", default_value_t = DEFAULT_TOP)]
+    pub(crate) top: usize,
 }
 
 /// 同一の正規化 literal の出現。open と elements は最初の出現の値 (同じ正規化なら同じ)。
 struct Group {
     open: char,
     elements: usize,
-    /// (walk_files が返した paths の添字, 行)。ファイルの走査順、ファイル内は出現順。
+    /// (ScanArgs::files が返した paths の添字, 行)。ファイルの走査順、ファイル内は出現順。
     occs: Vec<(usize, u32)>,
-}
-
-fn parse_args(args: &[String]) -> Args {
-    let mut path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let mut exts: Vec<String> = DEFAULT_EXTS.iter().map(|s| s.to_string()).collect();
-    let mut min_occurrences = DEFAULT_MIN_OCCURRENCES;
-    let mut min_elements = DEFAULT_MIN_ELEMENTS;
-    let mut min_chars = DEFAULT_MIN_CHARS;
-    let mut top = DEFAULT_TOP;
-    let mut excludes: Vec<String> = Vec::new();
-    let mut no_gitignore = false;
-
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--path" => { if i + 1 < args.len() { path = PathBuf::from(&args[i + 1]); i += 1; } }
-            "--ext" => { if i + 1 < args.len() { exts = args[i + 1].split(',').map(|s| s.trim().to_string()).collect(); i += 1; } }
-            "--min-occurrences" => { if i + 1 < args.len() { min_occurrences = args[i + 1].parse().unwrap_or(DEFAULT_MIN_OCCURRENCES); i += 1; } }
-            "--min-elements" => { if i + 1 < args.len() { min_elements = args[i + 1].parse().unwrap_or(DEFAULT_MIN_ELEMENTS); i += 1; } }
-            "--min-chars" => { if i + 1 < args.len() { min_chars = args[i + 1].parse().unwrap_or(DEFAULT_MIN_CHARS); i += 1; } }
-            "--top" => { if i + 1 < args.len() { top = args[i + 1].parse().unwrap_or(DEFAULT_TOP); i += 1; } }
-            "--exclude" => { if i + 1 < args.len() { excludes.push(args[i + 1].clone()); i += 1; } }
-            "--no-gitignore" => { no_gitignore = true; }
-            _ => {}
-        }
-        i += 1;
-    }
-
-    Args { path, exts, min_occurrences, min_elements, min_chars, top, excludes, no_gitignore }
 }
 
 /// b[i] == '.' が数値リテラルの小数点か (`0.5`, `1_000.25`, `1.5e3`)。
@@ -182,10 +162,9 @@ fn extract_literals(src: &str, ext: &str) -> Vec<(String, char, usize, u32)> {
     out
 }
 
-pub fn run(args: &[String]) {
-    let parsed = parse_args(args);
-    let paths = walk_files(&parsed.path, &parsed.exts, &parsed.excludes, parsed.no_gitignore);
-    let root = &parsed.path;
+pub fn run(parsed: LiteralDupArgs) {
+    let root = parsed.scan.root();
+    let paths = parsed.scan.files(&root, DEFAULT_EXTS);
 
     // ファイルごとの抽出は並列。collect は paths の順を保つので、下の merge で各 literal の
     // occurrence は従来どおりファイルの走査順に並ぶ。読めないファイルは空。
@@ -238,7 +217,7 @@ pub fn run(args: &[String]) {
                 "occurrence_count": g.occs.len(),
                 "saved_chars": saved,
                 "occurrences": g.occs.iter().map(|&(f, l)| json!({
-                    "file": display_path(&paths[f], root),
+                    "file": display_path(&paths[f], &root),
                     "line": l,
                 })).collect::<Vec<_>>(),
             })

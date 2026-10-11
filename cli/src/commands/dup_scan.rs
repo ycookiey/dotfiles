@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::scan_common::{self, display_path, walk_files, CodeKind, Event, Lang, Lexer, Syntax};
+use super::scan_common::{self, display_path, CodeKind, Event, Lang, Lexer, ScanArgs, Syntax};
 
 const DEFAULT_MIN_TOKENS: usize = 30;
 const DEFAULT_MIN_LINES: usize = 3;
@@ -75,81 +75,25 @@ struct Cluster {
     occurrences: Vec<Occurrence>,
 }
 
-struct Args {
-    path: PathBuf,
-    exts: Vec<String>,
-    min_tokens: usize,
-    min_lines: usize,
-    top: usize,
-    gap: usize,
-    excludes: Vec<String>,
-    no_gitignore: bool,
-}
-
-fn parse_args(args: &[String]) -> Args {
-    let mut path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let mut exts: Vec<String> = DEFAULT_EXTS.iter().map(|s| s.to_string()).collect();
-    let mut min_tokens = DEFAULT_MIN_TOKENS;
-    let mut min_lines = DEFAULT_MIN_LINES;
-    let mut top = DEFAULT_TOP;
-    let mut gap: usize = 0;
-    let mut excludes: Vec<String> = Vec::new();
-    let mut no_gitignore = false;
-
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--path" => {
-                if i + 1 < args.len() {
-                    path = PathBuf::from(&args[i + 1]);
-                    i += 1;
-                }
-            }
-            "--ext" => {
-                if i + 1 < args.len() {
-                    exts = args[i + 1].split(',').map(|s| s.trim().to_string()).collect();
-                    i += 1;
-                }
-            }
-            "--min-tokens" => {
-                if i + 1 < args.len() {
-                    min_tokens = args[i + 1].parse().unwrap_or(DEFAULT_MIN_TOKENS);
-                    i += 1;
-                }
-            }
-            "--min-lines" => {
-                if i + 1 < args.len() {
-                    min_lines = args[i + 1].parse().unwrap_or(DEFAULT_MIN_LINES);
-                    i += 1;
-                }
-            }
-            "--top" => {
-                if i + 1 < args.len() {
-                    top = args[i + 1].parse().unwrap_or(DEFAULT_TOP);
-                    i += 1;
-                }
-            }
-            "--gap" => {
-                if i + 1 < args.len() {
-                    gap = args[i + 1].parse().unwrap_or(0);
-                    i += 1;
-                }
-            }
-            "--exclude" => {
-                if i + 1 < args.len() {
-                    excludes.push(args[i + 1].clone());
-                    i += 1;
-                }
-            }
-            "--no-gitignore" => {
-                no_gitignore = true;
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-
-    Args { path, exts, min_tokens, min_lines, top, gap, excludes, no_gitignore }
+// dup-scan's options. A plain comment, not a doc comment: the subcommand's about text comes
+// from the Commands variant in main.rs.
+#[derive(clap::Args, Debug)]
+#[command(args_override_self = true)]
+pub(crate) struct DupScanArgs {
+    #[command(flatten)]
+    pub(crate) scan: ScanArgs,
+    /// Shortest duplicate to report, in tokens
+    #[arg(long, value_name = "N", default_value_t = DEFAULT_MIN_TOKENS)]
+    pub(crate) min_tokens: usize,
+    /// Shortest duplicate to report, in source lines
+    #[arg(long, value_name = "N", default_value_t = DEFAULT_MIN_LINES)]
+    pub(crate) min_lines: usize,
+    /// Number of clusters to output
+    #[arg(long, value_name = "N", default_value_t = DEFAULT_TOP)]
+    pub(crate) top: usize,
+    /// Most single tokens that may differ between occurrences inside one match (0 = exact matches only)
+    #[arg(long, value_name = "N", default_value_t = 0)]
+    pub(crate) gap: usize,
 }
 
 // ============================================================================
@@ -532,10 +476,9 @@ fn cluster_to_json(c: &Cluster, files: &[FileTokens], root: &Path) -> Value {
     })
 }
 
-pub fn run(args: &[String]) {
-    let parsed = parse_args(args);
-
-    let paths = walk_files(&parsed.path, &parsed.exts, &parsed.excludes, parsed.no_gitignore);
+pub fn run(parsed: DupScanArgs) {
+    let root = parsed.scan.root();
+    let paths = parsed.scan.files(&root, DEFAULT_EXTS);
 
     // Parallel read+tokenize.
     let files: Vec<FileTokens> = paths
@@ -577,7 +520,7 @@ pub fn run(args: &[String]) {
         "total_clusters": total_clusters,
         "type3_clusters": type3_count,
         "shown_clusters": shown.len(),
-        "clusters": shown.iter().map(|c| cluster_to_json(c, &files, &parsed.path)).collect::<Vec<_>>(),
+        "clusters": shown.iter().map(|c| cluster_to_json(c, &files, &root)).collect::<Vec<_>>(),
     });
 
     println!("{}", serde_json::to_string_pretty(&result).unwrap());

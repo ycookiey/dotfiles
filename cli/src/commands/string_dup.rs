@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::scan_common::{self, display_path, walk_files, Event, Lang, Lexer, Syntax};
+use super::scan_common::{self, display_path, Event, Lang, Lexer, ScanArgs, Syntax};
 
 const DEFAULT_MIN_CHARS: usize = 30;
 const DEFAULT_MIN_WORDS: usize = 3;
@@ -38,100 +38,31 @@ struct FileStrings {
     lang: Lang,
 }
 
-struct Args {
-    path: PathBuf,
-    exts: Vec<String>,
-    min_chars: usize,
-    min_words: usize,
-    min_occurrences: usize,
-    top: usize,
-    similarity: Option<String>,
-    threshold: f64,
-    excludes: Vec<String>,
-    no_gitignore: bool,
-}
-
-fn parse_args(args: &[String]) -> Args {
-    let mut path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let mut exts: Vec<String> = DEFAULT_EXTS.iter().map(|s| s.to_string()).collect();
-    let mut min_chars = DEFAULT_MIN_CHARS;
-    let mut min_words = DEFAULT_MIN_WORDS;
-    let mut min_occurrences = DEFAULT_MIN_OCCURRENCES;
-    let mut top = DEFAULT_TOP;
-    let mut similarity: Option<String> = None;
-    let mut threshold = DEFAULT_JACCARD_THRESHOLD;
-    let mut excludes: Vec<String> = Vec::new();
-    let mut no_gitignore = false;
-
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--path" => {
-                if i + 1 < args.len() {
-                    path = PathBuf::from(&args[i + 1]);
-                    i += 1;
-                }
-            }
-            "--ext" => {
-                if i + 1 < args.len() {
-                    exts = args[i + 1].split(',').map(|s| s.trim().to_string()).collect();
-                    i += 1;
-                }
-            }
-            "--min-chars" => {
-                if i + 1 < args.len() {
-                    min_chars = args[i + 1].parse().unwrap_or(DEFAULT_MIN_CHARS);
-                    i += 1;
-                }
-            }
-            "--min-words" => {
-                if i + 1 < args.len() {
-                    min_words = args[i + 1].parse().unwrap_or(DEFAULT_MIN_WORDS);
-                    i += 1;
-                }
-            }
-            "--min-occurrences" => {
-                if i + 1 < args.len() {
-                    min_occurrences = args[i + 1].parse().unwrap_or(DEFAULT_MIN_OCCURRENCES);
-                    i += 1;
-                }
-            }
-            "--top" => {
-                if i + 1 < args.len() {
-                    top = args[i + 1].parse().unwrap_or(DEFAULT_TOP);
-                    i += 1;
-                }
-            }
-            "--similarity" => {
-                if i + 1 < args.len() {
-                    similarity = Some(args[i + 1].clone());
-                    i += 1;
-                }
-            }
-            "--threshold" => {
-                if i + 1 < args.len() {
-                    threshold = args[i + 1].parse().unwrap_or(DEFAULT_JACCARD_THRESHOLD);
-                    i += 1;
-                }
-            }
-            "--exclude" => {
-                if i + 1 < args.len() {
-                    excludes.push(args[i + 1].clone());
-                    i += 1;
-                }
-            }
-            "--no-gitignore" => {
-                no_gitignore = true;
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-
-    Args {
-        path, exts, min_chars, min_words, min_occurrences,
-        top, similarity, threshold, excludes, no_gitignore,
-    }
+// string-dup's options. A plain comment, not a doc comment: the subcommand's about text
+// comes from the Commands variant in main.rs.
+#[derive(clap::Args, Debug)]
+#[command(args_override_self = true)]
+pub(crate) struct StringDupArgs {
+    #[command(flatten)]
+    pub(crate) scan: ScanArgs,
+    /// Shortest string to report, in characters after whitespace is collapsed
+    #[arg(long, value_name = "N", default_value_t = DEFAULT_MIN_CHARS)]
+    pub(crate) min_chars: usize,
+    /// Fewest whitespace-separated words a reported string has
+    #[arg(long, value_name = "N", default_value_t = DEFAULT_MIN_WORDS)]
+    pub(crate) min_words: usize,
+    /// Fewest occurrences a reported string or similar group has
+    #[arg(long, value_name = "N", default_value_t = DEFAULT_MIN_OCCURRENCES)]
+    pub(crate) min_occurrences: usize,
+    /// Number of clusters to output, for exact and for similar clusters each
+    #[arg(long, value_name = "N", default_value_t = DEFAULT_TOP)]
+    pub(crate) top: usize,
+    /// Also group similar, not only identical, strings by this method
+    #[arg(long, value_name = "METHOD", value_parser = ["jaccard"])]
+    pub(crate) similarity: Option<String>,
+    /// Lowest word-set Jaccard similarity that joins two strings under --similarity jaccard
+    #[arg(long, value_name = "X", default_value_t = DEFAULT_JACCARD_THRESHOLD)]
+    pub(crate) threshold: f64,
 }
 
 // ============================================================================
@@ -437,15 +368,9 @@ fn similar_cluster_to_json(
     })
 }
 
-pub fn run(args: &[String]) {
-    let parsed = parse_args(args);
-
-    let paths = walk_files(
-        &parsed.path,
-        &parsed.exts,
-        &parsed.excludes,
-        parsed.no_gitignore,
-    );
+pub fn run(parsed: StringDupArgs) {
+    let root = parsed.scan.root();
+    let paths = parsed.scan.files(&root, DEFAULT_EXTS);
 
     let files: Vec<FileStrings> = paths
         .par_iter()
@@ -504,7 +429,7 @@ pub fn run(args: &[String]) {
         "fallback_lexer_used": fallback_warnings,
         "total_exact_clusters": total_exact,
         "shown_exact_clusters": shown_exact.len(),
-        "exact_clusters": shown_exact.iter().map(|v| exact_cluster_to_json(v, &files, &parsed.path)).collect::<Vec<_>>(),
+        "exact_clusters": shown_exact.iter().map(|v| exact_cluster_to_json(v, &files, &root)).collect::<Vec<_>>(),
     });
 
     // Similar clusters (Jaccard) — opt-in
@@ -542,7 +467,7 @@ pub fn run(args: &[String]) {
             Value::Array(
                 shown_similar
                     .iter()
-                    .map(|g| similar_cluster_to_json(g, &variants, &files, &parsed.path))
+                    .map(|g| similar_cluster_to_json(g, &variants, &files, &root))
                     .collect(),
             ),
         );

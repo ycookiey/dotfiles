@@ -12,6 +12,51 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 // ============================================================================
+// Command-line options shared by the scanners
+// ============================================================================
+
+/// The file-selection options every scanner takes, flattened into each scanner's own
+/// options. `--top` and the `--ext` default differ between scanners, so each scanner keeps
+/// its own `--top` and passes its extension list to `files`.
+#[derive(clap::Args, Debug)]
+pub(crate) struct ScanArgs {
+    /// Directory to scan [default: the current directory]
+    #[arg(long)]
+    pub(crate) path: Option<PathBuf>,
+    /// Comma-separated file extensions to scan, without dots [default: the scanner's source extensions]
+    #[arg(long, value_name = "EXTS")]
+    pub(crate) ext: Option<String>,
+    /// Skip files whose `/`-separated path contains this text (repeatable)
+    #[arg(long, value_name = "TEXT")]
+    pub(crate) exclude: Vec<String>,
+    /// Also scan files that .gitignore, .ignore and git exclude files leave out
+    #[arg(long)]
+    pub(crate) no_gitignore: bool,
+}
+
+impl ScanArgs {
+    /// The scan root: `--path` as given, else the current directory.
+    pub(crate) fn root(&self) -> PathBuf {
+        self.path
+            .clone()
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+    }
+
+    /// The extensions to scan: `--ext` split on commas and trimmed, else `default_exts`.
+    pub(crate) fn exts(&self, default_exts: &[&str]) -> Vec<String> {
+        match &self.ext {
+            Some(list) => list.split(',').map(|s| s.trim().to_string()).collect(),
+            None => default_exts.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    /// The files under `root` these options select, in walk order (see `walk_files`).
+    pub(crate) fn files(&self, root: &Path, default_exts: &[&str]) -> Vec<PathBuf> {
+        walk_files(root, &self.exts(default_exts), &self.exclude, self.no_gitignore)
+    }
+}
+
+// ============================================================================
 // File discovery (respects .gitignore via the `ignore` crate)
 // ============================================================================
 
