@@ -216,11 +216,11 @@ fn lexer_for_ext(ext: &str) -> Lexer {
 
 fn tokenize(src: &str, ext: &str) -> Vec<Token> {
     match lexer_for_ext(ext) {
-        Lexer::CFamily => tokenize_generic(src, &["//"], true, true),
+        Lexer::CFamily => tokenize_generic(src, &["//"], true, true, ext == "rs"),
         Lexer::Python => tokenize_python(src),
         Lexer::PowerShell => tokenize_powershell(src),
-        Lexer::Shell => tokenize_generic(src, &["#"], false, true),
-        Lexer::Fallback => tokenize_generic(src, &["//", "#"], true, true),
+        Lexer::Shell => tokenize_generic(src, &["#"], false, true, false),
+        Lexer::Fallback => tokenize_generic(src, &["//", "#"], true, true, false),
     }
 }
 
@@ -243,13 +243,139 @@ fn hash_punct_bytes(b: &[u8]) -> u32 {
     h.finish() as u32
 }
 
+// ============================================================================
+// Rust quote forms (shared with string_dup / literal_dup)
+// ============================================================================
+// In Rust a `'` may open a char literal or a lifetime / loop label, which has
+// no closing quote, and raw strings take no backslash escapes. The C-family
+// scanners call these helpers only for `.rs` files; other languages keep
+// treating `'` as a string quote.
+// TODO(cli-scan-20): replace with one shared lexer for all three scanners.
+
+/// What a `'` at `bytes[i]` starts in Rust source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RustQuote {
+    /// Lifetime or loop label (`'a`, `'static`, `'_`, `'outer`); `end` is the index after the name.
+    Lifetime { end: usize },
+    /// Char or byte-char literal (`'x'`, `'\n'`, `'\''`, `'\u{1F600}'`, `'日'`);
+    /// `end` is the index after the closing quote.
+    Char { end: usize },
+    /// A `'` that opens neither; callers step over the quote alone.
+    Lone,
+}
+
+fn is_rust_ident_byte(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || c == b'_' || c >= 0x80
+}
+
+fn utf8_len(first: u8) -> usize {
+    match first {
+        0xC0..=0xDF => 2,
+        0xE0..=0xEF => 3,
+        0xF0..=0xFF => 4,
+        _ => 1,
+    }
+}
+
+/// Classifies the `'` at `bytes[i]`. A char literal closes right after one
+/// character or one escape sequence on the same line; anything else starting
+/// with an identifier character is a lifetime or label.
+pub(crate) fn rust_quote_at(bytes: &[u8], i: usize) -> RustQuote {
+    let n = bytes.len();
+    let Some(&c) = bytes.get(i + 1) else {
+        return RustQuote::Lone;
+    };
+    if c == b'\\' {
+        // Escape: `'\n'`, `'\''`, `'\\'`, `'\x7f'`, `'\u{10FFFF}'` (closing quote at most at i + 11).
+        // The byte right after the backslash is always part of the escape, even when it is `'`.
+        let mut k = i + 3;
+        while k < n && k <= i + 11 {
+            match bytes[k] {
+                b'\'' => return RustQuote::Char { end: k + 1 },
+                b if b.is_ascii_whitespace() => break,
+                _ => k += 1,
+            }
+        }
+        return RustQuote::Lone;
+    }
+    if c != b'\'' && c != b'\n' && c != b'\r' {
+        let close = i + 1 + utf8_len(c);
+        if bytes.get(close) == Some(&b'\'') {
+            return RustQuote::Char { end: close + 1 };
+        }
+    }
+    if c.is_ascii_alphabetic() || c == b'_' || c >= 0x80 {
+        let mut end = i + 1;
+        while end < n && is_rust_ident_byte(bytes[end]) {
+            end += 1;
+        }
+        return RustQuote::Lifetime { end };
+    }
+    RustQuote::Lone
+}
+
+/// Span of a Rust raw string literal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RustRawStr {
+    pub content_start: usize,
+    /// Index of the closing `"`, or `bytes.len()` when unterminated.
+    pub content_end: usize,
+    /// Index after the closing `"` and its `#`s.
+    pub end: usize,
+}
+
+/// Returns the raw string (`r"…"`, `r#"…"#`, `br##"…"##`, `cr"…"`) starting at
+/// `bytes[i]`, or None. Requires a word boundary before `i`, so `r` inside an
+/// identifier and raw identifiers such as `r#type` are not taken.
+pub(crate) fn rust_raw_string_at(bytes: &[u8], i: usize) -> Option<RustRawStr> {
+    let n = bytes.len();
+    if i > 0 && is_rust_ident_byte(bytes[i - 1]) {
+        return None;
+    }
+    let mut j = i;
+    if matches!(bytes.get(j), Some(b'b') | Some(b'c')) {
+        j += 1;
+    }
+    if bytes.get(j) != Some(&b'r') {
+        return None;
+    }
+    j += 1;
+    let hash_start = j;
+    while j < n && bytes[j] == b'#' {
+        j += 1;
+    }
+    let hashes = j - hash_start;
+    if bytes.get(j) != Some(&b'"') {
+        return None;
+    }
+    let content_start = j + 1;
+    let mut k = content_start;
+    while k < n {
+        if bytes[k] == b'"'
+            && k + 1 + hashes <= n
+            && bytes[k + 1..k + 1 + hashes].iter().all(|&h| h == b'#')
+        {
+            return Some(RustRawStr { content_start, content_end: k, end: k + 1 + hashes });
+        }
+        k += 1;
+    }
+    Some(RustRawStr { content_start, content_end: n, end: n })
+}
+
+/// Newlines in `bytes[start..end]`, for keeping line numbers right across a raw string.
+pub(crate) fn count_newlines(bytes: &[u8], start: usize, end: usize) -> u32 {
+    bytes[start..end].iter().filter(|&&c| c == b'\n').count() as u32
+}
+
 /// Generic tokenizer with configurable line-comment prefixes, block-comment support,
-/// and standard string-quote handling.
+/// and standard string-quote handling. `rust` switches `'` to Rust char literal /
+/// lifetime rules and adds raw strings.
 fn tokenize_generic(
     src: &str,
     line_comment_prefixes: &[&str],
     has_block_comment: bool,
     has_backtick_string: bool,
+    rust: bool,
 ) -> Vec<Token> {
     let bytes = src.as_bytes();
     let mut tokens = Vec::new();
@@ -297,6 +423,35 @@ fn tokenize_generic(
                 i += 1;
             }
             continue;
+        }
+
+        // Rust: a lifetime / label becomes `'` + identifier, a char literal one string token.
+        if rust && b == b'\'' {
+            match rust_quote_at(bytes, i) {
+                RustQuote::Lifetime { end } => {
+                    tokens.push(Token { kind: TokenKind::Punct(b'\''), line });
+                    tokens.push(Token { kind: TokenKind::Id, line });
+                    i = end;
+                }
+                RustQuote::Char { end } => {
+                    tokens.push(Token { kind: TokenKind::Str, line });
+                    i = end;
+                }
+                RustQuote::Lone => {
+                    tokens.push(Token { kind: TokenKind::Punct(b'\''), line });
+                    i += 1;
+                }
+            }
+            continue;
+        }
+        // Rust raw string, checked before `r` / `br` / `cr` is read as an identifier.
+        if rust && matches!(b, b'r' | b'b' | b'c') {
+            if let Some(raw) = rust_raw_string_at(bytes, i) {
+                tokens.push(Token { kind: TokenKind::Str, line });
+                line += count_newlines(bytes, i, raw.end);
+                i = raw.end;
+                continue;
+            }
         }
 
         // String literals: ", '
@@ -993,4 +1148,125 @@ pub fn run(args: &[String]) {
     });
 
     println!("{}", serde_json::to_string_pretty(&result).unwrap());
+}
+
+#[cfg(test)]
+mod rust_quote_tests {
+    use super::*;
+
+    // Kept in a .txt file so `string-dup --ext rs` over cli/src does not report it.
+    const FIXTURE: &str = include_str!("testdata/rust_quotes.txt");
+
+    fn kinds(src: &str, ext: &str) -> Vec<TokenKind> {
+        tokenize(src, ext).into_iter().map(|t| t.kind).collect()
+    }
+
+    #[test]
+    fn rust_quote_classifies_char_literals() {
+        let cases: &[(&[u8], usize)] = &[
+            (b"'x'", 3),
+            (b"' '", 3),
+            (b"'\\n'", 4),
+            (b"'\\''", 4),
+            (b"'\\\\'", 4),
+            (b"'\\x7f'", 6),
+            (b"'\\u{1F600}'", 11),
+            (b"'\\u{10FFFF}'", 12),
+            ("'日'".as_bytes(), 5),
+            ("'é'".as_bytes(), 4),
+        ];
+        for (src, end) in cases {
+            assert_eq!(
+                rust_quote_at(src, 0),
+                RustQuote::Char { end: *end },
+                "{}",
+                String::from_utf8_lossy(src)
+            );
+        }
+    }
+
+    #[test]
+    fn rust_quote_classifies_lifetimes_and_labels() {
+        let cases: &[(&[u8], usize)] = &[
+            (b"'a>", 2),
+            (b"'a,'b>", 2),
+            (b"'a", 2),
+            (b"'static str", 7),
+            (b"'_>", 2),
+            (b"'outer: loop", 6),
+            ("'é_x ".as_bytes(), 5),
+        ];
+        for (src, end) in cases {
+            assert_eq!(
+                rust_quote_at(src, 0),
+                RustQuote::Lifetime { end: *end },
+                "{}",
+                String::from_utf8_lossy(src)
+            );
+        }
+        assert_eq!(rust_quote_at(b"' ", 0), RustQuote::Lone);
+        assert_eq!(rust_quote_at(b"''", 0), RustQuote::Lone);
+        assert_eq!(rust_quote_at(b"'", 0), RustQuote::Lone);
+    }
+
+    #[test]
+    fn rust_quote_raw_string_spans() {
+        let raw = |content_start, content_end, end| RustRawStr { content_start, content_end, end };
+        assert_eq!(rust_raw_string_at(b"r#\"a \"q\" b\"#;", 0), Some(raw(3, 10, 12)));
+        assert_eq!(rust_raw_string_at(b"r\"C:\\\"", 0), Some(raw(2, 5, 6)));
+        assert_eq!(rust_raw_string_at(b"br\"x\"", 0), Some(raw(3, 4, 5)));
+        assert_eq!(rust_raw_string_at(b"cr##\"a\"#b\"##", 0), Some(raw(5, 9, 12)));
+        assert_eq!(rust_raw_string_at(b"r#\"open", 0), Some(raw(3, 7, 7)));
+        assert_eq!(rust_raw_string_at(b"r#type", 0), None);
+        assert_eq!(rust_raw_string_at(b"b\"x\"", 0), None);
+        assert_eq!(rust_raw_string_at(b"bar\"x\"", 2), None);
+    }
+
+    #[test]
+    fn rust_quote_dup_scan_tokens() {
+        use TokenKind::{Id, Num, Punct, PunctHash, Str};
+        let arrow = PunctHash(hash_punct_bytes(b"->"));
+        let lifetime = [Punct(b'\''), Id];
+        let mut expected = vec![Id, Id, Punct(b'<')];
+        expected.extend(lifetime);
+        expected.extend([Punct(b'>'), Punct(b'('), Id, Punct(b':'), Punct(b'&')]);
+        expected.extend(lifetime);
+        expected.extend([Id, Punct(b')'), arrow, Punct(b'&')]);
+        expected.extend(lifetime);
+        expected.extend([Id, Punct(b'{')]);
+        expected.extend([Id, Id, Punct(b'='), Str, Punct(b';')]); // let c = 'x';
+        expected.extend([Id, Id, Punct(b'='), Str, Punct(b';')]); // let e = '\n';
+        expected.extend([Id, Id, Punct(b'='), Str, Punct(b';')]); // let r = r#"…"#;
+        expected.extend([Str, Punct(b'}')]);
+        let first_line = FIXTURE.lines().next().unwrap();
+        assert_eq!(kinds(first_line, "rs"), expected);
+
+        let second_line = FIXTURE.lines().nth(1).unwrap();
+        assert_eq!(
+            kinds(second_line, "rs"),
+            vec![
+                Id, Id, Punct(b'('), Punct(b')'), Punct(b'{'), Id, Id, Punct(b'='),
+                Punct(b'['), Num, Punct(b','), Num, Punct(b','), Num, Punct(b']'),
+                Punct(b';'), Punct(b'}'),
+            ]
+        );
+    }
+
+    #[test]
+    fn rust_quote_raw_string_keeps_line_numbers() {
+        let toks = tokenize("r#\"a\nb\"#\nx", "rs");
+        let got: Vec<(TokenKind, u32)> = toks.iter().map(|t| (t.kind, t.line)).collect();
+        assert_eq!(got, vec![(TokenKind::Str, 1), (TokenKind::Id, 3)]);
+    }
+
+    #[test]
+    fn rust_quote_rules_do_not_apply_to_ts() {
+        use TokenKind::{Id, Punct, Str};
+        // In TS `'` always opens a string, even when it looks like a lifetime.
+        assert_eq!(
+            kinds("s = 'a b'; f<'x>", "ts"),
+            vec![Id, Punct(b'='), Str, Punct(b';'), Id, Punct(b'<'), Str]
+        );
+        assert_eq!(kinds("r#\"x\"#", "ts"), vec![Id, Punct(b'#'), Str, Punct(b'#')]);
+    }
 }

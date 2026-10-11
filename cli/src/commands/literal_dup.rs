@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-use super::dup_scan::{walk_files, DEFAULT_EXTS};
+use super::dup_scan::{rust_quote_at, rust_raw_string_at, walk_files, RustQuote, DEFAULT_EXTS};
 
 const DEFAULT_MIN_OCCURRENCES: usize = 3;
 const DEFAULT_MIN_ELEMENTS: usize = 3;
@@ -76,7 +76,8 @@ fn skip_string(b: &[u8], start: usize) -> usize {
 
 /// b[start] は '[' or '{'。データリテラルなら (close_idx, normalized, top_level_elements) を返す。
 /// 式/コードブロック ( `()`/`=>`/`=`/`;`/メンバ`.` 等を含む) は None。
-fn scan_data_literal(b: &[u8], start: usize) -> Option<(usize, String, usize)> {
+/// `rust` では char literal を要素、raw string を文字列要素とし、lifetime を含むものは None。
+fn scan_data_literal(b: &[u8], start: usize, rust: bool) -> Option<(usize, String, usize)> {
     let n = b.len();
     let open = b[start];
     let close = if open == b'[' { b']' } else { b'}' };
@@ -88,6 +89,29 @@ fn scan_data_literal(b: &[u8], start: usize) -> Option<(usize, String, usize)> {
 
     while i < n {
         let c = b[i];
+        if rust {
+            if let Some(raw) = rust_raw_string_at(b, i) {
+                norm.push('\'');
+                for &ch in &b[raw.content_start..raw.content_end] {
+                    norm.push(ch as char);
+                }
+                norm.push('\'');
+                nonempty = true;
+                i = raw.end;
+                continue;
+            }
+            if c == b'\'' {
+                let RustQuote::Char { end } = rust_quote_at(b, i) else { return None };
+                norm.push('\'');
+                for &ch in &b[i + 1..end - 1] {
+                    norm.push(ch as char);
+                }
+                norm.push('\'');
+                nonempty = true;
+                i = end;
+                continue;
+            }
+        }
         match c {
             b'[' | b'{' => { depth += 1; norm.push(c as char); i += 1; }
             b']' | b'}' => {
@@ -135,7 +159,8 @@ fn scan_data_literal(b: &[u8], start: usize) -> Option<(usize, String, usize)> {
 }
 
 /// 1 ソースから配列/オブジェクトのデータリテラルを抽出。戻り: (正規化, open文字, 要素数, 行)
-fn extract_literals(src: &str) -> Vec<(String, char, usize, u32)> {
+/// `rust` (.rs) では `'` を char literal / lifetime として読み、raw string を飛ばす。
+fn extract_literals(src: &str, rust: bool) -> Vec<(String, char, usize, u32)> {
     let b = src.as_bytes();
     let n = b.len();
     let mut out = Vec::new();
@@ -154,6 +179,20 @@ fn extract_literals(src: &str) -> Vec<(String, char, usize, u32)> {
     let mut i = 0;
     while i < n {
         let c = b[i];
+        if rust {
+            // raw string は `#` 行コメント扱いより先に読む (`r#"…"#`)
+            if let Some(raw) = rust_raw_string_at(b, i) {
+                i = raw.end;
+                continue;
+            }
+            if c == b'\'' {
+                i = match rust_quote_at(b, i) {
+                    RustQuote::Lifetime { end } | RustQuote::Char { end } => end,
+                    RustQuote::Lone => i + 1,
+                };
+                continue;
+            }
+        }
         match c {
             b'/' if i + 1 < n && b[i + 1] == b'/' => {
                 i += 2;
@@ -171,7 +210,7 @@ fn extract_literals(src: &str) -> Vec<(String, char, usize, u32)> {
             }
             b'\'' | b'"' | b'`' => { i = skip_string(b, i); }
             b'[' | b'{' => {
-                if let Some((end, norm, elements)) = scan_data_literal(b, i) {
+                if let Some((end, norm, elements)) = scan_data_literal(b, i, rust) {
                     out.push((norm, c as char, elements, line_at[i]));
                     i = end + 1;
                 } else {
@@ -201,7 +240,8 @@ pub fn run(args: &[String]) {
             .unwrap_or(p)
             .to_string_lossy()
             .replace('\\', "/");
-        for (norm, open, elements, line) in extract_literals(&src) {
+        let rust = p.extension().and_then(|e| e.to_str()) == Some("rs");
+        for (norm, open, elements, line) in extract_literals(&src, rust) {
             if elements < parsed.min_elements {
                 continue;
             }
@@ -252,4 +292,40 @@ pub fn run(args: &[String]) {
         "clusters": shown,
     });
     println!("{}", serde_json::to_string(&result).unwrap_or_default());
+}
+
+#[cfg(test)]
+mod rust_quote_tests {
+    use super::*;
+
+    const FIXTURE: &str = include_str!("testdata/rust_quotes.txt");
+
+    #[test]
+    fn rust_quote_literal_dup_finds_array_after_lifetimes() {
+        let got = extract_literals(FIXTURE, true);
+        assert!(
+            got.contains(&("[1,2,3]".to_string(), '[', 3, 2)),
+            "{got:?}"
+        );
+    }
+
+    #[test]
+    fn rust_quote_literal_dup_reads_char_and_raw_elements() {
+        let got = extract_literals("v = [r#\"a\"#, 'b', '\\'', \"c\"]", true);
+        assert_eq!(got, vec![("['a','b','\\'','c']".to_string(), '[', 4, 1)]);
+        // A lifetime inside brackets is not data.
+        assert!(extract_literals("x = [T, 'a, V]", true).is_empty());
+    }
+
+    #[test]
+    fn rust_quote_rules_do_not_apply_to_ts() {
+        // In TS `'` always opens a string: the quoted span hides the array.
+        assert!(extract_literals("f<'a>(); h = [1, 2, 3]; g<'b>", false)
+            .iter()
+            .all(|l| l.0 != "[1,2,3]"));
+        assert_eq!(
+            extract_literals("h = ['a', 'b', 'c']", false),
+            vec![("['a','b','c']".to_string(), '[', 3, 1)]
+        );
+    }
 }

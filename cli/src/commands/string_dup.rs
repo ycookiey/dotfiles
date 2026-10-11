@@ -9,6 +9,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use super::dup_scan::{count_newlines, rust_quote_at, rust_raw_string_at, RustQuote};
+
 const DEFAULT_MIN_CHARS: usize = 30;
 const DEFAULT_MIN_WORDS: usize = 3;
 const DEFAULT_MIN_OCCURRENCES: usize = 2;
@@ -230,12 +232,19 @@ fn normalize_ws(s: &str) -> String {
     out
 }
 
-fn extract_strings(src: &str, lang: LangKind) -> Vec<StringLit> {
+/// `rust` (a `.rs` file) applies Rust char literal / lifetime / raw string rules
+/// on top of the C-family extractor.
+fn extract_strings(src: &str, lang: LangKind, rust: bool) -> Vec<StringLit> {
     match lang {
-        LangKind::CFamily | LangKind::Fallback => {
-            extract_generic(src, &["//"], true, true, lang == LangKind::Fallback)
-        }
-        LangKind::Shell => extract_generic(src, &["#"], false, true, false),
+        LangKind::CFamily | LangKind::Fallback => extract_generic(
+            src,
+            &["//"],
+            true,
+            true,
+            lang == LangKind::Fallback,
+            rust && lang == LangKind::CFamily,
+        ),
+        LangKind::Shell => extract_generic(src, &["#"], false, true, false, false),
         LangKind::Python => extract_python(src),
         LangKind::PowerShell => extract_powershell(src),
         LangKind::Markup => extract_markup(src),
@@ -248,6 +257,7 @@ fn extract_generic(
     has_block_comment: bool,
     has_backtick_string: bool,
     fallback_extra_comments: bool,
+    rust: bool,
 ) -> Vec<StringLit> {
     let mut prefixes_owned: Vec<&str> = line_comment_prefixes.to_vec();
     if fallback_extra_comments && !prefixes_owned.contains(&"#") {
@@ -291,6 +301,23 @@ fn extract_generic(
                 i += 1;
             }
             continue;
+        }
+
+        // Rust: lifetimes, labels and char literals are not strings; raw strings are.
+        if rust && b == b'\'' {
+            i = match rust_quote_at(bytes, i) {
+                RustQuote::Lifetime { end } | RustQuote::Char { end } => end,
+                RustQuote::Lone => i + 1,
+            };
+            continue;
+        }
+        if rust && matches!(b, b'r' | b'b' | b'c') {
+            if let Some(raw) = rust_raw_string_at(bytes, i) {
+                push_string(&mut out, &src[raw.content_start..raw.content_end], line);
+                line += count_newlines(bytes, i, raw.end);
+                i = raw.end;
+                continue;
+            }
         }
 
         if b == b'"' || b == b'\'' || (has_backtick_string && b == b'`') {
@@ -787,7 +814,7 @@ pub fn run(args: &[String]) {
                 .unwrap_or("")
                 .to_string();
             let lang = lang_for_ext(&ext);
-            let mut strings = extract_strings(&src, lang);
+            let mut strings = extract_strings(&src, lang, ext == "rs");
             // filter by min chars / words right at extraction
             strings.retain(|s| {
                 s.content.chars().count() >= parsed.min_chars
@@ -869,4 +896,39 @@ pub fn run(args: &[String]) {
     }
 
     println!("{}", serde_json::to_string_pretty(&result).unwrap());
+}
+
+#[cfg(test)]
+mod rust_quote_tests {
+    use super::*;
+
+    const FIXTURE: &str = include_str!("testdata/rust_quotes.txt");
+
+    fn contents(src: &str, rust: bool) -> Vec<String> {
+        extract_strings(src, LangKind::CFamily, rust).into_iter().map(|s| s.content).collect()
+    }
+
+    #[test]
+    fn rust_quote_string_dup_extracts_only_string_literals() {
+        // Lifetimes and char literals are skipped; the raw string keeps its inner quotes.
+        assert_eq!(contents(FIXTURE, true), vec!["a \"q\" b".to_string(), "lit".to_string()]);
+    }
+
+    #[test]
+    fn rust_quote_string_dup_raw_string_line() {
+        let got: Vec<(String, u32)> =
+            extract_strings("r#\"x \"y\"\nz\"#\n\"c\"", LangKind::CFamily, true)
+                .into_iter()
+                .map(|s| (s.content, s.line))
+                .collect();
+        assert_eq!(got, vec![("x \"y\" z".to_string(), 1), ("c".to_string(), 3)]);
+    }
+
+    #[test]
+    fn rust_quote_rules_do_not_apply_to_ts() {
+        assert_eq!(
+            contents("x = 'it\\'s'; f<'y>; z = \"w\"", false),
+            vec!["it\\'s".to_string(), "y>; z = \"w\"".to_string()]
+        );
+    }
 }
