@@ -16,8 +16,12 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-CLAUDE_DIR = Path.home() / ".claude"
+# Claude Code honors CLAUDE_CONFIG_DIR for its config root; fall back to ~/.claude.
+CLAUDE_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
 PROJECTS_DIR = CLAUDE_DIR / "projects"
+
+# Leading text of the record Claude Code writes when the user interrupts a turn.
+_INTERRUPT_PREFIX = "[Request interrupted by user"
 
 
 def _derive_project_dir_name(cwd):
@@ -33,10 +37,15 @@ def _derive_project_dir_name(cwd):
 def _current_session_id():
     """Best-effort detection of the currently active session ID.
 
-    The current session is assumed to be the most recently modified
-    .jsonl file in the project directory derived from os.getcwd().
+    Uses CLAUDE_CODE_SESSION_ID when Claude Code provides it. Otherwise the
+    current session is assumed to be the most recently modified .jsonl file
+    in the project directory derived from os.getcwd(), which can pick the
+    wrong file when several sessions run in the same project.
     Returns None if detection fails.
     """
+    env_id = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if env_id:
+        return env_id
     try:
         cwd = os.getcwd()
     except OSError:
@@ -81,36 +90,53 @@ def _session_files(project_path):
 
 
 def _load_first_user_message(session_path):
-    """Load the first user message from a session file."""
+    """Load the first user message from a session file.
+
+    Meta records (isMeta, e.g. local-command caveats) and interrupt markers are
+    skipped. If a session has only such records, the first of them is returned
+    with empty text so the session is still listed.
+    """
+    fallback = None
     with open(session_path, encoding="utf-8") as f:
         for line in f:
+            # Cheap prefilter: session files are compact JSON, so every user
+            # record contains this exact substring.
+            if '"type":"user"' not in line:
+                continue
             try:
                 obj = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if obj.get("type") == "user":
-                content = obj.get("message", {}).get("content", "")
-                if isinstance(content, str):
-                    text = content
-                elif isinstance(content, list):
-                    text = next(
-                        (
-                            c.get("text", "")
-                            for c in content
-                            if isinstance(c, dict) and c.get("type") == "text"
-                        ),
-                        "",
-                    )
-                else:
-                    text = ""
-                return {
-                    "timestamp": obj.get("timestamp"),
-                    "cwd": obj.get("cwd", ""),
-                    "git_branch": obj.get("gitBranch", ""),
-                    "version": obj.get("version", ""),
-                    "text": text[:200],
-                }
-    return None
+            if obj.get("type") != "user":
+                continue
+            message = obj.get("message")
+            content = message.get("content", "") if isinstance(message, dict) else ""
+            if isinstance(content, str):
+                text = content
+            elif isinstance(content, list):
+                text = next(
+                    (
+                        c.get("text", "")
+                        for c in content
+                        if isinstance(c, dict) and c.get("type") == "text"
+                    ),
+                    "",
+                )
+            else:
+                text = ""
+            info = {
+                "timestamp": obj.get("timestamp"),
+                "cwd": obj.get("cwd", ""),
+                "git_branch": obj.get("gitBranch", ""),
+                "version": obj.get("version", ""),
+                "text": text[:200],
+            }
+            if obj.get("isMeta") or text.startswith(_INTERRUPT_PREFIX):
+                if fallback is None:
+                    fallback = dict(info, text="")
+                continue
+            return info
+    return fallback
 
 
 def cmd_list(args):
