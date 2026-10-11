@@ -122,7 +122,6 @@ config.window_background_opacity = 0.8
 -- パフォーマンス設定
 ----------------------------------------------------
 config.front_end = 'OpenGL'
-config.webgpu_power_preference = 'HighPerformance'
 config.scrollback_lines = 20000
 
 ----------------------------------------------------
