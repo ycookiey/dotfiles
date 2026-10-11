@@ -43,10 +43,26 @@ gh release download $release.tag -R "$owner/$Repo" -p $asset.name -D $env:TEMP -
 if ($LASTEXITCODE -ne 0) { Write-Error "Failed to download $($asset.name)"; return }
 $hash = (Get-FileHash $tmp -Algorithm SHA256).Hash.ToLower()
 
+# zip 内で最初の .exe の位置から bin 名と extract_dir を決める。exe が zip 直下なら ExtractDir は空
+function Get-ZipExeLayout([string]$ZipPath) {
+  $zip = [IO.Compression.ZipFile]::OpenRead($ZipPath)
+  try {
+    $entry = $zip.Entries | ? { $_.Name -match '\.exe$' } | select -First 1
+    if (!$entry) { return $null }
+    $path = $entry.FullName -replace '\\', '/'
+    $slash = $path.LastIndexOf('/')
+    [pscustomobject]@{
+      ExeName    = $entry.Name
+      ExtractDir = if ($slash -gt 0) { $path.Substring(0, $slash) } else { '' }
+    }
+  } finally { $zip.Dispose() }
+}
+
+$extractDir = ''
 if ($isZip) {
-  $zip = [IO.Compression.ZipFile]::OpenRead($tmp)
-  $exeName = ($zip.Entries | ? { $_.Name -match '\.exe$' } | select -First 1).Name
-  $zip.Dispose()
+  $layout = Get-ZipExeLayout $tmp
+  $exeName = $layout.ExeName
+  $extractDir = $layout.ExtractDir
 } else {
   $exeName = $asset.name
 }
@@ -59,14 +75,14 @@ $manifest = [ordered]@{
   description = $Description
   homepage    = "https://github.com/$owner/$Repo"
   license     = 'MIT'
-  url         = "https://github.com/$owner/$Repo/releases/download/v$version/$($asset.name)"
+  url         = "https://github.com/$owner/$Repo/releases/download/$($release.tag)/$($asset.name)"
   hash        = $hash
   bin         = $exeName
   shortcuts   = @(, @($exeName, $App))
   checkver    = @{ github = "https://github.com/$owner/$Repo" }
   autoupdate  = @{ url = "https://github.com/$owner/$Repo/releases/download/v`$version/$($asset.name)" }
 }
-if ($isZip) { $manifest['extract_dir'] = $exeName -replace '\.exe$', '' }
+if ($extractDir) { $manifest['extract_dir'] = $extractDir }
 $json = $manifest | ConvertTo-Json -Depth 4
 
 wh "`nManifest:" -Fo Green
