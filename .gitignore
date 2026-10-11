@@ -46,6 +46,7 @@ node_modules/
 .gcc-prompt.md
 .gcc-agent.log
 .gcc-result.json
+.gcc-stderr.log
 
 # Cursor agent temp files
 .cursor/
