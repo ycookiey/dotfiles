@@ -25,30 +25,16 @@ pub fn run(force: bool, skip_mdc: bool, agent_args: &[String]) {
         let git_root = match git_toplevel() {
             Ok(p) => p,
             Err(e) => {
-                ShellAction {
-                    messages: vec![Message {
-                        text: format!("git rev-parse --show-toplevel に失敗: {e}"),
-                        level: MessageLevel::Error,
-                    }],
-                    exit_code: 1,
-                    ..Default::default()
-                }
-                .print();
+                ShellAction::error(format!("git rev-parse --show-toplevel に失敗: {e}"))
+                    .print_and_exit();
                 return;
             }
         };
 
         let home_claude = dirs::home_dir().map(|h| h.join(".claude").join("CLAUDE.md"));
         let Some(home_claude) = home_claude.filter(|p| p.is_file()) else {
-            ShellAction {
-                messages: vec![Message {
-                    text: "$HOME\\.claude\\CLAUDE.md が無い。setup.ps1 または --skip-mdc".into(),
-                    level: MessageLevel::Error,
-                }],
-                exit_code: 1,
-                ..Default::default()
-            }
-            .print();
+            ShellAction::error("$HOME\\.claude\\CLAUDE.md が無い。setup.ps1 または --skip-mdc")
+                .print_and_exit();
             return;
         };
 
@@ -56,15 +42,8 @@ pub fn run(force: bool, skip_mdc: bool, agent_args: &[String]) {
         let mdc_path = rules_dir.join(MDC_NAME);
 
         if let Err(e) = fs::create_dir_all(&rules_dir) {
-            ShellAction {
-                messages: vec![Message {
-                    text: format!("{} を作成できない: {e}", fmt_path(&rules_dir)),
-                    level: MessageLevel::Error,
-                }],
-                exit_code: 1,
-                ..Default::default()
-            }
-            .print();
+            ShellAction::error(format!("{} を作成できない: {e}", fmt_path(&rules_dir)))
+                .print_and_exit();
             return;
         }
 
@@ -79,15 +58,7 @@ pub fn run(force: bool, skip_mdc: bool, agent_args: &[String]) {
                 level: MessageLevel::Info,
             });
         } else if let Err(e) = fs::write(&mdc_path, content) {
-            ShellAction {
-                messages: vec![Message {
-                    text: format!("{} に書けない: {e}", fmt_path(&mdc_path)),
-                    level: MessageLevel::Error,
-                }],
-                exit_code: 1,
-                ..Default::default()
-            }
-            .print();
+            ShellAction::error(format!("{} に書けない: {e}", fmt_path(&mdc_path))).print_and_exit();
             return;
         }
     }

@@ -49,6 +49,19 @@ fn is_zero(v: &i32) -> bool {
 }
 
 impl ShellAction {
+    /// An action that only shows `text` as an error and fails with exit code 1.
+    pub fn error(text: impl Into<String>) -> Self {
+        ShellAction {
+            messages: vec![Message {
+                text: text.into(),
+                level: MessageLevel::Error,
+            }],
+            exit_code: 1,
+            ..Default::default()
+        }
+    }
+
+    /// Prints the action as one JSON line. Does not exit; see `print_and_exit`.
     pub fn print(&self) {
         use std::io::Write;
         println!(
@@ -56,6 +69,15 @@ impl ShellAction {
             serde_json::to_string(self).expect("Failed to serialize ShellAction")
         );
         let _ = std::io::stdout().flush();
+    }
+
+    /// Prints the action, then exits with its `exit_code` when that is non-zero, so the
+    /// failure also reaches the shell's `$?` / `$LASTEXITCODE`, not only the JSON.
+    pub fn print_and_exit(&self) {
+        self.print();
+        if self.exit_code != 0 {
+            std::process::exit(self.exit_code);
+        }
     }
 }
 

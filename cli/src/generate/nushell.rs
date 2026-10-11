@@ -435,6 +435,12 @@ const LAUNCH_HELPER: &str = r#"def _dotcli_launch [program: string, ...args: str
 }
 "#;
 
+// A failing dotcli (non-zero exit, `exit_code` in the JSON) still reaches this helper
+// and its messages print, but `$env.LAST_EXIT_CODE` stays 0: nushell drops the status of
+// an external command whose output is piped on, and the REPL resets LAST_EXIT_CODE after
+// a custom command, so setting it here does not stick.
+// TODO: propagate `exit_code` (e.g. end with an external that exits with it) if scripts
+// ever need to test it.
 const APPLY_HELPER: &str = r#"def --env _dotcli_apply [] {
     let action = ($in | from json)
     if ($action | get -o unset_env | is-not-empty) {

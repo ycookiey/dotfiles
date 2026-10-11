@@ -48,15 +48,7 @@ pub fn run(args: &[String]) {
             .expect("home dir")
             .join(format!(".claude-{n}"));
         if !acc_dir.exists() {
-            ShellAction {
-                messages: vec![Message {
-                    text: "Not found. Run setup.ps1".into(),
-                    level: MessageLevel::Error,
-                }],
-                exit_code: 1,
-                ..Default::default()
-            }
-            .print();
+            ShellAction::error("Not found. Run setup.ps1").print_and_exit();
             return;
         }
         env.insert(
@@ -114,9 +106,8 @@ pub fn run(args: &[String]) {
         action.set_env.extend(env);
         action.unset_env = unset_env;
         action.messages.extend(messages);
-        let code = action.exit_code;
-        action.print();
-        std::process::exit(code);
+        action.print_and_exit();
+        return;
     }
 
     // Default: add --dangerously-skip-permissions unless safe mode
