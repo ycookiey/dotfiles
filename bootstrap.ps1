@@ -77,9 +77,15 @@ if (!(Test-Path $Dir)) {
     git clone $Repo $Dir
 }
 
+# Snapshot the scoop manifest: Phase 2 (setup.ps1 -> dotcli sync) rewrites
+# install/scoopfile.json from `scoop export`, which drops the large apps that
+# Phase 4 has not installed yet. Phase 1 and Phase 4 both read this copy.
+$scoopSnapshot = Join-Path $env:TEMP 'dotfiles-scoopfile.snapshot.json'
+Copy-Item "$Dir\install\scoopfile.json" $scoopSnapshot -Force
+
 # Phase 1: core apps (skip large -- abort on failure)
 $pwsh = Join-Path $scoopShims 'pwsh.exe'
-& $pwsh -NoProfile -ExecutionPolicy Bypass -File "$Dir\install\scoop.ps1" -SkipLarge
+& $pwsh -NoProfile -ExecutionPolicy Bypass -File "$Dir\install\scoop.ps1" -SkipLarge -ScoopFile $scoopSnapshot
 if ($LASTEXITCODE -ne 0) {
     throw "Phase 1 failed with exit code $LASTEXITCODE."
 }
@@ -106,7 +112,7 @@ if (Get-Command uv -ea 0) {
 }
 
 # Phase 4: large apps (non-fatal)
-& $pwsh -NoProfile -ExecutionPolicy Bypass -File "$Dir\install\scoop.ps1" -OnlyLarge
+& $pwsh -NoProfile -ExecutionPolicy Bypass -File "$Dir\install\scoop.ps1" -OnlyLarge -ScoopFile $scoopSnapshot
 
 # Phase 5: startup (skip if apps already running)
 if (!(Get-Process wezterm-gui -ea 0)) {

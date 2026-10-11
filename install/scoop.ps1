@@ -1,6 +1,8 @@
 param(
     [switch]$SkipLarge,
-    [switch]$OnlyLarge
+    [switch]$OnlyLarge,
+    # 読む manifest。bootstrap は Phase 2 の dotcli sync (scoop export で上書き) 前のスナップショットを渡す
+    [string]$ScoopFile = "$PSScriptRoot\scoopfile.json"
 )
 
 if ($SkipLarge -and $OnlyLarge) {
@@ -10,7 +12,6 @@ if ($SkipLarge -and $OnlyLarge) {
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path $MyInvocation.MyCommand.Definition
 . "$ScriptDir\..\pwsh\aliases.ps1"
-$ScoopFile = "$ScriptDir\scoopfile.json"
 
 # Scoop インストール
 if (!(gcm scoop -ea 0)) {
