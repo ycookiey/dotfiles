@@ -54,14 +54,20 @@ vim.opt.listchars = {
 }
 
 -- 全角スペースハイライト
-vim.api.nvim_create_autocmd("VimEnter", {
+-- colorscheme の適用 (hi clear) で消えるため、ColorScheme のたびに定義し直す
+local function define_zenkaku_hl()
+  vim.api.nvim_set_hl(0, "ZenkakuSpace", { bg = "#4a3040" })
+end
+define_zenkaku_hl()
+vim.api.nvim_create_autocmd("ColorScheme", { callback = define_zenkaku_hl })
+-- match はウィンドウに属する。BufRead は再読込で重複し、既存バッファの split では起きないため、
+-- 表示・新規ウィンドウ単位でウィンドウごとに 1 回だけ付ける (WinNew 中は新ウィンドウが current)
+vim.api.nvim_create_autocmd({ "BufWinEnter", "WinNew" }, {
   callback = function()
-    vim.api.nvim_set_hl(0, "ZenkakuSpace", { bg = "#4a3040" })
-  end,
-})
-vim.api.nvim_create_autocmd({ "BufNewFile", "BufRead" }, {
-  callback = function()
-    vim.fn.matchadd("ZenkakuSpace", "　")
+    if vim.w.zenkaku_match then return end
+    -- ポップアップ等のフローティングウィンドウは対象外
+    if vim.api.nvim_win_get_config(0).relative ~= "" then return end
+    vim.w.zenkaku_match = vim.fn.matchadd("ZenkakuSpace", "　")
   end,
 })
 
