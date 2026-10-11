@@ -713,14 +713,56 @@ fn display_width(s: &str) -> usize {
         // Enclosed Alphanumeric Supplement (🅾🆂🅷 etc.) — text presentation, 1 wide
         if (0x1F100..=0x1F1FF).contains(&cp) {
             w += 1;
-        // Emoji (U+1F300+) and CJK fullwidth → 2
-        } else if cp >= 0x1F300 || (0x2E80..=0x9FFF).contains(&cp) {
+        // Emoji (U+1F300+), BMP emoji-presentation symbols (❓ etc.) and CJK fullwidth → 2
+        } else if cp >= 0x1F300 || (0x2E80..=0x9FFF).contains(&cp) || is_bmp_emoji_presentation(cp) {
             w += 2;
         } else {
             w += 1;
         }
     }
     w
+}
+
+// BMP code points with Emoji_Presentation=Yes (Unicode emoji-data.txt). Terminals
+// draw these as 2-wide emoji even without U+FE0F. Text-presentation symbols
+// (▲▼▓░①⧗ …) are deliberately absent: they stay 1 wide.
+fn is_bmp_emoji_presentation(cp: u32) -> bool {
+    matches!(
+        cp,
+        0x231A..=0x231B
+            | 0x23E9..=0x23EC
+            | 0x23F0
+            | 0x23F3
+            | 0x25FD..=0x25FE
+            | 0x2614..=0x2615
+            | 0x2648..=0x2653
+            | 0x267F
+            | 0x2693
+            | 0x26A1
+            | 0x26AA..=0x26AB
+            | 0x26BD..=0x26BE
+            | 0x26C4..=0x26C5
+            | 0x26CE
+            | 0x26D4
+            | 0x26EA
+            | 0x26F2..=0x26F3
+            | 0x26F5
+            | 0x26FA
+            | 0x26FD
+            | 0x2705
+            | 0x270A..=0x270B
+            | 0x2728
+            | 0x274C
+            | 0x274E
+            | 0x2753..=0x2755
+            | 0x2757
+            | 0x2795..=0x2797
+            | 0x27B0
+            | 0x27BF
+            | 0x2B1B..=0x2B1C
+            | 0x2B50
+            | 0x2B55
+    )
 }
 
 fn pad_right(s: &str, width: usize) -> String {
@@ -1327,5 +1369,27 @@ mod tests {
         assert_eq!(read().cached_at, now + 20 + RATE_LIMITS_REWRITE_SECONDS);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn display_width_counts_bmp_emoji_as_wide() {
+        assert_eq!(display_width("❓"), 2);
+        assert_eq!(display_width("❓ foo"), 6);
+        assert_eq!(display_width("\x1b[38;2;150;150;150m❓ ?\x1b[0m"), 4);
+        assert_eq!(display_width("⚡✅⭐❔❕❗"), 12);
+        // U+FE0F after a wide emoji adds nothing
+        assert_eq!(display_width("❓\u{fe0f}"), 2);
+    }
+
+    #[test]
+    fn display_width_keeps_text_symbols_narrow() {
+        assert_eq!(display_width("🅾"), 1);
+        assert_eq!(display_width("🅶"), 1);
+        assert_eq!(display_width("①⑨"), 2);
+        assert_eq!(display_width("▓░▼▲"), 4);
+        assert_eq!(display_width("⧗"), 1);
+        // emoji with text presentation by default (Emoji_Presentation=No)
+        assert_eq!(display_width("✔❤⚠"), 3);
+        assert_eq!(display_width("漢字かな"), 8);
     }
 }
