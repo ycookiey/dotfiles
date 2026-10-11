@@ -54,4 +54,5 @@
 - `$` を渡せるのはファイル最上位で宣言した関数のみ(`claude plugin validate` が拒否)。`$` の型は `EngineInterface`(`Engine` は test 用)。型検査は types の先頭の tsconfig + tsc
 - `$.ui.status`: 入力欄の下・statusline の上に 1 行。先頭に `⚠<plugin名>:` が付く。改行は 1 行につながり(◆)、ANSI は文字のまま。`undefined` で行ごと消える
 - `ui.render` の AbovePrompt: 入力欄の真上に 1 行と右端の `[-]`。`Text` の `color`(theme key・16 進・名前)が効かず白
+- 会話の開始後に install した plugin も `/reload-plugins` で読み込まれる(再起動不要)
 - directory marketplace の plugin も、install 時に `~/.claude/plugins/cache/<marketplace>/<name>/<version>` へ写して読む。元の編集が反映されるかは要確認(公式 docs は「直接読む」と記載)
