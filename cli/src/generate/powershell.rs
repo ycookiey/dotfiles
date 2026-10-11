@@ -1,3 +1,4 @@
+use super::quote::{ps_dquote_inner, ps_dquote_path_with_env, ps_squote_inner};
 use crate::definitions::{Definitions, LauncherType, Platform};
 use std::fmt::Write;
 use std::path::Path;
@@ -72,30 +73,25 @@ pub fn generate(defs: &Definitions, dotfiles_dir: &Path) -> String {
                         out,
                         "function {name} {{ Start-App \"{app}\" }}",
                         name = l.name,
-                        app = l.app_name.as_ref().unwrap(),
+                        app = ps_dquote_inner(l.app_name.as_ref().unwrap()),
                     )
                     .unwrap();
                 }
                 LauncherType::Exe => {
-                    let path = l
-                        .path
-                        .as_ref()
-                        .unwrap()
-                        .replace("{PROGRAM_FILES}", "$env:ProgramFiles")
-                        .replace("{USERPROFILE}", "$env:USERPROFILE");
+                    let path = ps_dquote_path_with_env(l.path.as_ref().unwrap());
                     if l.args.is_empty() {
-                        writeln!(out, "function {name} {{ start \"{path}\" }}", name = l.name,)
+                        writeln!(out, "function {name} {{ start {path} }}", name = l.name,)
                             .unwrap();
                     } else {
                         let args_str = l
                             .args
                             .iter()
-                            .map(|a| format!("'{a}'"))
+                            .map(|a| format!("'{}'", ps_squote_inner(a)))
                             .collect::<Vec<_>>()
                             .join(",");
                         writeln!(
                             out,
-                            "function {name} {{ start \"{path}\" -Arg {args} }}",
+                            "function {name} {{ start {path} -Arg {args} }}",
                             name = l.name,
                             args = args_str,
                         )
@@ -178,8 +174,49 @@ const APPLY_HELPER: &str = r#"function _dotcli_apply {
 
 #[cfg(test)]
 mod tests {
-    use super::APPLY_HELPER;
+    use super::{APPLY_HELPER, generate};
+    use crate::definitions::Definitions;
+    use std::path::Path;
     use std::process::{Command, Stdio};
+
+    #[test]
+    fn launcher_paths_args_and_app_names_are_quoted() {
+        let defs: Definitions = toml::from_str(
+            r#"
+[[launcher]]
+name = "q"
+type = "exe"
+path = "{PROGRAM_FILES}\\it's $x\\a.exe"
+args = ["it's", "say \"hi\""]
+
+[[launcher]]
+name = "bare"
+type = "exe"
+path = "vivaldi"
+
+[[launcher]]
+name = "app"
+type = "start_app"
+app_name = "Bob's \"App\""
+"#,
+        )
+        .unwrap();
+        let out = generate(&defs, Path::new("C:/dot"));
+        assert!(
+            out.contains(
+                r#"function q { start "$env:ProgramFiles\it's `$x\a.exe" -Arg 'it''s','say "hi"' }"#
+            ),
+            "{out}"
+        );
+        assert!(
+            out.contains(r#"function bare { start "vivaldi" }"#),
+            "{out}"
+        );
+        assert!(
+            out.contains(r#"function app { Start-App "Bob's `"App`"" }"#),
+            "{out}"
+        );
+    }
 
     fn pwsh_available() -> bool {
         Command::new("pwsh")

@@ -1,19 +1,7 @@
+use super::quote::{nu_dquote, nu_literal, ps_squote_inner};
 use crate::definitions::{Definitions, LauncherType, Platform};
 use std::fmt::Write;
 use std::path::Path;
-
-/// nushell string literal without escape processing: `'...'`, or a raw string
-/// `r#'...'#` (with as many `#` as needed) when `s` itself contains `'`.
-fn nu_literal(s: &str) -> String {
-    if !s.contains('\'') {
-        return format!("'{s}'");
-    }
-    let mut hashes = String::from("#");
-    while s.contains(&format!("'{hashes}")) {
-        hashes.push('#');
-    }
-    format!("r{hashes}'{s}'{hashes}")
-}
 
 /// `_dotfiles_dir` is unused: script wrappers resolve the root at run time through
 /// `$env.DOT` (nushell/env.nu), so the output does not depend on where it was generated.
@@ -101,7 +89,7 @@ pub fn generate(defs: &Definitions, _dotfiles_dir: &Path) -> String {
                         let segments = rest
                             .split('\\')
                             .filter(|s| !s.is_empty())
-                            .map(|s| format!("\"{s}\""))
+                            .map(nu_dquote)
                             .collect::<Vec<_>>()
                             .join(" ");
                         format!("([$env.ProgramFiles {segments}] | path join)")
@@ -112,7 +100,7 @@ pub fn generate(defs: &Definitions, _dotfiles_dir: &Path) -> String {
                         let segments = rest
                             .split('\\')
                             .filter(|s| !s.is_empty())
-                            .map(|s| format!("\"{s}\""))
+                            .map(nu_dquote)
                             .collect::<Vec<_>>()
                             .join(" ");
                         format!("([$env.USERPROFILE {segments}] | path join)")
@@ -122,15 +110,12 @@ pub fn generate(defs: &Definitions, _dotfiles_dir: &Path) -> String {
                         nu_literal(raw_path)
                     } else {
                         // Bare exe — pass as quoted literal to _dotcli_launch (resolved via PATH)
-                        format!("\"{raw_path}\"")
+                        nu_dquote(raw_path)
                     };
                     let args_str = l
                         .args
                         .iter()
-                        .map(|a| {
-                            let escaped = a.replace('"', r#"\""#);
-                            format!("\"{escaped}\"")
-                        })
+                        .map(|a| nu_dquote(a))
                         .collect::<Vec<_>>()
                         .join(" ");
                     if args_str.is_empty() {
@@ -157,7 +142,7 @@ pub fn generate(defs: &Definitions, _dotfiles_dir: &Path) -> String {
                     // Same inline command as bash.rs, so it needs no profile (Start-App).
                     let ps_cmd = format!(
                         "explorer \"shell:AppsFolder\\$((Get-StartApps '{}' | Select-Object -First 1).AppID)\"",
-                        app.replace('\'', "''")
+                        ps_squote_inner(app)
                     );
                     writeln!(
                         out,

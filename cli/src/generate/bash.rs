@@ -1,3 +1,4 @@
+use super::quote::{bash_squote, ps_dquote_path_with_env, ps_squote_inner};
 use crate::definitions::{Definitions, LauncherType, Platform};
 use std::fmt::Write;
 use std::path::Path;
@@ -116,10 +117,6 @@ pub fn generate(defs: &Definitions, dotfiles_dir: &Path) -> String {
     }
 
     out
-}
-
-fn bash_squote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 /// Exe launcher body that starts the program through `cmd.exe /c start`, which costs far
@@ -264,10 +261,7 @@ fn pwsh_start_process_launcher(raw_path: &str, args: &[String]) -> String {
     let has_env_var = raw_path.contains("{PROGRAM_FILES}") || raw_path.contains("{USERPROFILE}");
     let path_part = if has_env_var {
         // PS double-quoted to expand $env: variables
-        let p = raw_path
-            .replace("{PROGRAM_FILES}", "$env:ProgramFiles")
-            .replace("{USERPROFILE}", "$env:USERPROFILE");
-        format!("\"{}\"", p.replace('"', "`\""))
+        ps_dquote_path_with_env(raw_path)
     } else {
         format!("'{}'", ps_squote_inner(raw_path))
     };
@@ -282,10 +276,6 @@ fn pwsh_start_process_launcher(raw_path: &str, args: &[String]) -> String {
     };
     let ps_cmd = format!("Start-Process -FilePath {}{}", path_part, arglist);
     format!("pwsh -NoProfile -Command {}", bash_squote(&ps_cmd))
-}
-
-fn ps_squote_inner(s: &str) -> String {
-    s.replace('\'', "''")
 }
 
 /// Shell side of `protocol::ShellAction`. One jq call turns the JSON into shell code that

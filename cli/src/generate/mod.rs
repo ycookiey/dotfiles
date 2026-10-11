@@ -1,6 +1,7 @@
 mod bash;
 mod nushell;
 mod powershell;
+mod quote;
 
 use crate::definitions::Definitions;
 use crate::paths::definitions_path;
