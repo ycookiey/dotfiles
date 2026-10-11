@@ -24,4 +24,5 @@ CLAUDE.md「参照ドキュメント」節の主要 docs と異なり起動前�
 - ESLint(eslintrc の parser・plugin は共有の設定の場所から解決され root の版は効かない、typescript-eslint の `project` 列挙で heap 不足 → `projectService`、`tsconfig.json` 以外の名前の設定にしか入らない file) → eslint.md
 - Node.js / tsx(`tsx -e` の top-level await、`zlib.zstdDecompressSync` の型、ES2017 target の BigInt literal) → nodejs.md
 - WSL の memory(file cache が上限まで溜まり Windows を圧迫・即時に返す・上限の目安)、暇で止まると /tmp が消える → wsl.md
+- Windows のプロセス・窓(Explorer でファイルを選んで開く: `explorer /select` は初めてのフォルダで選ばない、裏の子プロセスが親のパイプを受け継ぎ読む側が待たされる、窓の手前への切り替えの制限と本人の入力が重なる試験) → windows-desktop.md
 - 自分の CLAUDE.md・skill・agent の prompt を監査・書き換えるときのユーザー方針(自発性の文言は残す・global CLAUDE.md は短く) → prompt-writing.md

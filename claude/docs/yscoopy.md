@@ -19,6 +19,8 @@
 
 webhook が設定済みなら何もしなくてよい。Worker 経由で自動更新される。
 
+- `gh release create --target` には完全な SHA(`git rev-parse <sha>`)か branch 名を渡す。短い SHA は `target_commitish is invalid`(HTTP 422)
+
 ## 新しいアプリを yscoopy に追加する手順
 
 `yscoopy-add.ps1` で一発実行:
