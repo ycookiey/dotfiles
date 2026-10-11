@@ -20,6 +20,7 @@ pub mod locked;
 pub mod mcp_screenshot;
 pub mod proxy;
 pub mod resume;
+pub mod scan_common;
 pub mod send_key;
 pub mod string_dup;
 pub mod string_dup_format;

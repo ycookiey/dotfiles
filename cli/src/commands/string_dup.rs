@@ -5,11 +5,11 @@
 
 use rayon::prelude::*;
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::dup_scan::{count_newlines, rust_quote_at, rust_raw_string_at, RustQuote};
+use super::scan_common::{self, Event, Lang, Lexer, Syntax};
 
 const DEFAULT_MIN_CHARS: usize = 30;
 const DEFAULT_MIN_WORDS: usize = 3;
@@ -25,40 +25,6 @@ const DEFAULT_EXTS: &[&str] = &[
     "html", "vue", "svelte", "astro",
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LangKind {
-    CFamily,
-    Python,
-    PowerShell,
-    Shell,
-    Markup, // html, vue, svelte, astro — strip <!-- --> + extract attribute strings
-    Fallback,
-}
-
-fn lang_for_ext(ext: &str) -> LangKind {
-    match ext {
-        "rs" | "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs"
-        | "go" | "java" | "kt" | "swift"
-        | "c" | "h" | "cpp" | "hpp" | "cc" => LangKind::CFamily,
-        "py" => LangKind::Python,
-        "ps1" | "psm1" => LangKind::PowerShell,
-        "sh" | "bash" => LangKind::Shell,
-        "html" | "vue" | "svelte" | "astro" => LangKind::Markup,
-        _ => LangKind::Fallback,
-    }
-}
-
-fn lang_name(kind: LangKind) -> &'static str {
-    match kind {
-        LangKind::CFamily => "c_family",
-        LangKind::Python => "python",
-        LangKind::PowerShell => "powershell",
-        LangKind::Shell => "shell",
-        LangKind::Markup => "markup",
-        LangKind::Fallback => "fallback",
-    }
-}
-
 #[derive(Debug, Clone)]
 struct StringLit {
     content: String, // whitespace-normalized
@@ -69,7 +35,7 @@ struct FileStrings {
     path: PathBuf,
     strings: Vec<StringLit>,
     ext: String,
-    lang: LangKind,
+    lang: Lang,
 }
 
 struct Args {
@@ -232,323 +198,15 @@ fn normalize_ws(s: &str) -> String {
     out
 }
 
-/// `rust` (a `.rs` file) applies Rust char literal / lifetime / raw string rules
-/// on top of the C-family extractor. `min_chars` only drops literals that cannot
-/// reach it before they are normalized; callers still apply the exact filter.
-fn extract_strings(src: &str, lang: LangKind, rust: bool, min_chars: usize) -> Vec<StringLit> {
-    match lang {
-        LangKind::CFamily | LangKind::Fallback => extract_generic(
-            src,
-            &["//"],
-            true,
-            true,
-            lang == LangKind::Fallback,
-            rust && lang == LangKind::CFamily,
-            min_chars,
-        ),
-        LangKind::Shell => extract_generic(src, &["#"], false, true, false, false, min_chars),
-        LangKind::Python => extract_python(src, min_chars),
-        LangKind::PowerShell => extract_powershell(src, min_chars),
-        LangKind::Markup => extract_markup(src, min_chars),
-    }
-}
-
-fn extract_generic(
-    src: &str,
-    line_comment_prefixes: &[&str],
-    has_block_comment: bool,
-    has_backtick_string: bool,
-    fallback_extra_comments: bool,
-    rust: bool,
-    min_chars: usize,
-) -> Vec<StringLit> {
-    let mut prefixes_owned: Vec<&str> = line_comment_prefixes.to_vec();
-    if fallback_extra_comments && !prefixes_owned.contains(&"#") {
-        prefixes_owned.push("#");
-    }
-    let bytes = src.as_bytes();
+/// The string literals of `src` (Rust char literals excluded), in source order.
+/// `min_chars` only drops literals that cannot reach it before they are normalized;
+/// callers still apply the exact filter.
+fn extract_strings(src: &str, syntax: Syntax, min_chars: usize) -> Vec<StringLit> {
     let mut out = Vec::new();
-    let mut line: u32 = 1;
-    let mut i = 0;
-
-    while i < bytes.len() {
-        let b = bytes[i];
-
-        if b == b'\n' {
-            line += 1;
-            i += 1;
-            continue;
+    for ev in Lexer::new(src, syntax) {
+        if let Event::Str { char_lit: false, line, content_start, content_end } = ev {
+            push_string(&mut out, &src[content_start..content_end], line, min_chars);
         }
-        if has_block_comment && b == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
-            i += 2;
-            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            i = (i + 2).min(bytes.len());
-            continue;
-        }
-        let mut comment_match = None;
-        for prefix in &prefixes_owned {
-            let pb = prefix.as_bytes();
-            if bytes[i..].starts_with(pb) {
-                comment_match = Some(pb.len());
-                break;
-            }
-        }
-        if let Some(plen) = comment_match {
-            i += plen;
-            while i < bytes.len() && bytes[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-
-        // Rust: lifetimes, labels and char literals are not strings; raw strings are.
-        if rust && b == b'\'' {
-            i = match rust_quote_at(bytes, i) {
-                RustQuote::Lifetime { end } | RustQuote::Char { end } => end,
-                RustQuote::Lone => i + 1,
-            };
-            continue;
-        }
-        if rust && matches!(b, b'r' | b'b' | b'c') {
-            if let Some(raw) = rust_raw_string_at(bytes, i) {
-                push_string(&mut out, &src[raw.content_start..raw.content_end], line, min_chars);
-                line += count_newlines(bytes, i, raw.end);
-                i = raw.end;
-                continue;
-            }
-        }
-
-        if b == b'"' || b == b'\'' || (has_backtick_string && b == b'`') {
-            let quote = b;
-            let start_line = line;
-            let content_start = i + 1;
-            i += 1;
-            while i < bytes.len() && bytes[i] != quote {
-                if bytes[i] == b'\\' && i + 1 < bytes.len() {
-                    if bytes[i + 1] == b'\n' {
-                        line += 1;
-                    }
-                    i += 2;
-                    continue;
-                }
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            let content_end = i;
-            if i < bytes.len() {
-                i += 1;
-            }
-            push_string(&mut out, &src[content_start..content_end], start_line, min_chars);
-            continue;
-        }
-
-        i += 1;
-    }
-    out
-}
-
-fn extract_python(src: &str, min_chars: usize) -> Vec<StringLit> {
-    let bytes = src.as_bytes();
-    let mut out = Vec::new();
-    let mut line: u32 = 1;
-    let mut i = 0;
-
-    while i < bytes.len() {
-        let b = bytes[i];
-        if b == b'\n' {
-            line += 1;
-            i += 1;
-            continue;
-        }
-        if b == b'#' {
-            while i < bytes.len() && bytes[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-        // Triple-quoted string
-        if (b == b'"' || b == b'\'')
-            && i + 2 < bytes.len()
-            && bytes[i + 1] == b
-            && bytes[i + 2] == b
-        {
-            let quote = b;
-            let start_line = line;
-            let content_start = i + 3;
-            i += 3;
-            while i + 2 < bytes.len()
-                && !(bytes[i] == quote && bytes[i + 1] == quote && bytes[i + 2] == quote)
-            {
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            let content_end = i;
-            i = (i + 3).min(bytes.len());
-            push_string(&mut out, &src[content_start..content_end], start_line, min_chars);
-            continue;
-        }
-        if b == b'"' || b == b'\'' {
-            let quote = b;
-            let start_line = line;
-            let content_start = i + 1;
-            i += 1;
-            while i < bytes.len() && bytes[i] != quote {
-                if bytes[i] == b'\\' && i + 1 < bytes.len() {
-                    if bytes[i + 1] == b'\n' {
-                        line += 1;
-                    }
-                    i += 2;
-                    continue;
-                }
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            let content_end = i;
-            if i < bytes.len() {
-                i += 1;
-            }
-            push_string(&mut out, &src[content_start..content_end], start_line, min_chars);
-            continue;
-        }
-        i += 1;
-    }
-    out
-}
-
-fn extract_powershell(src: &str, min_chars: usize) -> Vec<StringLit> {
-    let bytes = src.as_bytes();
-    let mut out = Vec::new();
-    let mut line: u32 = 1;
-    let mut i = 0;
-
-    while i < bytes.len() {
-        let b = bytes[i];
-        if b == b'\n' {
-            line += 1;
-            i += 1;
-            continue;
-        }
-        if b == b'<' && i + 1 < bytes.len() && bytes[i + 1] == b'#' {
-            i += 2;
-            while i + 1 < bytes.len() && !(bytes[i] == b'#' && bytes[i + 1] == b'>') {
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            i = (i + 2).min(bytes.len());
-            continue;
-        }
-        if b == b'#' {
-            while i < bytes.len() && bytes[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-        // Here-string: @"..."@ or @'...'@
-        if b == b'@'
-            && i + 1 < bytes.len()
-            && (bytes[i + 1] == b'"' || bytes[i + 1] == b'\'')
-        {
-            let quote = bytes[i + 1];
-            let start_line = line;
-            let content_start = i + 2;
-            i += 2;
-            while i + 1 < bytes.len() && !(bytes[i] == quote && bytes[i + 1] == b'@') {
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            let content_end = i;
-            i = (i + 2).min(bytes.len());
-            push_string(&mut out, &src[content_start..content_end], start_line, min_chars);
-            continue;
-        }
-        if b == b'"' || b == b'\'' {
-            let quote = b;
-            let start_line = line;
-            let content_start = i + 1;
-            i += 1;
-            while i < bytes.len() && bytes[i] != quote {
-                if bytes[i] == b'`' && i + 1 < bytes.len() {
-                    if bytes[i + 1] == b'\n' {
-                        line += 1;
-                    }
-                    i += 2;
-                    continue;
-                }
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            let content_end = i;
-            if i < bytes.len() {
-                i += 1;
-            }
-            push_string(&mut out, &src[content_start..content_end], start_line, min_chars);
-            continue;
-        }
-        i += 1;
-    }
-    out
-}
-
-/// Markup: skip `<!-- ... -->`, extract attribute values `attr="..."` or `attr='...'`.
-fn extract_markup(src: &str, min_chars: usize) -> Vec<StringLit> {
-    let bytes = src.as_bytes();
-    let mut out = Vec::new();
-    let mut line: u32 = 1;
-    let mut i = 0;
-    while i < bytes.len() {
-        let b = bytes[i];
-        if b == b'\n' {
-            line += 1;
-            i += 1;
-            continue;
-        }
-        if bytes[i..].starts_with(b"<!--") {
-            i += 4;
-            while i + 2 < bytes.len() && !bytes[i..].starts_with(b"-->") {
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            i = (i + 3).min(bytes.len());
-            continue;
-        }
-        if b == b'"' || b == b'\'' {
-            let quote = b;
-            let start_line = line;
-            let content_start = i + 1;
-            i += 1;
-            while i < bytes.len() && bytes[i] != quote {
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            let content_end = i;
-            if i < bytes.len() {
-                i += 1;
-            }
-            push_string(&mut out, &src[content_start..content_end], start_line, min_chars);
-            continue;
-        }
-        i += 1;
     }
     out
 }
@@ -826,45 +484,6 @@ fn similar_cluster_to_json(
     })
 }
 
-fn build_language_breakdown(files: &[FileStrings]) -> Value {
-    let mut by_ext: BTreeMap<String, (LangKind, u32, u64)> = BTreeMap::new();
-    for f in files {
-        let entry = by_ext.entry(f.ext.clone()).or_insert((f.lang, 0, 0));
-        entry.0 = f.lang;
-        entry.1 += 1;
-        entry.2 += f.strings.len() as u64;
-    }
-    let mut arr: Vec<Value> = by_ext
-        .into_iter()
-        .map(|(ext, (lang, fcount, scount))| json!({
-            "ext": ext,
-            "lang": lang_name(lang),
-            "files": fcount,
-            "strings": scount,
-        }))
-        .collect();
-    arr.sort_by(|a, b| {
-        let av = a.get("strings").and_then(|x| x.as_u64()).unwrap_or(0);
-        let bv = b.get("strings").and_then(|x| x.as_u64()).unwrap_or(0);
-        bv.cmp(&av)
-    });
-    Value::Array(arr)
-}
-
-fn build_fallback_warnings(files: &[FileStrings]) -> Value {
-    let mut by_ext: BTreeMap<String, u32> = BTreeMap::new();
-    for f in files {
-        if f.lang == LangKind::Fallback {
-            *by_ext.entry(f.ext.clone()).or_default() += 1;
-        }
-    }
-    Value::Array(
-        by_ext.into_iter()
-            .map(|(ext, count)| json!({"ext": ext, "files": count}))
-            .collect(),
-    )
-}
-
 pub fn run(args: &[String]) {
     let parsed = parse_args(args);
 
@@ -884,8 +503,9 @@ pub fn run(args: &[String]) {
                 .and_then(|e| e.to_str())
                 .unwrap_or("")
                 .to_string();
-            let lang = lang_for_ext(&ext);
-            let mut strings = extract_strings(&src, lang, ext == "rs", parsed.min_chars);
+            let syntax = Syntax::for_ext(&ext);
+            let lang = syntax.lang;
+            let mut strings = extract_strings(&src, syntax, parsed.min_chars);
             // filter by min chars / words right at extraction
             strings.retain(|s| {
                 s.content.chars().count() >= parsed.min_chars
@@ -896,8 +516,12 @@ pub fn run(args: &[String]) {
         .collect();
 
     let extracted_strings: usize = files.iter().map(|f| f.strings.len()).sum();
-    let language_breakdown = build_language_breakdown(&files);
-    let fallback_warnings = build_fallback_warnings(&files);
+    let language_breakdown = scan_common::language_breakdown(
+        files.iter().map(|f| (f.ext.as_str(), f.lang, f.strings.len() as u64)),
+        "lang",
+        "strings",
+    );
+    let fallback_warnings = scan_common::fallback_warnings(files.iter().map(|f| (f.ext.as_str(), f.lang)));
 
     let variants = build_variants(&files);
 
@@ -981,7 +605,7 @@ mod rust_quote_tests {
     const FIXTURE: &str = include_str!("testdata/rust_quotes.txt");
 
     fn contents(src: &str, rust: bool) -> Vec<String> {
-        extract_strings(src, LangKind::CFamily, rust, 0).into_iter().map(|s| s.content).collect()
+        extract_strings(src, Syntax { lang: Lang::CFamily, rust }, 0).into_iter().map(|s| s.content).collect()
     }
 
     #[test]
@@ -993,7 +617,7 @@ mod rust_quote_tests {
     #[test]
     fn rust_quote_string_dup_raw_string_line() {
         let got: Vec<(String, u32)> =
-            extract_strings("r#\"x \"y\"\nz\"#\n\"c\"", LangKind::CFamily, true, 0)
+            extract_strings("r#\"x \"y\"\nz\"#\n\"c\"", Syntax { lang: Lang::CFamily, rust: true }, 0)
                 .into_iter()
                 .map(|s| (s.content, s.line))
                 .collect();
@@ -1012,6 +636,7 @@ mod rust_quote_tests {
 #[cfg(test)]
 mod similarity_tests {
     use super::*;
+    use std::collections::BTreeMap;
 
     /// The String/HashSet Jaccard index the id-based one replaced.
     fn jaccard_by_words(a: &str, b: &str) -> f64 {
@@ -1124,12 +749,12 @@ mod similarity_tests {
     fn short_raw_literals_are_dropped_before_normalizing() {
         let src = "a = \"ab  cd\"; b = \"\u{3000}xy\u{3000}\"; c = \"abcdef\"";
         let got: Vec<String> =
-            extract_strings(src, LangKind::CFamily, false, 6).into_iter().map(|s| s.content).collect();
+            extract_strings(src, Syntax::for_ext("ts"), 6).into_iter().map(|s| s.content).collect();
         // "ab  cd" has 6 bytes and is kept here; run() drops it after normalizing (5 chars).
         // "\u{3000}xy\u{3000}" has 8 bytes and is kept; its normalized "xy" is short too.
         assert_eq!(got, vec!["ab cd".to_string(), "xy".to_string(), "abcdef".to_string()]);
         let none: Vec<String> =
-            extract_strings(src, LangKind::CFamily, false, 9).into_iter().map(|s| s.content).collect();
+            extract_strings(src, Syntax::for_ext("ts"), 9).into_iter().map(|s| s.content).collect();
         assert!(none.is_empty());
     }
 }

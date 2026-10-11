@@ -5,9 +5,11 @@
 
 use rayon::prelude::*;
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use super::scan_common::{self, CodeKind, Event, Lang, Lexer, Syntax};
 
 const DEFAULT_MIN_TOKENS: usize = 30;
 const DEFAULT_MIN_LINES: usize = 3;
@@ -54,7 +56,7 @@ struct FileTokens {
     tokens: Vec<Token>,
     src: String,
     ext: String,
-    lexer: &'static str,
+    lang: Lang,
 }
 
 #[derive(Debug, Clone)]
@@ -190,608 +192,36 @@ pub(crate) fn walk_files(
 }
 
 // ============================================================================
-// Language dispatch
+// Tokenizing (scan_common::Lexer)
 // ============================================================================
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Lexer {
-    CFamily,    // rs, ts, tsx, js, jsx, mjs, cjs, go, java, kt, swift, c, cpp, h, hpp, cc
-    Python,     // py
-    PowerShell, // ps1, psm1
-    Shell,      // sh, bash
-    Fallback,   // unknown extension — best-effort generic
-}
-
-impl Lexer {
-    fn name(&self) -> &'static str {
-        match self {
-            Lexer::CFamily => "c_family",
-            Lexer::Python => "python",
-            Lexer::PowerShell => "powershell",
-            Lexer::Shell => "shell",
-            Lexer::Fallback => "fallback",
-        }
+/// The syntax dup-scan lexes `ext` with. Markup files (html, vue, svelte, astro) keep the
+/// Fallback rules, which also skip the `//` / `/* */` comments of their script blocks.
+fn syntax_for_ext(ext: &str) -> Syntax {
+    let mut syntax = Syntax::for_ext(ext);
+    if syntax.lang == Lang::Markup {
+        syntax.lang = Lang::Fallback;
     }
+    syntax
 }
 
-fn lexer_for_ext(ext: &str) -> Lexer {
-    match ext {
-        "rs" | "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs"
-        | "go" | "java" | "kt" | "swift"
-        | "c" | "h" | "cpp" | "hpp" | "cc" => Lexer::CFamily,
-        "py" => Lexer::Python,
-        "ps1" | "psm1" => Lexer::PowerShell,
-        "sh" | "bash" => Lexer::Shell,
-        _ => Lexer::Fallback,
-    }
-}
-
+/// Token kinds and lines of `src`. A Rust lifetime / label is `'` + Id, a Rust char
+/// literal a Str like any string.
 fn tokenize(src: &str, ext: &str) -> Vec<Token> {
-    match lexer_for_ext(ext) {
-        Lexer::CFamily => tokenize_generic(src, &["//"], true, true, ext == "rs"),
-        Lexer::Python => tokenize_python(src),
-        Lexer::PowerShell => tokenize_powershell(src),
-        Lexer::Shell => tokenize_generic(src, &["#"], false, true, false),
-        Lexer::Fallback => tokenize_generic(src, &["//", "#"], true, true, false),
-    }
-}
-
-// ============================================================================
-// Generic tokenizer (C-family, shell)
-// ============================================================================
-
-/// Multi-char punctuators (two- and three-char). A token of one stores its index here.
-const MULTI_PUNCT: &[&[u8]] = &[
-    b"==", b"!=", b"<=", b">=", b"&&", b"||", b"<<", b">>",
-    b"->", b"=>", b"::", b"++", b"--", b"+=", b"-=", b"*=", b"/=", b"%=",
-    b"&=", b"|=", b"^=", b"??", b"?.", b"..",
-    b"...", b"..=", b"<<=", b">>=", b"===", b"!==", b"&&=", b"||=",
-];
-
-/// The PunctIdx token for `b` when it is one of MULTI_PUNCT. Only entries of `b`'s length
-/// can match, so callers pass the two or three bytes they try.
-fn multi_punct(b: &[u8]) -> Option<TokenKind> {
-    MULTI_PUNCT.iter().position(|p| *p == b).map(|i| TokenKind::PunctIdx(i as u8))
-}
-
-// ============================================================================
-// Rust quote forms (shared with string_dup / literal_dup)
-// ============================================================================
-// In Rust a `'` may open a char literal or a lifetime / loop label, which has
-// no closing quote, and raw strings take no backslash escapes. The C-family
-// scanners call these helpers only for `.rs` files; other languages keep
-// treating `'` as a string quote.
-// TODO(cli-scan-20): replace with one shared lexer for all three scanners.
-
-/// What a `'` at `bytes[i]` starts in Rust source.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RustQuote {
-    /// Lifetime or loop label (`'a`, `'static`, `'_`, `'outer`); `end` is the index after the name.
-    Lifetime { end: usize },
-    /// Char or byte-char literal (`'x'`, `'\n'`, `'\''`, `'\u{1F600}'`, `'日'`);
-    /// `end` is the index after the closing quote.
-    Char { end: usize },
-    /// A `'` that opens neither; callers step over the quote alone.
-    Lone,
-}
-
-fn is_rust_ident_byte(c: u8) -> bool {
-    c.is_ascii_alphanumeric() || c == b'_' || c >= 0x80
-}
-
-fn utf8_len(first: u8) -> usize {
-    match first {
-        0xC0..=0xDF => 2,
-        0xE0..=0xEF => 3,
-        0xF0..=0xFF => 4,
-        _ => 1,
-    }
-}
-
-/// Classifies the `'` at `bytes[i]`. A char literal closes right after one
-/// character or one escape sequence on the same line; anything else starting
-/// with an identifier character is a lifetime or label.
-pub(crate) fn rust_quote_at(bytes: &[u8], i: usize) -> RustQuote {
-    let n = bytes.len();
-    let Some(&c) = bytes.get(i + 1) else {
-        return RustQuote::Lone;
-    };
-    if c == b'\\' {
-        // Escape: `'\n'`, `'\''`, `'\\'`, `'\x7f'`, `'\u{10FFFF}'` (closing quote at most at i + 11).
-        // The byte right after the backslash is always part of the escape, even when it is `'`.
-        let mut k = i + 3;
-        while k < n && k <= i + 11 {
-            match bytes[k] {
-                b'\'' => return RustQuote::Char { end: k + 1 },
-                b if b.is_ascii_whitespace() => break,
-                _ => k += 1,
+    Lexer::new(src, syntax_for_ext(ext))
+        .map(|ev| match ev {
+            Event::Code { kind, line, .. } => {
+                let kind = match kind {
+                    CodeKind::Id => TokenKind::Id,
+                    CodeKind::Num => TokenKind::Num,
+                    CodeKind::Punct(b) => TokenKind::Punct(b),
+                    CodeKind::MultiPunct(i) => TokenKind::PunctIdx(i),
+                };
+                Token { kind, line }
             }
-        }
-        return RustQuote::Lone;
-    }
-    if c != b'\'' && c != b'\n' && c != b'\r' {
-        let close = i + 1 + utf8_len(c);
-        if bytes.get(close) == Some(&b'\'') {
-            return RustQuote::Char { end: close + 1 };
-        }
-    }
-    if c.is_ascii_alphabetic() || c == b'_' || c >= 0x80 {
-        let mut end = i + 1;
-        while end < n && is_rust_ident_byte(bytes[end]) {
-            end += 1;
-        }
-        return RustQuote::Lifetime { end };
-    }
-    RustQuote::Lone
-}
-
-/// Span of a Rust raw string literal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct RustRawStr {
-    pub content_start: usize,
-    /// Index of the closing `"`, or `bytes.len()` when unterminated.
-    pub content_end: usize,
-    /// Index after the closing `"` and its `#`s.
-    pub end: usize,
-}
-
-/// Returns the raw string (`r"…"`, `r#"…"#`, `br##"…"##`, `cr"…"`) starting at
-/// `bytes[i]`, or None. Requires a word boundary before `i`, so `r` inside an
-/// identifier and raw identifiers such as `r#type` are not taken.
-pub(crate) fn rust_raw_string_at(bytes: &[u8], i: usize) -> Option<RustRawStr> {
-    let n = bytes.len();
-    if i > 0 && is_rust_ident_byte(bytes[i - 1]) {
-        return None;
-    }
-    let mut j = i;
-    if matches!(bytes.get(j), Some(b'b') | Some(b'c')) {
-        j += 1;
-    }
-    if bytes.get(j) != Some(&b'r') {
-        return None;
-    }
-    j += 1;
-    let hash_start = j;
-    while j < n && bytes[j] == b'#' {
-        j += 1;
-    }
-    let hashes = j - hash_start;
-    if bytes.get(j) != Some(&b'"') {
-        return None;
-    }
-    let content_start = j + 1;
-    let mut k = content_start;
-    while k < n {
-        if bytes[k] == b'"'
-            && k + 1 + hashes <= n
-            && bytes[k + 1..k + 1 + hashes].iter().all(|&h| h == b'#')
-        {
-            return Some(RustRawStr { content_start, content_end: k, end: k + 1 + hashes });
-        }
-        k += 1;
-    }
-    Some(RustRawStr { content_start, content_end: n, end: n })
-}
-
-/// Newlines in `bytes[start..end]`, for keeping line numbers right across a raw string.
-pub(crate) fn count_newlines(bytes: &[u8], start: usize, end: usize) -> u32 {
-    bytes[start..end].iter().filter(|&&c| c == b'\n').count() as u32
-}
-
-/// Generic tokenizer with configurable line-comment prefixes, block-comment support,
-/// and standard string-quote handling. `rust` switches `'` to Rust char literal /
-/// lifetime rules and adds raw strings.
-fn tokenize_generic(
-    src: &str,
-    line_comment_prefixes: &[&str],
-    has_block_comment: bool,
-    has_backtick_string: bool,
-    rust: bool,
-) -> Vec<Token> {
-    let bytes = src.as_bytes();
-    let mut tokens = Vec::new();
-    let mut line: u32 = 1;
-    let mut i = 0;
-
-    while i < bytes.len() {
-        let b = bytes[i];
-
-        if b == b'\n' {
-            line += 1;
-            i += 1;
-            continue;
-        }
-        if b.is_ascii_whitespace() {
-            i += 1;
-            continue;
-        }
-
-        // Block comment /* ... */
-        if has_block_comment && b == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
-            i += 2;
-            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            i = (i + 2).min(bytes.len());
-            continue;
-        }
-
-        // Line comment
-        let mut comment_match = None;
-        for prefix in line_comment_prefixes {
-            let pb = prefix.as_bytes();
-            if bytes[i..].starts_with(pb) {
-                comment_match = Some(pb.len());
-                break;
-            }
-        }
-        if let Some(plen) = comment_match {
-            i += plen;
-            while i < bytes.len() && bytes[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-
-        // Rust: a lifetime / label becomes `'` + identifier, a char literal one string token.
-        if rust && b == b'\'' {
-            match rust_quote_at(bytes, i) {
-                RustQuote::Lifetime { end } => {
-                    tokens.push(Token { kind: TokenKind::Punct(b'\''), line });
-                    tokens.push(Token { kind: TokenKind::Id, line });
-                    i = end;
-                }
-                RustQuote::Char { end } => {
-                    tokens.push(Token { kind: TokenKind::Str, line });
-                    i = end;
-                }
-                RustQuote::Lone => {
-                    tokens.push(Token { kind: TokenKind::Punct(b'\''), line });
-                    i += 1;
-                }
-            }
-            continue;
-        }
-        // Rust raw string, checked before `r` / `br` / `cr` is read as an identifier.
-        if rust && matches!(b, b'r' | b'b' | b'c') {
-            if let Some(raw) = rust_raw_string_at(bytes, i) {
-                tokens.push(Token { kind: TokenKind::Str, line });
-                line += count_newlines(bytes, i, raw.end);
-                i = raw.end;
-                continue;
-            }
-        }
-
-        // String literals: ", '
-        if b == b'"' || b == b'\'' || (has_backtick_string && b == b'`') {
-            let quote = b;
-            tokens.push(Token { kind: TokenKind::Str, line });
-            i += 1;
-            while i < bytes.len() && bytes[i] != quote {
-                if bytes[i] == b'\\' && i + 1 < bytes.len() {
-                    if bytes[i + 1] == b'\n' {
-                        line += 1;
-                    }
-                    i += 2;
-                    continue;
-                }
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            if i < bytes.len() {
-                i += 1;
-            }
-            continue;
-        }
-
-        if b.is_ascii_digit() {
-            tokens.push(Token { kind: TokenKind::Num, line });
-            i += 1;
-            while i < bytes.len() {
-                let c = bytes[i];
-                let is_numeric_char = c.is_ascii_digit()
-                    || c == b'.'
-                    || c == b'_'
-                    || c.is_ascii_hexdigit()
-                    || c == b'x'
-                    || c == b'X';
-                if is_numeric_char {
-                    i += 1;
-                } else if (c == b'+' || c == b'-')
-                    && i > 0
-                    && (bytes[i - 1] == b'e' || bytes[i - 1] == b'E')
-                {
-                    i += 1;
-                } else {
-                    break;
-                }
-            }
-            continue;
-        }
-
-        if b.is_ascii_alphabetic() || b == b'_' || b == b'$' {
-            tokens.push(Token { kind: TokenKind::Id, line });
-            i += 1;
-            while i < bytes.len() {
-                let c = bytes[i];
-                if c.is_ascii_alphanumeric() || c == b'_' {
-                    i += 1;
-                } else {
-                    break;
-                }
-            }
-            continue;
-        }
-
-        if i + 2 < bytes.len() {
-            if let Some(kind) = multi_punct(&bytes[i..i + 3]) {
-                tokens.push(Token { kind, line });
-                i += 3;
-                continue;
-            }
-        }
-        if i + 1 < bytes.len() {
-            if let Some(kind) = multi_punct(&bytes[i..i + 2]) {
-                tokens.push(Token { kind, line });
-                i += 2;
-                continue;
-            }
-        }
-
-        tokens.push(Token { kind: TokenKind::Punct(b), line });
-        i += 1;
-    }
-
-    tokens
-}
-
-// ============================================================================
-// Python tokenizer (handles triple-quoted strings)
-// ============================================================================
-
-fn tokenize_python(src: &str) -> Vec<Token> {
-    let bytes = src.as_bytes();
-    let mut tokens = Vec::new();
-    let mut line: u32 = 1;
-    let mut i = 0;
-
-    while i < bytes.len() {
-        let b = bytes[i];
-
-        if b == b'\n' {
-            line += 1;
-            i += 1;
-            continue;
-        }
-        if b.is_ascii_whitespace() {
-            i += 1;
-            continue;
-        }
-
-        if b == b'#' {
-            while i < bytes.len() && bytes[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-
-        // Triple-quoted string: """...""" or '''...'''
-        if (b == b'"' || b == b'\'')
-            && i + 2 < bytes.len()
-            && bytes[i + 1] == b
-            && bytes[i + 2] == b
-        {
-            let quote = b;
-            tokens.push(Token { kind: TokenKind::Str, line });
-            i += 3;
-            while i + 2 < bytes.len()
-                && !(bytes[i] == quote && bytes[i + 1] == quote && bytes[i + 2] == quote)
-            {
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            i = (i + 3).min(bytes.len());
-            continue;
-        }
-
-        if b == b'"' || b == b'\'' {
-            let quote = b;
-            tokens.push(Token { kind: TokenKind::Str, line });
-            i += 1;
-            while i < bytes.len() && bytes[i] != quote {
-                if bytes[i] == b'\\' && i + 1 < bytes.len() {
-                    if bytes[i + 1] == b'\n' {
-                        line += 1;
-                    }
-                    i += 2;
-                    continue;
-                }
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            if i < bytes.len() {
-                i += 1;
-            }
-            continue;
-        }
-
-        if b.is_ascii_digit() {
-            tokens.push(Token { kind: TokenKind::Num, line });
-            i += 1;
-            while i < bytes.len() {
-                let c = bytes[i];
-                if c.is_ascii_digit() || c == b'.' || c == b'_' || c == b'j' || c == b'J' {
-                    i += 1;
-                } else {
-                    break;
-                }
-            }
-            continue;
-        }
-
-        if b.is_ascii_alphabetic() || b == b'_' {
-            tokens.push(Token { kind: TokenKind::Id, line });
-            i += 1;
-            while i < bytes.len() {
-                let c = bytes[i];
-                if c.is_ascii_alphanumeric() || c == b'_' {
-                    i += 1;
-                } else {
-                    break;
-                }
-            }
-            continue;
-        }
-
-        if i + 1 < bytes.len() {
-            if let Some(kind) = multi_punct(&bytes[i..i + 2]) {
-                tokens.push(Token { kind, line });
-                i += 2;
-                continue;
-            }
-        }
-        tokens.push(Token { kind: TokenKind::Punct(b), line });
-        i += 1;
-    }
-
-    tokens
-}
-
-// ============================================================================
-// PowerShell tokenizer (handles `<# ... #>` block comment, here-strings)
-// ============================================================================
-
-fn tokenize_powershell(src: &str) -> Vec<Token> {
-    let bytes = src.as_bytes();
-    let mut tokens = Vec::new();
-    let mut line: u32 = 1;
-    let mut i = 0;
-
-    while i < bytes.len() {
-        let b = bytes[i];
-
-        if b == b'\n' {
-            line += 1;
-            i += 1;
-            continue;
-        }
-        if b.is_ascii_whitespace() {
-            i += 1;
-            continue;
-        }
-
-        // Block comment <# ... #>
-        if b == b'<' && i + 1 < bytes.len() && bytes[i + 1] == b'#' {
-            i += 2;
-            while i + 1 < bytes.len() && !(bytes[i] == b'#' && bytes[i + 1] == b'>') {
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            i = (i + 2).min(bytes.len());
-            continue;
-        }
-
-        if b == b'#' {
-            while i < bytes.len() && bytes[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-
-        // Here-string: @" ... "@  or  @' ... '@
-        if b == b'@'
-            && i + 1 < bytes.len()
-            && (bytes[i + 1] == b'"' || bytes[i + 1] == b'\'')
-        {
-            let quote = bytes[i + 1];
-            tokens.push(Token { kind: TokenKind::Str, line });
-            i += 2;
-            while i + 1 < bytes.len() && !(bytes[i] == quote && bytes[i + 1] == b'@') {
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            i = (i + 2).min(bytes.len());
-            continue;
-        }
-
-        if b == b'"' || b == b'\'' {
-            let quote = b;
-            tokens.push(Token { kind: TokenKind::Str, line });
-            i += 1;
-            while i < bytes.len() && bytes[i] != quote {
-                if bytes[i] == b'`' && i + 1 < bytes.len() {
-                    // PowerShell escape via backtick
-                    if bytes[i + 1] == b'\n' {
-                        line += 1;
-                    }
-                    i += 2;
-                    continue;
-                }
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            if i < bytes.len() {
-                i += 1;
-            }
-            continue;
-        }
-
-        if b.is_ascii_digit() {
-            tokens.push(Token { kind: TokenKind::Num, line });
-            i += 1;
-            while i < bytes.len() {
-                let c = bytes[i];
-                if c.is_ascii_digit() || c == b'.' || c == b'_' {
-                    i += 1;
-                } else {
-                    break;
-                }
-            }
-            continue;
-        }
-
-        // Identifier (incl. $variable)
-        if b.is_ascii_alphabetic() || b == b'_' || b == b'$' || b == b'@' {
-            tokens.push(Token { kind: TokenKind::Id, line });
-            i += 1;
-            while i < bytes.len() {
-                let c = bytes[i];
-                if c.is_ascii_alphanumeric() || c == b'_' || c == b':' && i + 1 < bytes.len() && bytes[i + 1] == b':' {
-                    i += 1;
-                } else {
-                    break;
-                }
-            }
-            continue;
-        }
-
-        if i + 1 < bytes.len() {
-            if let Some(kind) = multi_punct(&bytes[i..i + 2]) {
-                tokens.push(Token { kind, line });
-                i += 2;
-                continue;
-            }
-        }
-        tokens.push(Token { kind: TokenKind::Punct(b), line });
-        i += 1;
-    }
-
-    tokens
+            Event::Str { line, .. } => Token { kind: TokenKind::Str, line },
+        })
+        .collect()
 }
 
 // ============================================================================
@@ -1149,55 +579,6 @@ fn cluster_to_json(c: &Cluster, files: &[FileTokens], root: &Path) -> Value {
     })
 }
 
-#[derive(Default)]
-struct LangStat {
-    files: u32,
-    tokens: u64,
-    lexer: &'static str,
-}
-
-fn build_language_breakdown(files: &[FileTokens]) -> Value {
-    let mut by_ext: BTreeMap<String, LangStat> = BTreeMap::new();
-    for f in files {
-        let s = by_ext.entry(f.ext.clone()).or_default();
-        s.files += 1;
-        s.tokens += f.tokens.len() as u64;
-        s.lexer = f.lexer;
-    }
-    let mut arr: Vec<Value> = by_ext
-        .into_iter()
-        .map(|(ext, s)| {
-            json!({
-                "ext": ext,
-                "lexer": s.lexer,
-                "files": s.files,
-                "tokens": s.tokens,
-            })
-        })
-        .collect();
-    // Sort by tokens desc
-    arr.sort_by(|a, b| {
-        let at = a.get("tokens").and_then(|x| x.as_u64()).unwrap_or(0);
-        let bt = b.get("tokens").and_then(|x| x.as_u64()).unwrap_or(0);
-        bt.cmp(&at)
-    });
-    Value::Array(arr)
-}
-
-fn build_fallback_warnings(files: &[FileTokens]) -> Value {
-    let mut by_ext: BTreeMap<String, u32> = BTreeMap::new();
-    for f in files {
-        if f.lexer == Lexer::Fallback.name() {
-            *by_ext.entry(f.ext.clone()).or_default() += 1;
-        }
-    }
-    let arr: Vec<Value> = by_ext
-        .into_iter()
-        .map(|(ext, count)| json!({"ext": ext, "files": count}))
-        .collect();
-    Value::Array(arr)
-}
-
 pub fn run(args: &[String]) {
     let parsed = parse_args(args);
 
@@ -1213,15 +594,19 @@ pub fn run(args: &[String]) {
                 .and_then(|e| e.to_str())
                 .unwrap_or("")
                 .to_string();
-            let lexer = lexer_for_ext(&ext).name();
+            let lang = syntax_for_ext(&ext).lang;
             let tokens = tokenize(&src, &ext);
-            Some(FileTokens { path: p.clone(), tokens, src, ext, lexer })
+            Some(FileTokens { path: p.clone(), tokens, src, ext, lang })
         })
         .collect();
 
     let total_tokens: usize = files.iter().map(|f| f.tokens.len()).sum();
-    let language_breakdown = build_language_breakdown(&files);
-    let fallback_warnings = build_fallback_warnings(&files);
+    let language_breakdown = scan_common::language_breakdown(
+        files.iter().map(|f| (f.ext.as_str(), f.lang, f.tokens.len() as u64)),
+        "lexer",
+        "tokens",
+    );
+    let fallback_warnings = scan_common::fallback_warnings(files.iter().map(|f| (f.ext.as_str(), f.lang)));
 
     let clusters = build_clusters(&files, parsed.min_tokens, parsed.min_lines, parsed.gap);
     let total_clusters = clusters.len();
@@ -1257,70 +642,9 @@ mod rust_quote_tests {
     }
 
     #[test]
-    fn rust_quote_classifies_char_literals() {
-        let cases: &[(&[u8], usize)] = &[
-            (b"'x'", 3),
-            (b"' '", 3),
-            (b"'\\n'", 4),
-            (b"'\\''", 4),
-            (b"'\\\\'", 4),
-            (b"'\\x7f'", 6),
-            (b"'\\u{1F600}'", 11),
-            (b"'\\u{10FFFF}'", 12),
-            ("'日'".as_bytes(), 5),
-            ("'é'".as_bytes(), 4),
-        ];
-        for (src, end) in cases {
-            assert_eq!(
-                rust_quote_at(src, 0),
-                RustQuote::Char { end: *end },
-                "{}",
-                String::from_utf8_lossy(src)
-            );
-        }
-    }
-
-    #[test]
-    fn rust_quote_classifies_lifetimes_and_labels() {
-        let cases: &[(&[u8], usize)] = &[
-            (b"'a>", 2),
-            (b"'a,'b>", 2),
-            (b"'a", 2),
-            (b"'static str", 7),
-            (b"'_>", 2),
-            (b"'outer: loop", 6),
-            ("'é_x ".as_bytes(), 5),
-        ];
-        for (src, end) in cases {
-            assert_eq!(
-                rust_quote_at(src, 0),
-                RustQuote::Lifetime { end: *end },
-                "{}",
-                String::from_utf8_lossy(src)
-            );
-        }
-        assert_eq!(rust_quote_at(b"' ", 0), RustQuote::Lone);
-        assert_eq!(rust_quote_at(b"''", 0), RustQuote::Lone);
-        assert_eq!(rust_quote_at(b"'", 0), RustQuote::Lone);
-    }
-
-    #[test]
-    fn rust_quote_raw_string_spans() {
-        let raw = |content_start, content_end, end| RustRawStr { content_start, content_end, end };
-        assert_eq!(rust_raw_string_at(b"r#\"a \"q\" b\"#;", 0), Some(raw(3, 10, 12)));
-        assert_eq!(rust_raw_string_at(b"r\"C:\\\"", 0), Some(raw(2, 5, 6)));
-        assert_eq!(rust_raw_string_at(b"br\"x\"", 0), Some(raw(3, 4, 5)));
-        assert_eq!(rust_raw_string_at(b"cr##\"a\"#b\"##", 0), Some(raw(5, 9, 12)));
-        assert_eq!(rust_raw_string_at(b"r#\"open", 0), Some(raw(3, 7, 7)));
-        assert_eq!(rust_raw_string_at(b"r#type", 0), None);
-        assert_eq!(rust_raw_string_at(b"b\"x\"", 0), None);
-        assert_eq!(rust_raw_string_at(b"bar\"x\"", 2), None);
-    }
-
-    #[test]
     fn rust_quote_dup_scan_tokens() {
         use TokenKind::{Id, Num, Punct, Str};
-        let arrow = multi_punct(b"->").unwrap();
+        let arrow = TokenKind::PunctIdx(scan_common::multi_punct(b"->").unwrap());
         let lifetime = [Punct(b'\''), Id];
         let mut expected = vec![Id, Id, Punct(b'<')];
         expected.extend(lifetime);
@@ -1394,7 +718,7 @@ mod subsumption_tests {
 
     fn file(name: &str, src: String) -> FileTokens {
         let tokens = tokenize(&src, "js");
-        FileTokens { path: PathBuf::from(name), tokens, src, ext: "js".into(), lexer: "generic" }
+        FileTokens { path: PathBuf::from(name), tokens, src, ext: "js".into(), lang: Lang::CFamily }
     }
 
     /// A cluster's occurrences as "file_idx:start-end", space separated. Tests spell clusters
@@ -1488,7 +812,7 @@ mod window_hash_tests {
 
     fn file(src: &str) -> FileTokens {
         let tokens = tokenize(src, "js");
-        FileTokens { path: PathBuf::new(), tokens, src: src.into(), ext: "js".into(), lexer: "" }
+        FileTokens { path: PathBuf::new(), tokens, src: src.into(), ext: "js".into(), lang: Lang::CFamily }
     }
 
     #[test]
@@ -1566,7 +890,7 @@ mod preview_tests {
                 tokens: Vec::new(),
                 src: src.clone(),
                 ext: String::new(),
-                lexer: "",
+                lang: Lang::Fallback,
             };
             for start in 0..16u32 {
                 for end in 0..16u32 {

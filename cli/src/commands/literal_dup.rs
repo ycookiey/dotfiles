@@ -4,8 +4,9 @@
 //! リテラルを検出する。本コマンドは「内容まで同一の配列/オブジェクトリテラル」を検出する。
 //! 例: `['hp','atk','def','spa','spd','spe']` が複数ファイルに散在する重複定数。
 //!
-//! token 化では token に内容 (text) が残らないため、ソースから直接リテラルを切り出して
-//! 正規化 (空白除去 + クォート統一) し、内容ハッシュで出現回数を集計する。
+//! 3 スキャナ共通の lexer (scan_common::Lexer) が返す token と文字列の位置から、括弧内の
+//! ソースを読んでリテラルを組み立て、正規化 (空白除去 + クォート統一) し、内容ハッシュで
+//! 出現回数を集計する。コメント・文字列の字句規則は拡張子の言語に従う。
 //! 「データリテラル」= 文字列/数値/識別子/カンマ/コロン/ネスト[]{} のみで構成され、
 //! `()`/`=>`/`=`/`;`/メンバ`.` を含まないもの (式やコードブロックを除外)。数値の小数点 (`0.5`) と
 //! リテラル内のコメントは許容する。非 ASCII の文字列・識別子は元の文字のまま正規化キーに残る。
@@ -15,7 +16,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-use super::dup_scan::{rust_quote_at, rust_raw_string_at, walk_files, RustQuote, DEFAULT_EXTS};
+use super::dup_scan::{walk_files, DEFAULT_EXTS};
+use super::scan_common::{CodeKind, Event, Lexer, Syntax};
 
 const DEFAULT_MIN_OCCURRENCES: usize = 3;
 const DEFAULT_MIN_ELEMENTS: usize = 3;
@@ -62,50 +64,6 @@ fn parse_args(args: &[String]) -> Args {
     Args { path, exts, min_occurrences, min_elements, min_chars, top, excludes, no_gitignore }
 }
 
-/// 開きクォート b[start] から閉じ (or EOF) の次のインデックスを返す。
-fn skip_string(b: &[u8], start: usize) -> usize {
-    let q = b[start];
-    let n = b.len();
-    let mut i = start + 1;
-    while i < n {
-        if b[i] == b'\\' { i += 2; continue; }
-        if b[i] == q { return i + 1; }
-        i += 1;
-    }
-    n
-}
-
-/// `#` を行コメントに使う言語の拡張子。これ以外は `//` と `/* */` をコメントとする。
-const HASH_COMMENT_EXTS: &[&str] = &["py", "pyi", "pyw", "sh", "bash", "zsh", "ps1", "psm1", "psd1"];
-
-/// 拡張子から決まる字句規則。
-#[derive(Debug, Clone, Copy)]
-struct Lang {
-    /// .rs: `'` を char literal / lifetime として読み、raw string を文字列とする。
-    rust: bool,
-    /// true なら `#` が行コメント、false なら `//` と `/* */` がコメント。
-    hash_comments: bool,
-}
-
-impl Lang {
-    fn from_ext(ext: &str) -> Self {
-        Lang {
-            rust: ext.eq_ignore_ascii_case("rs"),
-            hash_comments: HASH_COMMENT_EXTS.iter().any(|e| ext.eq_ignore_ascii_case(e)),
-        }
-    }
-}
-
-/// b[i] (行コメント開始) から改行 (or EOF) の位置を返す。
-fn skip_line_comment(b: &[u8], i: usize) -> usize {
-    b[i..].iter().position(|&ch| ch == b'\n').map_or(b.len(), |p| i + p)
-}
-
-/// b[i] は `/*` の `/`。閉じ `*/` の次のインデックスを返す。閉じがなければ None。
-fn skip_block_comment(b: &[u8], i: usize) -> Option<usize> {
-    b[i + 2..].windows(2).position(|w| w == b"*/").map(|p| i + 2 + p + 2)
-}
-
 /// b[i] == '.' が数値リテラルの小数点か (`0.5`, `1_000.25`, `1.5e3`)。
 /// 直前が数字列で、その数字列が数字で始まり識別子や `.` に続いていないこと、直後が数字であることを要求する。
 /// メンバアクセス `a.b`、tuple field `t1.0`、range `1..3`、`1.2.3` は false。
@@ -123,84 +81,59 @@ fn is_decimal_point(b: &[u8], i: usize) -> bool {
     j == 0 || !(b[j - 1].is_ascii_alphanumeric() || b[j - 1] == b'_' || b[j - 1] == b'.' || b[j - 1] >= 0x80)
 }
 
-/// b[start] は '[' or '{'。データリテラルなら (close_idx, normalized, top_level_elements) を返す。
-/// 式/コードブロック ( `()`/`=>`/`=`/`;`/メンバ`.` 等を含む) は None。リテラル内のコメントは読み飛ばす。
-/// `lang.rust` では char literal を要素、raw string を文字列要素とし、lifetime を含むものは None。
-fn scan_data_literal(b: &[u8], start: usize, lang: Lang) -> Option<(usize, String, usize)> {
-    let n = b.len();
+/// b[start] は '[' or '{' の token で、`lex` はその直後から読む。データリテラルなら
+/// (normalized, top_level_elements) を返し、`lex` は閉じ括弧の直後まで進んでいる。
+/// 式/コードブロック ( `()`/`=>`/`=`/`;`/メンバ`.` 等を含む) は None。コメントは lexer が読み飛ばす。
+/// 文字列 (Rust の char literal・raw string を含む) は中身を `'…'` で囲んで 1 要素とし、
+/// Rust の lifetime (`'` が code として残る) を含むものは None。
+fn scan_data_literal(lex: &mut Lexer, b: &[u8], start: usize) -> Option<(String, usize)> {
     let open = b[start];
     let close = if open == b'[' { b']' } else { b'}' };
-    let mut depth: i32 = 0;
-    let mut i = start;
+    let mut depth: i32 = 1;
     // 元バイト列をそのまま積む (UTF-8 の多バイト文字を 1 バイトずつ char 化しない)。
-    let mut norm: Vec<u8> = Vec::new();
+    let mut norm: Vec<u8> = vec![open];
     let mut top_commas = 0usize;
     let mut nonempty = false;
 
-    while i < n {
-        let c = b[i];
-        if lang.rust {
-            if let Some(raw) = rust_raw_string_at(b, i) {
-                norm.push(b'\'');
-                norm.extend_from_slice(&b[raw.content_start..raw.content_end]);
-                norm.push(b'\'');
-                nonempty = true;
-                i = raw.end;
-                continue;
-            }
-            if c == b'\'' {
-                let RustQuote::Char { end } = rust_quote_at(b, i) else { return None };
-                norm.push(b'\'');
-                norm.extend_from_slice(&b[i + 1..end - 1]);
-                norm.push(b'\'');
-                nonempty = true;
-                i = end;
-                continue;
-            }
-        }
-        match c {
-            b'[' | b'{' => { depth += 1; norm.push(c); i += 1; }
-            b']' | b'}' => {
-                depth -= 1;
-                norm.push(c);
-                i += 1;
-                if depth == 0 {
-                    if c != close { return None; }
-                    let elements = if nonempty { top_commas + 1 } else { 0 };
-                    // 区切りは ASCII のみで、文字列・要素は元の UTF-8 バイト列を丸ごと写すので valid。
-                    return Some((i - 1, String::from_utf8(norm).ok()?, elements));
-                }
-                if depth < 0 { return None; }
-            }
-            b'\'' | b'"' | b'`' => {
-                let e = skip_string(b, i);
-                let inner_end = e.saturating_sub(1); // 閉じクォート位置 (or n)
+    for ev in lex {
+        let (start, end) = match ev {
+            Event::Str { content_start, content_end, .. } => {
                 norm.push(b'\''); // クォートは ' に統一
-                if i + 1 < inner_end {
-                    norm.extend_from_slice(&b[i + 1..inner_end]);
-                }
+                norm.extend_from_slice(&b[content_start..content_end]);
                 norm.push(b'\'');
                 nonempty = true;
-                i = e;
+                continue;
             }
-            b'#' if lang.hash_comments => { i = skip_line_comment(b, i); }
-            b'/' if !lang.hash_comments && b.get(i + 1) == Some(&b'/') => { i = skip_line_comment(b, i); }
-            b'/' if !lang.hash_comments && b.get(i + 1) == Some(&b'*') => { i = skip_block_comment(b, i)?; }
-            b'.' if is_decimal_point(b, i) => { norm.push(b'.'); i += 1; }
-            b',' => { if depth == 1 { top_commas += 1; } norm.push(b','); nonempty = true; i += 1; }
-            b':' => { norm.push(b':'); nonempty = true; i += 1; }
-            b'-' => { norm.push(b'-'); nonempty = true; i += 1; }
-            b' ' | b'\t' | b'\r' | b'\n' => { i += 1; } // 空白除去
-            // データ性 NG: 式・呼び出し・代入・メンバアクセス・テンプレート等
-            b'(' | b')' | b';' | b'=' | b'.' | b'+' | b'*' | b'/' | b'<' | b'>'
-            | b'!' | b'?' | b'&' | b'|' | b'@' | b'$' | b'%' | b'^' | b'~' | b'\\' => {
-                return None;
-            }
-            _ => {
-                // 識別子・数値・その他 (Unicode 識別子含む) は要素として許容
-                norm.push(c);
-                nonempty = true;
-                i += 1;
+            Event::Code { start, end, .. } => (start, end),
+        };
+        // token 間の空白は lexer が除いている。token 内はバイト単位で判定する。
+        for (i, &c) in b.iter().enumerate().take(end).skip(start) {
+            match c {
+                b'[' | b'{' => { depth += 1; norm.push(c); }
+                b']' | b'}' => {
+                    depth -= 1;
+                    norm.push(c);
+                    if depth == 0 {
+                        if c != close { return None; }
+                        let elements = if nonempty { top_commas + 1 } else { 0 };
+                        // 区切りは ASCII のみで、文字列・要素は元の UTF-8 バイト列を丸ごと写すので valid。
+                        return Some((String::from_utf8(norm).ok()?, elements));
+                    }
+                }
+                b'.' if is_decimal_point(b, i) => { norm.push(b'.'); }
+                b',' => { if depth == 1 { top_commas += 1; } norm.push(b','); nonempty = true; }
+                b':' | b'-' => { norm.push(c); nonempty = true; }
+                // データ性 NG: 式・呼び出し・代入・メンバアクセス・テンプレート・Rust lifetime 等
+                b'(' | b')' | b';' | b'=' | b'.' | b'+' | b'*' | b'/' | b'<' | b'>'
+                | b'!' | b'?' | b'&' | b'|' | b'@' | b'$' | b'%' | b'^' | b'~' | b'\\'
+                | b'\'' | b'"' | b'`' => {
+                    return None;
+                }
+                _ => {
+                    // 識別子・数値・その他 (Unicode 識別子含む) は要素として許容
+                    norm.push(c);
+                    nonempty = true;
+                }
             }
         }
     }
@@ -208,69 +141,33 @@ fn scan_data_literal(b: &[u8], start: usize, lang: Lang) -> Option<(usize, Strin
 }
 
 /// 1 ソースから配列/オブジェクトのデータリテラルを抽出。戻り: (正規化, open文字, 要素数, 行)
-/// コメント様式と Rust 固有の `'` / raw string の扱いは `ext` (拡張子) で決める。
+/// コメント・文字列の字句規則は `ext` (拡張子) の言語に従う (scan_common::Lexer)。
 fn extract_literals(src: &str, ext: &str) -> Vec<(String, char, usize, u32)> {
-    let lang = Lang::from_ext(ext);
-    let rust = lang.rust;
+    let syntax = Syntax::for_ext(ext);
     let b = src.as_bytes();
-    let n = b.len();
     let mut out = Vec::new();
+    let mut lex = Lexer::new(src, syntax);
+    // Rust 属性 `#[test]` / `#![allow(…)]` を開く `[` の位置。この括弧はデータではない (中身はそのまま読み進める)。
+    let mut attr_bracket = None;
 
-    // バイト位置 → 行番号
-    let mut line_at = vec![1u32; n + 1];
-    {
-        let mut ln = 1u32;
-        for (i, &ch) in b.iter().enumerate() {
-            line_at[i] = ln;
-            if ch == b'\n' { ln += 1; }
-        }
-        line_at[n] = ln;
-    }
-
-    let mut i = 0;
-    while i < n {
-        let c = b[i];
-        if rust {
-            if let Some(raw) = rust_raw_string_at(b, i) {
-                i = raw.end;
-                continue;
-            }
-            // 属性 `#[test]` / `#![allow(…)]` の括弧はデータではない (中身はそのまま読み進める)。
-            if c == b'#' {
-                let j = if b.get(i + 1) == Some(&b'!') { i + 2 } else { i + 1 };
-                if b.get(j) == Some(&b'[') {
-                    i = j + 1;
-                    continue;
-                }
-            }
-            if c == b'\'' {
-                i = match rust_quote_at(b, i) {
-                    RustQuote::Lifetime { end } | RustQuote::Char { end } => end,
-                    RustQuote::Lone => i + 1,
-                };
-                continue;
-            }
-        }
+    while let Some(ev) = lex.next() {
+        let Event::Code { kind: CodeKind::Punct(c), line, start, .. } = ev else { continue };
         match c {
-            // TODO: `//` と `/*` は # 系言語でもトップレベルではコメント扱いのまま (sh の `dir/*` が
-            // `*/` まで飲み込む等)。ps1 の `` `" `` を skip_string が解さず崩れたクォート対応を
-            // URL の `//` が行末で戻している例があり、PowerShell のエスケープ対応と同時に限定する。
-            b'/' if b.get(i + 1) == Some(&b'/') => { i = skip_line_comment(b, i); }
-            b'/' if b.get(i + 1) == Some(&b'*') => {
-                i = skip_block_comment(b, i).unwrap_or(n);
-            }
-            // `#` は py/sh/ps1 系のみ行コメント。JS の `#private` や C の `#define` の行は読む。
-            b'#' if lang.hash_comments => { i = skip_line_comment(b, i); }
-            b'\'' | b'"' | b'`' => { i = skip_string(b, i); }
-            b'[' | b'{' => {
-                if let Some((end, norm, elements)) = scan_data_literal(b, i, lang) {
-                    out.push((norm, c as char, elements, line_at[i]));
-                    i = end + 1;
-                } else {
-                    i += 1;
+            b'#' if syntax.rust => {
+                let j = if b.get(start + 1) == Some(&b'!') { start + 2 } else { start + 1 };
+                if b.get(j) == Some(&b'[') {
+                    attr_bracket = Some(j);
                 }
             }
-            _ => { i += 1; }
+            b'[' | b'{' if attr_bracket != Some(start) => {
+                // 先読みはコピーで行い、データリテラルでなければ `[` の直後から読み直す (内側の入れ子を拾う)。
+                let mut ahead = lex.clone();
+                if let Some((norm, elements)) = scan_data_literal(&mut ahead, b, start) {
+                    out.push((norm, c as char, elements, line));
+                    lex = ahead;
+                }
+            }
+            _ => {}
         }
     }
     out
