@@ -1740,7 +1740,7 @@ pub fn run(args: &[String]) {
                 Some(s) if !s.starts_with("--") => (Some(s.as_str()), &rest[1..]),
                 _ => (None, rest),
             };
-            let sa = parse_session_args(opts);
+            let sa = parse_session_args(opts, "all", "");
             let result = match section {
                 None => cmd_session(&sa.mode, &sa.value, sa.project.as_deref()),
                 Some(sec) => cmd_session_section(
@@ -1761,11 +1761,8 @@ pub fn run(args: &[String]) {
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         Some("all") => {
-            let sa = if args.len() > 1 {
-                parse_session_args(&args[1..])
-            } else {
-                SessionArgs { mode: "last".to_string(), value: "10".to_string(), project: None }
-            };
+            // No mode flag means the usage's default of --last 10, even with --project.
+            let sa = parse_session_args(&args[1..], "last", "10");
             let static_result = cmd_static();
             let session_result = cmd_session(&sa.mode, &sa.value, sa.project.as_deref());
             print!("{}", super::token_audit_format::format_static(&static_result));
@@ -1791,15 +1788,18 @@ struct SessionArgs {
     project: Option<String>,
 }
 
-fn parse_session_args(args: &[String]) -> SessionArgs {
-    let mut mode = "all".to_string();
-    let mut value = String::new();
+/// Parse `--all|--last N|--session ID` and `--project PATH`. `default_mode` and
+/// `default_value` apply when no mode flag is given.
+fn parse_session_args(args: &[String], default_mode: &str, default_value: &str) -> SessionArgs {
+    let mut mode = default_mode.to_string();
+    let mut value = default_value.to_string();
     let mut project = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--all" => {
                 mode = "all".to_string();
+                value.clear();
                 i += 1;
             }
             "--last" => {
@@ -2638,5 +2638,34 @@ mod tests {
         let requests: usize = parse_logs(&files).requests.len();
         eprintln!("{} files, {} requests, {} mismatched", files.len(), requests, mismatched.len());
         assert!(mismatched.is_empty(), "mismatched: {:?}", mismatched);
+    }
+
+    fn strings(args: &[&str]) -> Vec<String> {
+        args.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn session_args_without_a_mode_flag_keep_the_given_default() {
+        let sa = parse_session_args(&strings(&["--project", "C:\\p"]), "last", "10");
+        assert_eq!((sa.mode.as_str(), sa.value.as_str()), ("last", "10"));
+        assert_eq!(sa.project.as_deref(), Some("C:\\p"));
+
+        let sa = parse_session_args(&strings(&["--project", "C:\\p"]), "all", "");
+        assert_eq!((sa.mode.as_str(), sa.value.as_str()), ("all", ""));
+
+        let sa = parse_session_args(&[], "last", "10");
+        assert_eq!((sa.mode.as_str(), sa.value.as_str()), ("last", "10"));
+    }
+
+    #[test]
+    fn session_args_mode_flag_overrides_the_default() {
+        let sa = parse_session_args(&strings(&["--last", "3"]), "last", "10");
+        assert_eq!((sa.mode.as_str(), sa.value.as_str()), ("last", "3"));
+
+        let sa = parse_session_args(&strings(&["--all", "--project", "x"]), "last", "10");
+        assert_eq!((sa.mode.as_str(), sa.value.as_str()), ("all", ""));
+
+        let sa = parse_session_args(&strings(&["--session", "abc"]), "last", "10");
+        assert_eq!((sa.mode.as_str(), sa.value.as_str()), ("session", "abc"));
     }
 }
