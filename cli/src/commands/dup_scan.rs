@@ -7,7 +7,6 @@ use rayon::prelude::*;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 const DEFAULT_MIN_TOKENS: usize = 30;
@@ -33,7 +32,21 @@ enum TokenKind {
     Num,
     Str,
     Punct(u8),
-    PunctHash(u32),
+    /// Index into MULTI_PUNCT.
+    PunctIdx(u8),
+}
+
+impl TokenKind {
+    /// A distinct nonzero integer per kind, the input to the window hash.
+    fn code(self) -> u64 {
+        match self {
+            TokenKind::Id => 1,
+            TokenKind::Num => 2,
+            TokenKind::Str => 3,
+            TokenKind::Punct(b) => 4 + b as u64,
+            TokenKind::PunctIdx(i) => 260 + i as u64,
+        }
+    }
 }
 
 struct FileTokens {
@@ -227,19 +240,18 @@ fn tokenize(src: &str, ext: &str) -> Vec<Token> {
 // Generic tokenizer (C-family, shell)
 // ============================================================================
 
-const TWO_CHAR_PUNCT: &[&[u8]] = &[
+/// Multi-char punctuators (two- and three-char). A token of one stores its index here.
+const MULTI_PUNCT: &[&[u8]] = &[
     b"==", b"!=", b"<=", b">=", b"&&", b"||", b"<<", b">>",
     b"->", b"=>", b"::", b"++", b"--", b"+=", b"-=", b"*=", b"/=", b"%=",
     b"&=", b"|=", b"^=", b"??", b"?.", b"..",
-];
-const THREE_CHAR_PUNCT: &[&[u8]] = &[
     b"...", b"..=", b"<<=", b">>=", b"===", b"!==", b"&&=", b"||=",
 ];
 
-fn hash_punct_bytes(b: &[u8]) -> u32 {
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    b.hash(&mut h);
-    h.finish() as u32
+/// The PunctIdx token for `b` when it is one of MULTI_PUNCT. Only entries of `b`'s length
+/// can match, so callers pass the two or three bytes they try.
+fn multi_punct(b: &[u8]) -> Option<TokenKind> {
+    MULTI_PUNCT.iter().position(|p| *p == b).map(|i| TokenKind::PunctIdx(i as u8))
 }
 
 // ============================================================================
@@ -517,17 +529,15 @@ fn tokenize_generic(
         }
 
         if i + 2 < bytes.len() {
-            let three = &bytes[i..i + 3];
-            if THREE_CHAR_PUNCT.contains(&three) {
-                tokens.push(Token { kind: TokenKind::PunctHash(hash_punct_bytes(three)), line });
+            if let Some(kind) = multi_punct(&bytes[i..i + 3]) {
+                tokens.push(Token { kind, line });
                 i += 3;
                 continue;
             }
         }
         if i + 1 < bytes.len() {
-            let two = &bytes[i..i + 2];
-            if TWO_CHAR_PUNCT.contains(&two) {
-                tokens.push(Token { kind: TokenKind::PunctHash(hash_punct_bytes(two)), line });
+            if let Some(kind) = multi_punct(&bytes[i..i + 2]) {
+                tokens.push(Token { kind, line });
                 i += 2;
                 continue;
             }
@@ -643,9 +653,8 @@ fn tokenize_python(src: &str) -> Vec<Token> {
         }
 
         if i + 1 < bytes.len() {
-            let two = &bytes[i..i + 2];
-            if TWO_CHAR_PUNCT.contains(&two) {
-                tokens.push(Token { kind: TokenKind::PunctHash(hash_punct_bytes(two)), line });
+            if let Some(kind) = multi_punct(&bytes[i..i + 2]) {
+                tokens.push(Token { kind, line });
                 i += 2;
                 continue;
             }
@@ -772,9 +781,8 @@ fn tokenize_powershell(src: &str) -> Vec<Token> {
         }
 
         if i + 1 < bytes.len() {
-            let two = &bytes[i..i + 2];
-            if TWO_CHAR_PUNCT.contains(&two) {
-                tokens.push(Token { kind: TokenKind::PunctHash(hash_punct_bytes(two)), line });
+            if let Some(kind) = multi_punct(&bytes[i..i + 2]) {
+                tokens.push(Token { kind, line });
                 i += 2;
                 continue;
             }
@@ -792,12 +800,60 @@ fn tokenize_powershell(src: &str) -> Vec<Token> {
 
 type Pos = (usize, usize); // (file_idx, token_start_idx)
 
-fn window_hash(file: &FileTokens, start: usize, w: usize) -> u64 {
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    for t in &file.tokens[start..start + w] {
-        t.kind.hash(&mut h);
+/// Odd multiplier of the polynomial window hash.
+const ROLL_BASE: u64 = 0x9E37_79B9_7F4A_7C15;
+
+/// Calls `f(start, hash)` for every window of `w` tokens, in start order. The hash is the
+/// polynomial sum of the token codes mod 2^64, rolled one token at a time, so all windows
+/// cost O(tokens) instead of O(tokens * w). Equal windows get equal hashes; unequal windows
+/// may collide, which callers resolve by comparing the tokens (split_equal_windows).
+fn for_each_window_hash(tokens: &[Token], w: usize, mut f: impl FnMut(usize, u64)) {
+    let n = tokens.len();
+    if n < w {
+        return;
     }
-    h.finish()
+    if w == 0 {
+        (0..=n).for_each(|s| f(s, 0));
+        return;
+    }
+    // ROLL_BASE^(w-1): the weight of the token leaving the window.
+    let top = (1..w).fold(1u64, |p, _| p.wrapping_mul(ROLL_BASE));
+    let mut h = tokens[..w]
+        .iter()
+        .fold(0u64, |h, t| h.wrapping_mul(ROLL_BASE).wrapping_add(t.kind.code()));
+    f(0, h);
+    for s in 1..=(n - w) {
+        h = h
+            .wrapping_sub(tokens[s - 1].kind.code().wrapping_mul(top))
+            .wrapping_mul(ROLL_BASE)
+            .wrapping_add(tokens[s + w - 1].kind.code());
+        f(s, h);
+    }
+}
+
+/// True when the `w` tokens at `a` and at `b` have the same kinds.
+fn same_window(files: &[FileTokens], a: Pos, b: Pos, w: usize) -> bool {
+    let ta = &files[a.0].tokens[a.1..a.1 + w];
+    let tb = &files[b.0].tokens[b.1..b.1 + w];
+    ta.iter().zip(tb).all(|(x, y)| x.kind == y.kind)
+}
+
+/// Splits a run of windows with one hash into the classes of equal windows that have at
+/// least 2 members. Each class keeps the run's (file, start) order. A run normally is one
+/// class; a hash collision yields several instead of mixing different code in one group.
+fn split_equal_windows(files: &[FileTokens], run: &[(u64, u32, u32)], w: usize) -> Vec<Vec<Pos>> {
+    let mut rest: Vec<Pos> = run.iter().map(|&(_, fi, s)| (fi as usize, s as usize)).collect();
+    let mut classes = Vec::new();
+    while rest.len() >= 2 {
+        let head = rest[0];
+        let (same, other): (Vec<Pos>, Vec<Pos>) =
+            rest.iter().partition(|&&p| same_window(files, head, p, w));
+        if same.len() >= 2 {
+            classes.push(same);
+        }
+        rest = other;
+    }
+    classes
 }
 
 fn is_left_maximal(files: &[FileTokens], occurrences: &[Pos]) -> bool {
@@ -812,24 +868,6 @@ fn is_left_maximal(files: &[FileTokens], occurrences: &[Pos]) -> bool {
         }
     }
     false
-}
-
-fn verify_window(files: &[FileTokens], occurrences: &[Pos], w: usize) -> Vec<Pos> {
-    let first = occurrences[0];
-    let ref_kinds: Vec<TokenKind> = files[first.0].tokens[first.1..first.1 + w]
-        .iter()
-        .map(|t| t.kind)
-        .collect();
-    occurrences
-        .iter()
-        .copied()
-        .filter(|&(fi, s)| {
-            files[fi].tokens[s..s + w]
-                .iter()
-                .zip(&ref_kinds)
-                .all(|(t, k)| t.kind == *k)
-        })
-        .collect()
 }
 
 /// Extend the matched region right. Returns (total_len, gap_count).
@@ -921,45 +959,33 @@ fn build_clusters(
     min_lines: usize,
     max_gap: usize,
 ) -> Vec<Cluster> {
-    // Per-file window hashing in parallel, then merge.
-    let per_file: Vec<HashMap<u64, Vec<usize>>> = files
+    // Every window as (hash, file, start), hashed per file in parallel. Sorting the tuples
+    // puts equal hashes in one run, each run in (file, start) order; extend_right and
+    // is_left_maximal take the first occurrence as reference, so that order is fixed.
+    let mut windows: Vec<(u64, u32, u32)> = files
         .par_iter()
-        .map(|f| {
-            let mut local: HashMap<u64, Vec<usize>> = HashMap::new();
-            if f.tokens.len() >= min_tokens {
-                for start in 0..=(f.tokens.len() - min_tokens) {
-                    let key = window_hash(f, start, min_tokens);
-                    local.entry(key).or_default().push(start);
-                }
-            }
+        .enumerate()
+        .flat_map_iter(|(fi, f)| {
+            let fi = u32::try_from(fi).expect("dup-scan: more than u32::MAX files");
+            let mut local = Vec::with_capacity((f.tokens.len() + 1).saturating_sub(min_tokens));
+            for_each_window_hash(&f.tokens, min_tokens, |s, h| {
+                let s = u32::try_from(s).expect("dup-scan: more than u32::MAX tokens in a file");
+                local.push((h, fi, s));
+            });
             local
         })
         .collect();
+    windows.par_sort_unstable();
 
-    let mut groups: HashMap<u64, Vec<Pos>> = HashMap::new();
-    for (fi, fg) in per_file.iter().enumerate() {
-        for (k, starts) in fg {
-            let entry = groups.entry(*k).or_default();
-            for &s in starts {
-                entry.push((fi, s));
-            }
-        }
-    }
+    // Runs of one window are unique code; skip them before any allocation.
+    let runs: Vec<&[(u64, u32, u32)]> =
+        windows.chunk_by(|a, b| a.0 == b.0).filter(|run| run.len() >= 2).collect();
 
-    // Process groups in parallel.
-    let group_vec: Vec<Vec<Pos>> = groups
-        .into_iter()
-        .filter_map(|(_, v)| if v.len() >= 2 { Some(v) } else { None })
-        .collect();
-
-    let mut clusters: Vec<Cluster> = group_vec
+    let mut clusters: Vec<Cluster> = runs
         .par_iter()
-        .filter_map(|occs| {
-            if !is_left_maximal(files, occs) {
-                return None;
-            }
-            let valid = verify_window(files, occs, min_tokens);
-            if valid.len() < 2 {
+        .flat_map_iter(|run| split_equal_windows(files, run, min_tokens))
+        .filter_map(|valid| {
+            if !is_left_maximal(files, &valid) {
                 return None;
             }
             let (ext_len, gaps) = extend_right(files, &valid, min_tokens, max_gap);
@@ -1293,8 +1319,8 @@ mod rust_quote_tests {
 
     #[test]
     fn rust_quote_dup_scan_tokens() {
-        use TokenKind::{Id, Num, Punct, PunctHash, Str};
-        let arrow = PunctHash(hash_punct_bytes(b"->"));
+        use TokenKind::{Id, Num, Punct, Str};
+        let arrow = multi_punct(b"->").unwrap();
         let lifetime = [Punct(b'\''), Id];
         let mut expected = vec![Id, Id, Punct(b'<')];
         expected.extend(lifetime);
@@ -1453,6 +1479,47 @@ mod subsumption_tests {
         let got: Vec<_> = kept.iter().map(occs).collect();
         let want: Vec<_> = [0, 1, 3, 4, 5].iter().map(|&i| input[i]).collect();
         assert_eq!(got, want);
+    }
+}
+
+#[cfg(test)]
+mod window_hash_tests {
+    use super::*;
+
+    fn file(src: &str) -> FileTokens {
+        let tokens = tokenize(src, "js");
+        FileTokens { path: PathBuf::new(), tokens, src: src.into(), ext: "js".into(), lexer: "" }
+    }
+
+    #[test]
+    fn rolled_hash_matches_hash_from_scratch() {
+        let f = file("a.b(c, 1) === d->e ... 'x' + f[g] <<= h ?? i;");
+        for w in 0..=f.tokens.len() + 1 {
+            let mut got = Vec::new();
+            for_each_window_hash(&f.tokens, w, |s, h| got.push((s, h)));
+            let want: Vec<(usize, u64)> = (0..(f.tokens.len() + 1).saturating_sub(w))
+                .map(|s| {
+                    let h = f.tokens[s..s + w]
+                        .iter()
+                        .fold(0u64, |h, t| h.wrapping_mul(ROLL_BASE).wrapping_add(t.kind.code()));
+                    (s, h)
+                })
+                .collect();
+            assert_eq!(got, want, "w={w}");
+        }
+    }
+
+    #[test]
+    fn split_equal_windows_separates_colliding_windows() {
+        // Windows of 3 tokens: "a + b" (Id Punct Id) at 0, 4 and 8 of file 0 and 0 of file 1;
+        // "1 - 2" (Num Punct Num) at 12 and 16 of file 0; "c * d" once at 20.
+        let files = vec![file("a + b;a + b;a + b;1 - 2;1 - 2;c * d;"), file("x + y;")];
+        // As if all windows shared one hash, in (file, start) order.
+        let run = [(7, 0, 0), (7, 0, 4), (7, 0, 8), (7, 0, 12), (7, 0, 16), (7, 0, 20), (7, 1, 0)];
+        assert_eq!(
+            split_equal_windows(&files, &run, 3),
+            vec![vec![(0, 0), (0, 4), (0, 8), (1, 0)], vec![(0, 12), (0, 16)]]
+        );
     }
 }
 
