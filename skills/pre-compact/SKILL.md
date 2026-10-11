@@ -1,6 +1,6 @@
 ---
 name: pre-compact
-description: Claude Codeの会話を /compact (Summarize up to here) で圧縮する前の準備。会話の重要情報を docs/ に永続化し、compact 起点として最適なメッセージ候補を3つ提示する。「compactしたい」「context整理」「会話を圧縮」等のリクエスト時に手動 (`/pre-compact`) で起動。
+description: Claude Codeの会話を /compact (Summarize up to here) で圧縮する前の準備。会話の重要情報を docs/ に永続化し、compact 起点として最適なメッセージ候補を3つ提示する。会話を圧縮・整理したいときに手動 (`/pre-compact`) で起動。
 ---
 
 # pre-compact

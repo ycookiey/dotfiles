@@ -1,6 +1,6 @@
 ---
 name: transcribe
-description: "音声・動画ファイルをfaster-whisper(large-v3-turbo)で文字起こしし、txt/srtを出力する。GPU優先・CPUフォールバック。「文字起こし」「whisperで起こす」「動画/録画をテキストに」「transcribe」「字幕(srt)作成」等のリクエストで使用。mp4/mp3/wav/m4a/mkv/mov等に対応。"
+description: "音声・動画ファイルをfaster-whisper(large-v3-turbo)で文字起こしし、txt/srtを出力する。GPU優先・CPUフォールバック。録音・録画済みの音声・動画ファイル(mp4/mp3/wav/m4a/mkv/mov等)を文字にしたい・字幕(srt)を作りたいときに使う。"
 allowed-tools: Bash, Read, Glob
 ---
 

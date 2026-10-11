@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Check Claude Code instruction files for names Claude Code no longer has.
+#
+# Usage: check-claude-config [path...]
+#   path: a file, or a directory searched for CLAUDE.md, SKILL.md and .claude/agents/*.md.
+#   No path: ~/.claude/CLAUDE.md, ~/.claude/skills/*/SKILL.md, ~/.claude/agents/*.md
+#   (symlinks followed, so skills kept in other repos are checked too).
+#
+# Reports, as file:line: message
+#   - allowed-tools / tools in the frontmatter naming a removed or renamed tool
+#   - a line mentioning .claudeignore without saying it has no effect
+# Exits 1 when anything is reported, 0 otherwise.
+
+set -uo pipefail
+
+collect() {
+  if [ $# -eq 0 ]; then
+    local home_claude="$HOME/.claude"
+    ls "$home_claude/CLAUDE.md" "$home_claude"/skills/*/SKILL.md "$home_claude"/agents/*.md 2>/dev/null
+    return
+  fi
+  local p
+  for p in "$@"; do
+    if [ -d "$p" ]; then
+      find -L "$p" -name node_modules -prune -o -type f \
+        \( -name CLAUDE.md -o -name SKILL.md -o -path '*/.claude/agents/*.md' -o -path '*/claude/agents/*.md' \) -print
+    else
+      echo "$p"
+    fi
+  done
+}
+
+found=0
+while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  out=$(tr -d '\r' < "$f" | awk -v file="$f" '
+    BEGIN {
+      removed["Task"] = "renamed to Agent in Claude Code 2.1.63"
+      removed["TeamCreate"] = "no such tool; a team starts from an Agent call with a name"
+      removed["Replace"] = "no such tool; use Edit"
+    }
+    NR == 1 && $0 == "---" { fm = 1; next }
+    fm && $0 == "---" { fm = 0; next }
+    fm && /^(allowed-tools|tools):/ {
+      list = $0
+      sub(/^[^:]*:[ \t]*/, "", list)
+      n = split(list, items, ",")
+      for (i = 1; i <= n; i++) {
+        name = items[i]
+        sub(/\(.*/, "", name)
+        gsub(/[ \t]/, "", name)
+        if (name in removed) printf "%s:%d: %s lists %s (%s)\n", file, NR, substr($0, 1, index($0, ":") - 1), name, removed[name]
+      }
+      next
+    }
+    /\.claudeignore/ && !/読まない|効かない|効果がない|no effect|does not read|doesn.t read/ {
+      printf "%s:%d: mentions .claudeignore, which Claude Code does not read (exclude files with permissions.deny Read(...))\n", file, NR
+    }
+  ')
+  if [ -n "$out" ]; then
+    echo "$out"
+    found=1
+  fi
+done < <(collect "$@")
+
+exit $found

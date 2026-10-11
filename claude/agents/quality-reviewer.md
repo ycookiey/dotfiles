@@ -26,7 +26,7 @@ color: cyan
 
 ## 割当 dimension (1 invocation = 1 dimension)
 
-呼び出し prompt で明示的に指定された dimension を担当する。指定なしなら次の 1〜10 から caller が想定していると読み取れる 1 つを選び、reply の 最初に「dimension: X」と明記して合意を取る。11 (Architecture) は明示指定されたときだけ担当する。
+呼び出し prompt で明示的に指定された dimension を担当する。指定なしなら次の 1〜10 から caller が想定していると読み取れる 1 つを選び、reply の 最初に「dimension: X」と明記する(違えば caller が指定し直して再起動する)。11 (Architecture) は明示指定されたときだけ担当する。
 
 割当外 dimension の findings は書かない。境界を跨ぐ finding は「参考: <他 dim>」だけ 1 行、詳細は書かない。
 
