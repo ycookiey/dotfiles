@@ -35,17 +35,44 @@ message = '''Bash ツールでは set -e が効かない(errexit の効かない
 
 # Windows' Python turns \n into \r\n when writing in text mode, so
 # replacing an LF file makes every line CRLF (docs/bash.md had it, and it
-# was missed). Not for commands that pass `newline=`. A script written with
-# the Write tool and run later is read from its content.
+# was missed). Not for commands that pass `newline=`.
+# In a Bash command the text arrives as the command runs, too late to stop
+# the rewrite (2026-10-11: two files turned CRLF with the reminder shown), so
+# the command is stopped. A script written with the Write tool only gets the
+# text: it is read before the script runs, and the content may also be a
+# document that merely mentions write_text.
+[[rule]]
+id = "crlf-write-guard"
+event = "PreToolUse"
+tools = '^Bash$'
+fields = ["tool_input.command"]
+all = ['''write_text\(|open\([^)]*["'](w|a|x)[t+]?["']''']
+none = ['newline=']
+action = "deny"
+message = '''Windows の Python は text mode の書き込み(Path.write_text / open(p, "w"))で \n を \r\n に変える。LF のファイルを書き換えると全行が CRLF になる。read_bytes().decode() → write_bytes(s.encode())、または open(p, "w", newline="") を使う(CRLF で書きたいなら newline="\r\n" と明示すれば通る)。書いた後は file <path> か git ls-files --eol <path> で確かめる(docs/bash.md)。'''
+
 [[rule]]
 id = "crlf-write-reminder"
 event = "PreToolUse"
-tools = '^(Bash|Write)$'
-fields = ["tool_input.command", "tool_input.content"]
+tools = '^Write$'
+fields = ["tool_input.content"]
 all = ['''write_text\(|open\([^)]*["'](w|a|x)[t+]?["']''']
 none = ['newline=']
 action = "context"
 message = '''Windows の Python は text mode の書き込み(Path.write_text / open(p, "w"))で \n を \r\n に変える。LF のファイルを書き換えると全行が CRLF になる。read_bytes().decode() → write_bytes(s.encode())、または open(p, "w", newline="") を使う。書いた後は file <path> か git ls-files --eol <path> で確かめる(docs/bash.md)。'''
+
+# Get-WinUserLanguageList writes its list as one object: piped straight on
+# or looped over directly, the whole list is one item and filtering by
+# language matches nothing or everything (2026-10-11: hit twice in one
+# session). Wrapping it in parentheses or a variable enumerates it.
+[[rule]]
+id = "winuserlanguagelist-reminder"
+event = "PreToolUse"
+tools = '^(Bash|PowerShell|Write)$'
+fields = ["tool_input.command", "tool_input.content"]
+all = ['''(^|[^($[:alnum:]-])Get-WinUserLanguageList[[:space:]]*\||in[[:space:]]+Get-WinUserLanguageList[[:space:]]*\)''']
+action = "context"
+message = '''Get-WinUserLanguageList は一覧を 1 つのまとまりとして出す。直接パイプに流す(Get-WinUserLanguageList | ? {...})・foreach ($x in Get-WinUserLanguageList) では、一覧全体が 1 つの項目になり、言語ごとに選べない。(Get-WinUserLanguageList) | ... と括弧で包むか、$l = Get-WinUserLanguageList としてから foreach ($x in $l) / $l.Where({...}) を使う。'''
 
 # A CommunityDragon character bin holds several CharacterRecords with
 # different values; `grep | head -1` reads one that is not Root

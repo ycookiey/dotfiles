@@ -2,37 +2,37 @@
 
 [[case]]
 name = "write-text"
-rule = "crlf-write-reminder"
-expect = "context"
+rule = "crlf-write-guard"
+expect = "deny"
 command = '''python - <<'EOF'
 Path('a.ts').write_text(s, encoding='utf-8')
 EOF'''
 
 [[case]]
 name = "open-w-double"
-rule = "crlf-write-reminder"
-expect = "context"
+rule = "crlf-write-guard"
+expect = "deny"
 command = '''python -c 'open("a.txt", "w").write(s)' '''
 
 [[case]]
 name = "open-w-single"
-rule = "crlf-write-reminder"
-expect = "context"
+rule = "crlf-write-guard"
+expect = "deny"
 command = '''python - <<'EOF'
 with open('a.txt', 'w', encoding='utf-8') as f: f.write(s)
 EOF'''
 
 [[case]]
 name = "open-append"
-rule = "crlf-write-reminder"
-expect = "context"
+rule = "crlf-write-guard"
+expect = "deny"
 command = '''python - <<'EOF'
 open('log.txt', 'a').write(line)
 EOF'''
 
 [[case]]
 name = "write-bytes"
-rule = "crlf-write-reminder"
+rule = "crlf-write-guard"
 expect = "quiet"
 command = '''python - <<'EOF'
 Path('a.ts').write_bytes(s.encode('utf-8'))
@@ -40,7 +40,7 @@ EOF'''
 
 [[case]]
 name = "open-newline"
-rule = "crlf-write-reminder"
+rule = "crlf-write-guard"
 expect = "quiet"
 command = '''python - <<'EOF'
 open('a.txt', 'w', newline='').write(s)
@@ -48,7 +48,7 @@ EOF'''
 
 [[case]]
 name = "open-read"
-rule = "crlf-write-reminder"
+rule = "crlf-write-guard"
 expect = "quiet"
 command = '''python - <<'EOF'
 s = open('a.txt').read()
@@ -56,7 +56,7 @@ EOF'''
 
 [[case]]
 name = "crlf-unrelated"
-rule = "crlf-write-reminder"
+rule = "crlf-write-guard"
 expect = "quiet"
 command = "git status --short"
 
@@ -638,3 +638,57 @@ name = "form-kagi-one"
 rule = "ja-kagi-overuse-reminder"
 expect = "quiet"
 input = { tool_name = "mcp__claude-in-chrome__form_input", tool_input = { value = "画面の「送信」を押す" } }
+
+[[case]]
+name = "open-newline-crlf"
+rule = "crlf-write-guard"
+expect = "quiet"
+command = '''python -c 'open("a.txt", "w", newline="\r\n").write(s)' '''
+
+[[case]]
+name = "write-tool-script"
+rule = "crlf-write-reminder"
+expect = "context"
+input = { tool_name = "Write", tool_input = { file_path = "fix.py", content = "Path('a.rs').write_text(s)\n" } }
+
+[[case]]
+name = "write-tool-bytes"
+rule = "crlf-write-reminder"
+expect = "quiet"
+input = { tool_name = "Write", tool_input = { file_path = "fix.py", content = "Path('a.rs').write_bytes(s.encode())\n" } }
+
+[[case]]
+name = "reminder-not-for-bash"
+rule = "crlf-write-reminder"
+expect = "quiet"
+command = "python -c \"Path('a').write_text(s)\""
+
+[[case]]
+name = "langlist-pipe"
+rule = "winuserlanguagelist-reminder"
+expect = "context"
+command = '''pwsh -Command 'Get-WinUserLanguageList | ? { $_.LanguageTag -like "ja*" }' '''
+
+[[case]]
+name = "langlist-foreach"
+rule = "winuserlanguagelist-reminder"
+expect = "context"
+input = { tool_name = "PowerShell", tool_input = { command = 'foreach ($x in Get-WinUserLanguageList) { $x.LanguageTag }' } }
+
+[[case]]
+name = "langlist-script"
+rule = "winuserlanguagelist-reminder"
+expect = "context"
+input = { tool_name = "Write", tool_input = { file_path = "a.ps1", content = "$ja = Get-WinUserLanguageList | select -First 1\n" } }
+
+[[case]]
+name = "langlist-paren"
+rule = "winuserlanguagelist-reminder"
+expect = "quiet"
+command = '''pwsh -Command '(Get-WinUserLanguageList) | % { $_.LanguageTag }' '''
+
+[[case]]
+name = "langlist-variable"
+rule = "winuserlanguagelist-reminder"
+expect = "quiet"
+command = '''pwsh -Command '$l = Get-WinUserLanguageList; foreach ($x in $l) { $x.LanguageTag }' '''
