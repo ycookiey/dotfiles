@@ -5,11 +5,11 @@
 
 use rayon::prelude::*;
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::scan_common::{self, CodeKind, Event, Lang, Lexer, Syntax};
+use super::scan_common::{self, display_path, walk_files, CodeKind, Event, Lang, Lexer, Syntax};
 
 const DEFAULT_MIN_TOKENS: usize = 30;
 const DEFAULT_MIN_LINES: usize = 3;
@@ -150,45 +150,6 @@ fn parse_args(args: &[String]) -> Args {
     }
 
     Args { path, exts, min_tokens, min_lines, top, gap, excludes, no_gitignore }
-}
-
-// ============================================================================
-// File discovery (respects .gitignore via `ignore` crate)
-// ============================================================================
-
-pub(crate) fn walk_files(
-    root: &Path,
-    exts: &[String],
-    excludes: &[String],
-    no_gitignore: bool,
-) -> Vec<PathBuf> {
-    let ext_set: HashSet<&str> = exts.iter().map(|s| s.as_str()).collect();
-    let mut builder = ignore::WalkBuilder::new(root);
-    builder
-        .git_ignore(!no_gitignore)
-        .git_exclude(!no_gitignore)
-        .git_global(!no_gitignore)
-        .ignore(!no_gitignore)
-        .hidden(true)
-        .parents(!no_gitignore);
-
-    let mut out = Vec::new();
-    for entry in builder.build().flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if !ext_set.contains(ext) {
-            continue;
-        }
-        let path_str = path.to_string_lossy().replace('\\', "/");
-        if excludes.iter().any(|e| path_str.contains(e.as_str())) {
-            continue;
-        }
-        out.push(path.to_path_buf());
-    }
-    out
 }
 
 // ============================================================================
@@ -547,14 +508,6 @@ fn cluster_content_order(files: &[FileTokens], a: &Cluster, b: &Cluster) -> std:
 // ============================================================================
 // Output
 // ============================================================================
-
-fn display_path(p: &Path, root: &Path) -> String {
-    if let Ok(rel) = p.strip_prefix(root) {
-        rel.to_string_lossy().replace('\\', "/")
-    } else {
-        p.to_string_lossy().replace('\\', "/")
-    }
-}
 
 /// Builds the preview here rather than in build_clusters, so only the clusters shown under
 /// --top read their source lines.

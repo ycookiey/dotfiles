@@ -5,11 +5,11 @@
 
 use rayon::prelude::*;
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::scan_common::{self, Event, Lang, Lexer, Syntax};
+use super::scan_common::{self, display_path, walk_files, Event, Lang, Lexer, Syntax};
 
 const DEFAULT_MIN_CHARS: usize = 30;
 const DEFAULT_MIN_WORDS: usize = 3;
@@ -132,45 +132,6 @@ fn parse_args(args: &[String]) -> Args {
         path, exts, min_chars, min_words, min_occurrences,
         top, similarity, threshold, excludes, no_gitignore,
     }
-}
-
-// ============================================================================
-// File discovery
-// ============================================================================
-
-fn walk_files(
-    root: &Path,
-    exts: &[String],
-    excludes: &[String],
-    no_gitignore: bool,
-) -> Vec<PathBuf> {
-    let ext_set: HashSet<&str> = exts.iter().map(|s| s.as_str()).collect();
-    let mut builder = ignore::WalkBuilder::new(root);
-    builder
-        .git_ignore(!no_gitignore)
-        .git_exclude(!no_gitignore)
-        .git_global(!no_gitignore)
-        .ignore(!no_gitignore)
-        .hidden(true)
-        .parents(!no_gitignore);
-
-    let mut out = Vec::new();
-    for entry in builder.build().flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if !ext_set.contains(ext) {
-            continue;
-        }
-        let path_str = path.to_string_lossy().replace('\\', "/");
-        if excludes.iter().any(|e| path_str.contains(e.as_str())) {
-            continue;
-        }
-        out.push(path.to_path_buf());
-    }
-    out
 }
 
 // ============================================================================
@@ -419,14 +380,6 @@ fn build_similar_clusters(variants: &[Variant], threshold: f64) -> Vec<Vec<usize
 // Output
 // ============================================================================
 
-fn display_path(p: &Path, root: &Path) -> String {
-    if let Ok(rel) = p.strip_prefix(root) {
-        rel.to_string_lossy().replace('\\', "/")
-    } else {
-        p.to_string_lossy().replace('\\', "/")
-    }
-}
-
 fn truncate(s: &str, max_chars: usize) -> String {
     let chars: Vec<char> = s.chars().collect();
     if chars.len() <= max_chars { return s.to_string(); }
@@ -636,7 +589,7 @@ mod rust_quote_tests {
 #[cfg(test)]
 mod similarity_tests {
     use super::*;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashSet};
 
     /// The String/HashSet Jaccard index the id-based one replaced.
     fn jaccard_by_words(a: &str, b: &str) -> f64 {

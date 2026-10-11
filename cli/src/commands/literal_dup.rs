@@ -16,8 +16,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-use super::dup_scan::{walk_files, DEFAULT_EXTS};
-use super::scan_common::{CodeKind, Event, Lexer, Syntax};
+use super::dup_scan::DEFAULT_EXTS;
+use super::scan_common::{display_path, walk_files, CodeKind, Event, Lexer, Syntax};
 
 const DEFAULT_MIN_OCCURRENCES: usize = 3;
 const DEFAULT_MIN_ELEMENTS: usize = 3;
@@ -185,11 +185,7 @@ pub fn run(args: &[String]) {
             Ok(s) => s,
             Err(_) => continue,
         };
-        let rel = p
-            .strip_prefix(root)
-            .unwrap_or(p)
-            .to_string_lossy()
-            .replace('\\', "/");
+        let rel = display_path(p, root);
         let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
         for (norm, open, elements, line) in extract_literals(&src, ext) {
             if elements < parsed.min_elements {

@@ -1,16 +1,71 @@
-//! Pieces shared by the source scanners (dup-scan, string-dup, literal-dup): the
-//! extension -> language table, one lexer that splits source into code tokens and
-//! string literals while skipping whitespace and comments, and the per-language
-//! summary rows of their JSON output.
+//! Pieces shared by the source scanners (dup-scan, string-dup, literal-dup): the file
+//! walk and the displayed file paths, the extension -> language table, one lexer that
+//! splits source into code tokens and string literals while skipping whitespace and
+//! comments, and the per-language summary rows of their JSON output.
 //!
 //! Each scanner reads the same event stream: dup-scan turns it into token kinds,
 //! string-dup keeps the string contents, and literal-dup rebuilds array/object
 //! literals from the code bytes and strings between their brackets.
 
-// TODO(cli-scan-17): move walk_files and display_path here from dup_scan / string_dup.
-
 use serde_json::{Map, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
+use std::path::{Path, PathBuf};
+
+// ============================================================================
+// File discovery (respects .gitignore via the `ignore` crate)
+// ============================================================================
+
+/// The files under `root` whose extension is one of `exts` and whose `/`-separated path
+/// contains none of `excludes`, in walk order. `no_gitignore` turns off the .gitignore,
+/// .ignore and git exclude files; hidden entries are skipped either way.
+pub(crate) fn walk_files(
+    root: &Path,
+    exts: &[String],
+    excludes: &[String],
+    no_gitignore: bool,
+) -> Vec<PathBuf> {
+    let ext_set: HashSet<&str> = exts.iter().map(|s| s.as_str()).collect();
+    let mut builder = ignore::WalkBuilder::new(root);
+    builder
+        .git_ignore(!no_gitignore)
+        .git_exclude(!no_gitignore)
+        .git_global(!no_gitignore)
+        .ignore(!no_gitignore)
+        .hidden(true)
+        .parents(!no_gitignore);
+
+    let mut out = Vec::new();
+    for entry in builder.build().flatten() {
+        let path = entry.path();
+        // The type comes from the directory listing and does not follow links, so only a
+        // link is stat'ed: a link to a file counts as that file, as path.is_file() did.
+        let is_file = match entry.file_type() {
+            Some(ft) if ft.is_file() => true,
+            Some(ft) if ft.is_symlink() => path.is_file(),
+            _ => false,
+        };
+        if !is_file {
+            continue;
+        }
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if !ext_set.contains(ext) {
+            continue;
+        }
+        if !excludes.is_empty() {
+            let path_str = path.to_string_lossy().replace('\\', "/");
+            if excludes.iter().any(|e| path_str.contains(e.as_str())) {
+                continue;
+            }
+        }
+        out.push(path.to_path_buf());
+    }
+    out
+}
+
+/// `p` as shown in the scanners' JSON: relative to `root` when under it, with `/` separators.
+pub(crate) fn display_path(p: &Path, root: &Path) -> String {
+    p.strip_prefix(root).unwrap_or(p).to_string_lossy().replace('\\', "/")
+}
 
 // ============================================================================
 // Language table
@@ -775,5 +830,64 @@ mod lexer_tests {
                 prev_end = end;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod walk_files_tests {
+    use super::*;
+    use std::fs;
+
+    fn names(root: &Path, files: &[PathBuf]) -> Vec<String> {
+        let mut v: Vec<String> = files.iter().map(|p| display_path(p, root)).collect();
+        v.sort();
+        v
+    }
+
+    fn exts(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn walk_keeps_files_by_type_extension_and_exclude() {
+        let root = std::env::temp_dir().join(format!("dotcli-walk-files-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sub/skip")).unwrap();
+        // A directory whose name has a scanned extension is not a file.
+        fs::create_dir_all(root.join("dir.rs")).unwrap();
+        fs::write(root.join("a.rs"), "x").unwrap();
+        fs::write(root.join("b.txt"), "x").unwrap();
+        fs::write(root.join("sub/c.ts"), "x").unwrap();
+        fs::write(root.join("sub/skip/d.rs"), "x").unwrap();
+
+        let all = walk_files(&root, &exts(&["rs", "ts"]), &[], true);
+        assert_eq!(names(&root, &all), ["a.rs", "sub/c.ts", "sub/skip/d.rs"]);
+
+        let kept = walk_files(&root, &exts(&["rs", "ts"]), &exts(&["sub/skip"]), true);
+        assert_eq!(names(&root, &kept), ["a.rs", "sub/c.ts"]);
+
+        // A link to a file is scanned as that file; a link to a directory is not entered.
+        // Creating links needs Developer Mode or admin on Windows, so this part runs only
+        // where the links could be made.
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_file(root.join("a.rs"), root.join("link.rs"))
+            .is_ok()
+            && std::os::windows::fs::symlink_dir(root.join("sub"), root.join("linkdir")).is_ok();
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(root.join("a.rs"), root.join("link.rs")).is_ok()
+            && std::os::unix::fs::symlink(root.join("sub"), root.join("linkdir")).is_ok();
+        if linked {
+            let with_links = walk_files(&root, &exts(&["rs", "ts"]), &[], true);
+            assert_eq!(names(&root, &with_links), ["a.rs", "link.rs", "sub/c.ts", "sub/skip/d.rs"]);
+        }
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn display_path_is_relative_with_forward_slashes() {
+        let root = Path::new("root");
+        assert_eq!(display_path(&Path::new("root").join("a").join("b.rs"), root), "a/b.rs");
+        assert_eq!(display_path(&Path::new("other").join("c.rs"), root), "other/c.rs");
     }
 }
