@@ -1,5 +1,6 @@
-# グローバル gitattributes（~/.gitattributes は dotfiles から symlink）
-# .gitattributes を持たないリポジトリで適用される
+# グローバル gitattributes。Git が読むのは core.attributesFile が指すファイルか、未設定なら $XDG_CONFIG_HOME/git/attributes (既定 ~/.config/git/attributes) のみ
+# repo の .gitattributes より優先度が低い。repo が .gitattributes を持っていても、repo 側が指定していない属性にはこちらが効く
+# TODO: Git に読ませる配線が未定。~/.gitattributes への link だけでは読まれない。.gitconfig の core.attributesFile で指すか、setup.ps1 で ~/.config/git/attributes に link するかを選ぶ (両方は不可: core.attributesFile は XDG の既定を上書きする)
 
 # テキスト/バイナリを自動検出し、リポジトリ内は LF で統一
 * text=auto
