@@ -98,6 +98,10 @@ function Assert-ExitCode([string]$What) {
     if ($global:LASTEXITCODE) { throw "$What exit $global:LASTEXITCODE" }
 }
 function Write-Skip([string]$Message) { "$(Get-Date) - Skipped: $Message" >> $LogFile }
+# registry の New-Item -Force は既存キーを作り直して値・サブキーを消すので、無いときだけ作る
+function Initialize-RegistryKey([string]$Path) {
+    if (!(tp $Path)) { $null = ni $Path -Force }
+}
 
 Invoke-Step 'PowerShell profile' {
     mkd "$HOME\Documents\PowerShell"
@@ -210,8 +214,12 @@ Invoke-Step 'Claude config links' {
 }
 
 # File association: Neovim (WezTerm)
-$wt = "$HOME\scoop\apps\wezterm\current\wezterm-gui.exe"
-if (!(tp $wt)) { $wt = "$HOME\scoop\shims\wezterm.exe" }
+# GUI の exe を優先 (shim はコンソール経由で開く)
+$scoopRoot = $env:SCOOP ? $env:SCOOP : "$HOME\scoop"
+$wt = "$scoopRoot\apps\wezterm-nightly\current\wezterm-gui.exe", "$scoopRoot\apps\wezterm\current\wezterm-gui.exe" |
+    ? { tp $_ } | select -First 1
+if (!$wt) { $wt = (gcm wezterm-gui -CommandType Application -ea 0 | select -First 1).Source }
+if (!$wt) { $wt = "$scoopRoot\shims\wezterm.exe" }
 if (tp $wt) {
     Invoke-Step 'Neovim file association' {
         $cmd = "`"$wt`" start -- nvim `"%1`""
@@ -220,12 +228,12 @@ if (tp $wt) {
                 '.ps1','.psm1','.lua','.vim','.js','.ts','.jsx','.tsx',
                 '.py','.go','.rs','.c','.cpp','.h','.sh','.conf','.ini','.env'
 
-        $null = ni "HKCU:\Software\Classes\$id\shell\open\command" -Force
+        Initialize-RegistryKey "HKCU:\Software\Classes\$id\shell\open\command"
         sp "HKCU:\Software\Classes\$id" '(Default)' 'Neovim (WezTerm)'
         sp "HKCU:\Software\Classes\$id\shell\open\command" '(Default)' $cmd
 
         foreach ($e in $exts) {
-            $null = ni "HKCU:\Software\Classes\$e\OpenWithProgids" -Force
+            Initialize-RegistryKey "HKCU:\Software\Classes\$e\OpenWithProgids"
             sp "HKCU:\Software\Classes\$e\OpenWithProgids" $id '' -Type String
         }
         "$(Get-Date) - Registered WezTermNvim for $($exts.Count) extensions" >> $LogFile
@@ -246,9 +254,9 @@ if (tp $shExe) {
             "$(Get-Date) - Added .SH to PATHEXT (Machine)" >> $LogFile
         }
         # assoc + ftype（レジストリ直接書き込み）
-        $null = ni "HKLM:\SOFTWARE\Classes\.sh" -Force
+        Initialize-RegistryKey "HKLM:\SOFTWARE\Classes\.sh"
         sp "HKLM:\SOFTWARE\Classes\.sh" '(Default)' 'ShellScript'
-        $null = ni "HKLM:\SOFTWARE\Classes\ShellScript\shell\open\command" -Force
+        Initialize-RegistryKey "HKLM:\SOFTWARE\Classes\ShellScript\shell\open\command"
         sp "HKLM:\SOFTWARE\Classes\ShellScript\shell\open\command" '(Default)' "`"$shExe`" `"%1`" %*"
         "$(Get-Date) - Registered .sh file association (ShellScript -> sh.exe)" >> $LogFile
     }
