@@ -52,6 +52,7 @@ printf 'protocol=https\nhost=credtest.invalid\nusername=test-user\n\n' | git cre
 - 確かめは CI の手順を全部(format:check を含む)。package.json の CI 用 script か workflow を見て並べる
 - Windows の作業ツリー(autocrlf)では prettier --check が CRLF で全ファイル落ちる → コミットした中身で確かめる: `git show HEAD:<f> | prettier --check --stdin-filepath <f>`
 - 後片付け: pnpm の node_modules(junction)で `git worktree remove --force` が "Directory not empty" で失敗(登録は外れる)。残骸は `cmd //c "rmdir /s /q C:\path"`(junction はリンクだけ消し、先をたどらない)。rm -rf の junction の扱いは環境依存のため使わない
+- `git worktree remove --force` は worktree の中の junction をたどり、つないだ先の中身まで消すことがある。実例: 計測用 worktree に本体の node_modules を junction でつなぎ `--force` で消したら、本体の node_modules から 142 パッケージと `.bin` が消えた (`npm install` で復旧)。先に junction をリンクだけ外す (PowerShell `(Get-Item <worktree>\node_modules -Force).Delete()`、または `cmd //c rmdir <worktree>\node_modules`)、その後 `--force` なしで remove。hook `worktree-remove-force-guard` (rules/common.toml) が `--force`/`-f` を止める
 
 ## push 前の検査は結果を見てから push(検査と push を 1 コマンドに繋げない)
 

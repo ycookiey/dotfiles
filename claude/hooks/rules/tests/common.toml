@@ -133,6 +133,30 @@ expect = "quiet"
 command = "git worktree add /c/x"
 
 [[case]]
+name = "worktree-remove-force"
+rule = "worktree-remove-force-guard"
+expect = "deny"
+command = "git worktree remove --force /c/x"
+
+[[case]]
+name = "worktree-remove-f-with-C"
+rule = "worktree-remove-force-guard"
+expect = "deny"
+command = "git -C /c/repo worktree remove -f /c/x"
+
+[[case]]
+name = "worktree-remove-no-force"
+rule = "worktree-remove-force-guard"
+expect = "quiet"
+command = "git worktree remove /c/x"
+
+[[case]]
+name = "worktree-add-force"
+rule = "worktree-remove-force-guard"
+expect = "quiet"
+command = "git worktree add --force /c/x HEAD"
+
+[[case]]
 name = "cmd-slash-c"
 rule = "cmd-switch-guard"
 expect = "deny"

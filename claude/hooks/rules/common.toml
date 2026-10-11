@@ -77,6 +77,21 @@ all = ['(^|[^[:alnum:]_-])git([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:
 action = "context"
 message = '''worktree の後片付け: pnpm の node_modules(junction)があると git worktree remove は "Directory not empty" で失敗するが、登録は外れる。残ったフォルダは cmd //c "rmdir /s /q C:\path" で消す(junction はリンクだけ消し、先をたどらない)。rm -rf は junction の扱いが環境依存で、link: 依存の先(兄弟の checkout 等)を消しうるので使わない。詳細 ~/.claude/docs/git.md の「部分 stage の単独検証と worktree の後片付け」'''
 
+# `git worktree remove --force` can follow a junction inside the worktree
+# (e.g. node_modules linked to the main checkout) and delete what it points
+# at: it once emptied 142 packages and .bin of the main node_modules.
+[[rule]]
+id = "worktree-remove-force-guard"
+event = "PreToolUse"
+tools = '^Bash$'
+fields = ["tool_input.command"]
+all = [
+  '(^|[^[:alnum:]_-])git([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+worktree[[:space:]]+remove([[:space:]]|$)',
+  '[[:space:]](--force|-f)([[:space:]]|$)',
+]
+action = "deny"
+message = '''git worktree remove --force は、worktree の中の junction (つないだ node_modules 等) をたどって、つないだ先 (本体の node_modules など) の中身まで消すことがある (実例: 本体の node_modules から 142 パッケージと .bin が消えた)。先に junction をリンクだけ外す (PowerShell: (Get-Item <worktree>\node_modules -Force).Delete()、または cmd //c rmdir <worktree>\node_modules)。その後 --force なしで git worktree remove を実行し、消えない残骸は cmd //c "rmdir /s /q C:\path" で消す (~/.claude/docs/git.md の「部分 stage の単独検証と worktree の後片付け」)。'''
+
 # Git Bash turns a lone `/c` into `C:/`, so `cmd.exe /c ...` opens cmd's
 # interactive screen and waits.
 [[rule]]

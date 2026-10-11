@@ -72,6 +72,7 @@ el.dispatchEvent(new Event('input', { bubbles: true }))
 
 - スクロールで古い履歴を読み込む画面(チャット等)は、hidden タブではスクロールしても読み込まれない(IntersectionObserver / rAF 系が動かない)
 - `setTimeout` は間引かれる。状態だけ変わり DOM が変わらない更新では MutationObserver が発火しない → 待ちがタイムアウトまで延びる
+- `javascript_tool` の中で `requestAnimationFrame` を待つと返らず、CDP が 45 秒で打ち切る (`Runtime.evaluate timed out ... renderer may be frozen`)。固まったのではない。canvas の再生・アニメーションの速さ (fps・1 フレームの時間) も hidden では測れない。先に `document.visibilityState` を見て、hidden なら速さは処理側 (Node の計測 script や console.log の処理時間) で測る
 - 待機: `MessageChannel` の 1 タスクごとに条件をポーリング(postMessage は間引かれない)
 
 ```js
