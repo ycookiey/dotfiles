@@ -384,7 +384,7 @@ Invoke-Step 'Startup manager' {
     Assert-ExitCode 'startup/register.ps1'
 } 'Startup registered'
 
-# Neovim プラグイン: lazy-lock.json から install + build (telescope-fzf-native の make 等)
+# Neovim プラグイン: lazy-lock.json から install + build (telescope-fzf-native は CMake + MSVC Build Tools で libfzf.dll を生成)
 if (gcm nvim -ea 0) {
     Invoke-Step 'Neovim plugins' {
         nvim --headless "+Lazy! restore" +qa *>> $LogFile
