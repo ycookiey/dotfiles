@@ -1,5 +1,6 @@
 # install/wsl.ps1 — WSL 冪等セットアップ + Claude Code bash 切り替え
 # 導入済み (wsl --status が exit 0 かつ Ubuntu 登録済み) なら、DISM も VM の起動もせずに戻る
+$ScriptDir = Split-Path $MyInvocation.MyCommand.Definition; . "$ScriptDir\..\pwsh\aliases.ps1"
 $ErrorActionPreference = "Stop"
 $ProgressPreference = 'SilentlyContinue'
 # wsl.exe の出力を UTF-16LE でなく UTF-8 にする。これを無視する古い wsl.exe 向けに NUL の除去も残す
