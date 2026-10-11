@@ -2,10 +2,11 @@
 //! Direct std::fs usage (no process spawn) for performance on Windows.
 
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 /// Assistant message extracted from JSONL line. Equivalent to bash JQ_DEDUP.
 #[derive(Debug, Clone)]
@@ -56,10 +57,24 @@ fn normalize_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
+/// A session log found during discovery, with the mtime read while listing
+/// its directory so `--last N` needs no second stat per file.
+#[derive(Debug, Clone)]
+struct JsonlFile {
+    path: PathBuf,
+    /// None when the file's time could not be read; such files are skipped
+    /// by `--last N` and kept by every other mode.
+    mtime: Option<SystemTime>,
+}
+
 /// Find all *.jsonl files under ~/.claude/projects and ~/.claude-*/projects.
-/// Deduplicate by basename (symlink handling).
 /// Includes subagents/ directory.
-fn find_jsonl_files() -> Vec<PathBuf> {
+///
+/// Several ~/.claude-* profiles may share one projects tree through a symlink,
+/// so projects directories that resolve to the same place are walked once.
+/// Files are then deduplicated by basename (first wins, ~/.claude first) and
+/// returned sorted by path so every run yields the same order.
+fn find_jsonl_files() -> Vec<JsonlFile> {
     let home = match dirs::home_dir() {
         Some(h) => h,
         None => return Vec::new(),
@@ -70,82 +85,116 @@ fn find_jsonl_files() -> Vec<PathBuf> {
         claude_dirs.push(home.join(".claude"));
     }
 
-    // Find .claude-* directories
+    // Find .claude-* directories (name check first: is_dir stats the entry)
     if let Ok(entries) = fs::read_dir(&home) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                if let Some(name) = path.file_name() {
-                    let name_str = name.to_string_lossy();
-                    if name_str.starts_with(".claude-") {
-                        claude_dirs.push(path);
-                    }
-                }
+        let mut extra: Vec<PathBuf> = entries
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".claude-"))
+            .map(|e| e.path())
+            .filter(|p| p.is_dir())
+            .collect();
+        // read_dir order is not guaranteed; fix it so "first wins" is stable.
+        extra.sort();
+        claude_dirs.extend(extra);
+    }
+
+    discover_jsonl(&claude_dirs)
+}
+
+/// Collect `<dir>/projects/**/*.jsonl` for each profile dir in order; see
+/// `find_jsonl_files` for the dedup and ordering rules.
+fn discover_jsonl(claude_dirs: &[PathBuf]) -> Vec<JsonlFile> {
+    let files = walk_projects_dirs(claude_dirs);
+
+    // Deduplicate by basename (first wins)
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut unique: Vec<JsonlFile> = Vec::with_capacity(files.len());
+    for f in files {
+        if let Some(name) = f.path.file_name() {
+            if seen.insert(name.to_string_lossy().into_owned()) {
+                unique.push(f);
             }
         }
     }
 
-    let mut files: Vec<PathBuf> = Vec::new();
+    unique.sort_by(|a, b| a.path.cmp(&b.path));
+    unique
+}
+
+/// Walk each `<dir>/projects` once: dirs that resolve to the same place
+/// (a profile whose projects is a symlink to another's) are skipped.
+fn walk_projects_dirs(claude_dirs: &[PathBuf]) -> Vec<JsonlFile> {
+    let mut walked: HashSet<PathBuf> = HashSet::new();
+    let mut files: Vec<JsonlFile> = Vec::new();
     for claude_dir in claude_dirs {
         let projects_dir = claude_dir.join("projects");
-        if projects_dir.exists() {
+        if !projects_dir.exists() {
+            continue;
+        }
+        // The canonical form (\\?\ on Windows) is only a key; paths handed out
+        // keep the original spelling. If it cannot be resolved, the original
+        // path is the key and the dir is walked as before.
+        let key = fs::canonicalize(&projects_dir).unwrap_or_else(|_| projects_dir.clone());
+        if walked.insert(key) {
             collect_jsonl(&projects_dir, &mut files);
         }
     }
-
-    // Deduplicate by basename (first wins)
-    let mut seen: HashMap<String, PathBuf> = HashMap::new();
-    for f in files {
-        if let Some(name) = f.file_name() {
-            let name_str = name.to_string_lossy().into_owned();
-            if !seen.contains_key(&name_str) {
-                seen.insert(name_str, f);
-            }
-        }
-    }
-
-    seen.into_values().collect()
+    files
 }
 
-/// Recursively collect *.jsonl files.
-fn collect_jsonl(dir: &Path, out: &mut Vec<PathBuf>) {
+/// Recursively collect *.jsonl files with their mtimes.
+/// Uses the entry's own file type and metadata (taken from the directory
+/// listing on Windows); only symlinks are followed with an extra stat.
+fn collect_jsonl(dir: &Path, out: &mut Vec<JsonlFile>) {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
     };
     for entry in entries.flatten() {
+        let file_type = match entry.file_type() {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
         let path = entry.path();
-        if path.is_dir() {
+        // Symlinks are followed; a broken one counts as a file without an
+        // mtime, as the former path.is_dir() + fs::metadata pair treated it.
+        let followed = file_type.is_symlink().then(|| fs::metadata(&path).ok());
+        let is_dir = match &followed {
+            Some(m) => m.as_ref().map_or(false, |m| m.is_dir()),
+            None => file_type.is_dir(),
+        };
+        if is_dir {
             collect_jsonl(&path, out);
         } else if path.extension().map_or(false, |e| e == "jsonl") {
-            out.push(path);
+            let mtime = match followed {
+                Some(m) => m.and_then(|m| m.modified().ok()),
+                None => entry.metadata().and_then(|m| m.modified()).ok(),
+            };
+            out.push(JsonlFile { path, mtime });
         }
     }
 }
 
 /// --last N: sort by mtime descending, take top N.
-fn find_latest_files(files: &[PathBuf], n: usize) -> Vec<PathBuf> {
-    let mut with_mtime: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
+/// Equal mtimes keep the input (path) order, so the pick is deterministic.
+fn find_latest_files(files: &[JsonlFile], n: usize) -> Vec<JsonlFile> {
+    let mut with_mtime: Vec<(SystemTime, &JsonlFile)> = files
+        .iter()
+        .filter_map(|f| f.mtime.map(|t| (t, f)))
+        .collect();
 
-    for f in files {
-        if let Ok(meta) = fs::metadata(f) {
-            if let Ok(mtime) = meta.modified() {
-                with_mtime.push((mtime, f.clone()));
-            }
-        }
-    }
-
-    with_mtime.sort_by(|a, b| b.0.cmp(&a.0)); // descending
+    with_mtime.sort_by(|a, b| b.0.cmp(&a.0)); // descending, stable
     with_mtime.truncate(n);
-    with_mtime.into_iter().map(|(_, p)| p).collect()
+    with_mtime.into_iter().map(|(_, f)| f.clone()).collect()
 }
 
 /// --session ID: filter files containing ID in filename.
-fn find_session_files(files: &[PathBuf], id: &str) -> Vec<PathBuf> {
+fn find_session_files(files: &[JsonlFile], id: &str) -> Vec<JsonlFile> {
     files
         .iter()
         .filter(|f| {
-            f.file_name()
+            f.path
+                .file_name()
                 .and_then(|n| n.to_str())
                 .map_or(false, |s| s.contains(id))
         })
@@ -196,7 +245,7 @@ fn encode_project_prefixes(project_path: &str) -> Vec<String> {
 
 /// Filter JSONL files to those belonging to a project (prefix match on parent dir name).
 /// Includes worktree sessions (e.g. C--Main-Project-Foo--claude-worktrees-*).
-fn filter_by_project(files: &[PathBuf], project_path: &str) -> Vec<PathBuf> {
+fn filter_by_project(files: &[JsonlFile], project_path: &str) -> Vec<JsonlFile> {
     let prefixes = encode_project_prefixes(project_path);
     if prefixes.is_empty() {
         return files.to_vec();
@@ -206,7 +255,7 @@ fn filter_by_project(files: &[PathBuf], project_path: &str) -> Vec<PathBuf> {
         .iter()
         .filter(|f| {
             // Walk up to find the project directory (parent of the JSONL or subagents/ dir)
-            for ancestor in f.ancestors().skip(1) {
+            for ancestor in f.path.ancestors().skip(1) {
                 if let Some(name) = ancestor.file_name().and_then(|n| n.to_str()) {
                     if prefixes.iter().any(|prefix| name.starts_with(prefix)) {
                         return true;
@@ -501,7 +550,7 @@ fn collect_requests(
         Some(path) => filter_by_project(&all_files, path),
         None => all_files,
     };
-    let files = match mode {
+    let files: Vec<PathBuf> = match mode {
         "all" => all_files,
         "last" => {
             let n = value.parse().unwrap_or(10);
@@ -512,7 +561,10 @@ fn collect_requests(
             eprintln!("Unknown session mode: {}", mode);
             std::process::exit(1);
         }
-    };
+    }
+    .into_iter()
+    .map(|f| f.path)
+    .collect();
 
     if files.is_empty() {
         return None;
@@ -1005,8 +1057,8 @@ fn cmd_compare(id1: &str, id2: &str) -> Value {
     let files1 = find_session_files(&all_files, id1);
     let files2 = find_session_files(&all_files, id2);
 
-    let file1 = files1.first();
-    let file2 = files2.first();
+    let file1 = files1.first().map(|f| &f.path);
+    let file2 = files2.first().map(|f| &f.path);
 
     if file1.is_none() || file2.is_none() {
         return json!({"error": "one or both sessions not found"});
@@ -1144,4 +1196,106 @@ fn parse_session_args(args: &[String]) -> SessionArgs {
         }
     }
     SessionArgs { mode, value, project }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("dotcli-token-audit-{}-{}", name, std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn touch(path: &Path) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, b"{}\n").unwrap();
+    }
+
+    /// Directory symlink, or a junction when symlinks need privileges we lack
+    /// (both are name-surrogate reparse points, which is_symlink() reports).
+    #[cfg(windows)]
+    fn link_dir(target: &Path, link: &Path) -> std::io::Result<()> {
+        if std::os::windows::fs::symlink_dir(target, link).is_ok() {
+            return Ok(());
+        }
+        let status = std::process::Command::new("cmd")
+            .arg("/C")
+            .arg("mklink")
+            .arg("/J")
+            .arg(link)
+            .arg(target)
+            .stdout(std::process::Stdio::null())
+            .status()?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(std::io::Error::other("mklink /J failed"))
+        }
+    }
+    #[cfg(unix)]
+    fn link_dir(target: &Path, link: &Path) -> std::io::Result<()> {
+        std::os::unix::fs::symlink(target, link)
+    }
+
+    #[test]
+    fn discover_dedups_by_basename_first_wins_and_sorts_by_path() {
+        let root = scratch("dedup");
+        let a = root.join("a");
+        let b = root.join("b");
+        touch(&a.join("projects/P2/s2.jsonl"));
+        touch(&a.join("projects/P1/s1.jsonl"));
+        touch(&a.join("projects/P1/s1/subagents/agent-x.jsonl"));
+        touch(&a.join("projects/P1/notes.txt"));
+        touch(&b.join("projects/P0/s1.jsonl")); // same basename, later profile
+        touch(&b.join("projects/P0/s3.jsonl"));
+
+        let got = discover_jsonl(&[a.clone(), b.clone(), root.join("missing")]);
+        let paths: Vec<PathBuf> = got.iter().map(|f| f.path.clone()).collect();
+        let mut sorted = paths.clone();
+        sorted.sort();
+        assert_eq!(paths, sorted, "paths must come back in path order");
+        assert_eq!(paths.len(), 4);
+        assert!(paths.contains(&a.join("projects").join("P1").join("s1.jsonl")));
+        assert!(!paths.contains(&b.join("projects").join("P0").join("s1.jsonl")));
+        assert!(got.iter().all(|f| f.mtime.is_some()));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn discover_walks_a_symlinked_projects_dir_once_and_keeps_original_paths() {
+        let root = scratch("symlink");
+        let a = root.join("a");
+        let b = root.join("b");
+        touch(&a.join("projects/P1/s1.jsonl"));
+        fs::create_dir_all(&b).unwrap();
+        if link_dir(&a.join("projects"), &b.join("projects")).is_err() {
+            // Creating symlinks needs Developer Mode or admin on Windows.
+            eprintln!("skipped: cannot create a directory symlink here");
+            let _ = fs::remove_dir_all(&root);
+            return;
+        }
+        // Before the basename dedup: the shared tree is listed once, not twice.
+        let walked = walk_projects_dirs(&[b.clone(), a.clone()]);
+        assert_eq!(walked.len(), 1, "shared projects tree walked more than once");
+        // b first: its spelling is kept even though a resolves to the same tree.
+        let got = discover_jsonl(&[b.clone(), a.clone()]);
+        let paths: Vec<PathBuf> = got.iter().map(|f| f.path.clone()).collect();
+        assert_eq!(paths, vec![b.join("projects").join("P1").join("s1.jsonl")]);
+        assert!(got[0].mtime.is_some());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn latest_breaks_mtime_ties_by_input_order_and_skips_unknown_times() {
+        let t = |s: u64| Some(UNIX_EPOCH + Duration::from_secs(s));
+        let f = |p: &str, m| JsonlFile { path: PathBuf::from(p), mtime: m };
+        let files = vec![f("a", t(5)), f("b", t(9)), f("c", t(5)), f("d", None), f("e", t(5))];
+        let got: Vec<PathBuf> = find_latest_files(&files, 3).into_iter().map(|f| f.path).collect();
+        assert_eq!(got, vec![PathBuf::from("b"), PathBuf::from("a"), PathBuf::from("c")]);
+        assert_eq!(find_latest_files(&files, 10).len(), 4);
+    }
 }
