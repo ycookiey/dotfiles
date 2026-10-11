@@ -48,7 +48,8 @@ fi
 # 旧実装の `git -C $(git rev-parse --git-common-dir) rev-parse --show-toplevel`
 # は .git ディレクトリ内では fatal となり、|| フォールバックで cwd の
 # show-toplevel が採用されて worktree path を main repo として誤認していた。
-REPO_ROOT=$(git worktree list --porcelain | awk '/^worktree / {print $2; exit}')
+# 空白を含むパスを切らないよう、フィールド分割せず "worktree " 以降の行全体を取る。
+REPO_ROOT=$(git worktree list --porcelain | awk '/^worktree / {sub(/^worktree /, ""); print; exit}')
 if [[ -z "$REPO_ROOT" ]]; then
   echo "ERROR: failed to resolve main repo root via git worktree list" >&2
   exit 1
