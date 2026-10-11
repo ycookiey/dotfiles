@@ -1,0 +1,331 @@
+# Cases for the rules in ../common.toml: `yhooky test claude/hooks/rules/tests/common.toml`.
+
+[[case]]
+name = "write-text"
+rule = "crlf-write-reminder"
+expect = "context"
+command = '''python - <<'EOF'
+Path('a.ts').write_text(s, encoding='utf-8')
+EOF'''
+
+[[case]]
+name = "open-w-double"
+rule = "crlf-write-reminder"
+expect = "context"
+command = '''python -c 'open("a.txt", "w").write(s)' '''
+
+[[case]]
+name = "open-w-single"
+rule = "crlf-write-reminder"
+expect = "context"
+command = '''python - <<'EOF'
+with open('a.txt', 'w', encoding='utf-8') as f: f.write(s)
+EOF'''
+
+[[case]]
+name = "open-append"
+rule = "crlf-write-reminder"
+expect = "context"
+command = '''python - <<'EOF'
+open('log.txt', 'a').write(line)
+EOF'''
+
+[[case]]
+name = "write-bytes"
+rule = "crlf-write-reminder"
+expect = "quiet"
+command = '''python - <<'EOF'
+Path('a.ts').write_bytes(s.encode('utf-8'))
+EOF'''
+
+[[case]]
+name = "open-newline"
+rule = "crlf-write-reminder"
+expect = "quiet"
+command = '''python - <<'EOF'
+open('a.txt', 'w', newline='').write(s)
+EOF'''
+
+[[case]]
+name = "open-read"
+rule = "crlf-write-reminder"
+expect = "quiet"
+command = '''python - <<'EOF'
+s = open('a.txt').read()
+EOF'''
+
+[[case]]
+name = "crlf-unrelated"
+rule = "crlf-write-reminder"
+expect = "quiet"
+command = "git status --short"
+
+[[case]]
+name = "set-e"
+rule = "set-e-reminder"
+expect = "context"
+command = "set -euo pipefail; make"
+
+[[case]]
+name = "set-o-errexit"
+rule = "set-e-reminder"
+expect = "context"
+command = "set -o errexit\nmake"
+
+[[case]]
+name = "set-x-only"
+rule = "set-e-reminder"
+expect = "quiet"
+command = "set -x; make"
+
+[[case]]
+name = "reset-e"
+rule = "set-e-reminder"
+expect = "quiet"
+command = "unset -e"
+
+[[case]]
+name = "cdragon-bin"
+rule = "cdragon-root-record-reminder"
+expect = "context"
+command = "curl -s https://raw.communitydragon.org/latest/game/data/characters/sru_red/sru_red.bin.json | grep hp | head -1"
+
+[[case]]
+name = "cdragon-url"
+rule = "cdragon-root-record-reminder"
+expect = "context"
+input = { tool_name = "WebFetch", tool_input = { url = "https://raw.communitydragon.org/latest/game/data/Characters/SRU_Blue/x.json" } }
+
+[[case]]
+name = "cdragon-other-path"
+rule = "cdragon-root-record-reminder"
+expect = "quiet"
+command = "curl -s https://raw.communitydragon.org/latest/plugins/x.json"
+
+[[case]]
+name = "python-isolated"
+rule = "python-isolated-reminder"
+expect = "context"
+command = "python -I script.py"
+
+[[case]]
+name = "python-isolated-combined"
+rule = "python-isolated-reminder"
+expect = "context"
+command = "cd x && py -EI a.py"
+
+[[case]]
+name = "python-ep"
+rule = "python-isolated-reminder"
+expect = "quiet"
+command = "python -E -P script.py"
+
+[[case]]
+name = "worktree-remove"
+rule = "worktree-remove-reminder"
+expect = "context"
+command = "git -C /c/repo worktree remove --force /c/x"
+
+[[case]]
+name = "worktree-add"
+rule = "worktree-remove-reminder"
+expect = "quiet"
+command = "git worktree add /c/x"
+
+[[case]]
+name = "cmd-slash-c"
+rule = "cmd-switch-guard"
+expect = "deny"
+command = "cmd.exe /c dir"
+
+[[case]]
+name = "cmd-double-slash"
+rule = "cmd-switch-guard"
+expect = "quiet"
+command = "cmd //c dir"
+
+[[case]]
+name = "cmd-conversion-off"
+rule = "cmd-switch-guard"
+expect = "quiet"
+command = "MSYS2_ARG_CONV_EXCL='*' cmd /c dir"
+
+[[case]]
+name = "devserver-pnpm-dev"
+rule = "devserver-launch-guard"
+expect = "deny"
+input = { tool_input = { command = "cd app && pnpm dev --port 5190", run_in_background = true } }
+
+[[case]]
+name = "devserver-vite"
+rule = "devserver-launch-guard"
+expect = "deny"
+input = { tool_input = { command = "npx vite --port 3000", run_in_background = true } }
+
+[[case]]
+name = "devserver-wrangler"
+rule = "devserver-launch-guard"
+expect = "deny"
+input = { tool_input = { command = "wrangler dev", run_in_background = true } }
+
+[[case]]
+name = "devserver-foreground"
+rule = "devserver-launch-guard"
+expect = "quiet"
+input = { tool_input = { command = "pnpm dev", run_in_background = false } }
+
+[[case]]
+name = "devserver-build"
+rule = "devserver-launch-guard"
+expect = "quiet"
+input = { tool_input = { command = "pnpm exec vite build", run_in_background = true } }
+
+[[case]]
+name = "devserver-test"
+rule = "devserver-launch-guard"
+expect = "quiet"
+input = { tool_input = { command = "pnpm run test", run_in_background = true } }
+
+[[case]]
+name = "settings-home"
+rule = "settings-template-reminder"
+expect = "context"
+input = { tool_name = "Edit", tool_input = { file_path = 'C:\Users\someone\.claude-1\settings.json' } }
+
+[[case]]
+name = "settings-project"
+rule = "settings-template-reminder"
+expect = "quiet"
+input = { tool_name = "Read", tool_input = { file_path = 'C:\Main\Project\app\.claude\settings.json' } }
+
+[[case]]
+name = "env-prefix-same-var"
+rule = "env-prefix-expansion-reminder"
+expect = "context"
+command = '''TEST_WORKERS=2 pnpm run test --maxWorkers="$TEST_WORKERS"'''
+
+[[case]]
+name = "env-prefix-in-quoted-step"
+rule = "env-prefix-expansion-reminder"
+expect = "context"
+command = '''step test "TEST_WORKERS=2 pnpm run test --maxWorkers=\"\$TEST_WORKERS\""'''
+
+[[case]]
+name = "env-export-then-use"
+rule = "env-prefix-expansion-reminder"
+expect = "quiet"
+command = '''export TEST_WORKERS=2 && pnpm run test --maxWorkers="$TEST_WORKERS"'''
+
+[[case]]
+name = "env-assign-separate-statement"
+rule = "env-prefix-expansion-reminder"
+expect = "quiet"
+command = '''N=3; echo "$N"'''
+
+[[case]]
+name = "env-prefix-no-expansion"
+rule = "env-prefix-expansion-reminder"
+expect = "quiet"
+command = '''DEBUG='typescript-eslint:*' node eslint.js packages'''
+
+[[case]]
+name = "env-lowercase-assign"
+rule = "env-prefix-expansion-reminder"
+expect = "quiet"
+command = '''out=$(dirname "$0")'''
+
+[[case]]
+name = "env-command-substitution-assign"
+rule = "env-prefix-expansion-reminder"
+expect = "quiet"
+command = '''S=$(git log -1 --format=%h "$REF"); echo "$S"'''
+
+[[case]]
+name = "env-quoted-value-assign"
+rule = "env-prefix-expansion-reminder"
+expect = "quiet"
+command = '''P='export const x =' && printf '%s' "$P"'''
+
+[[case]]
+name = "env-quoted-value-then-semicolon"
+rule = "env-prefix-expansion-reminder"
+expect = "quiet"
+command = '''S="$HOME/x"; ls "$S"'''
+
+[[case]]
+name = "timeout-plain"
+rule = "timeout-grandchild-reminder"
+expect = "context"
+command = '''timeout 600 pnpm test'''
+
+[[case]]
+name = "timeout-with-option"
+rule = "timeout-grandchild-reminder"
+expect = "context"
+command = '''cd kit && timeout -k 5 300 pnpm run test'''
+
+[[case]]
+name = "timeout-option-of-other-tool"
+rule = "timeout-grandchild-reminder"
+expect = "quiet"
+command = '''curl --timeout 5 https://example.com'''
+
+[[case]]
+name = "timeout-word-in-text"
+rule = "timeout-grandchild-reminder"
+expect = "quiet"
+command = '''echo "the timeout was hit"'''
+
+[[case]]
+name = "sed-i"
+rule = "sed-inplace-crlf-reminder"
+expect = "context"
+command = "sed -i 's/a/b/' x.txt"
+
+[[case]]
+name = "sed-e-then-i"
+rule = "sed-inplace-crlf-reminder"
+expect = "context"
+command = "cd x && sed -E -i.bak 's/a/b/' x.txt"
+
+[[case]]
+name = "sed-in-place-long"
+rule = "sed-inplace-crlf-reminder"
+expect = "context"
+command = "sed --in-place 's/a/b/' x.txt"
+
+[[case]]
+name = "sed-to-stdout"
+rule = "sed-inplace-crlf-reminder"
+expect = "quiet"
+command = "sed -n '1,5p' x.txt"
+
+[[case]]
+name = "sed-after-pipe"
+rule = "sed-inplace-crlf-reminder"
+expect = "quiet"
+command = "cat x | sed 's/-i/x/'"
+
+[[case]]
+name = "sed-combined-flags"
+rule = "sed-inplace-crlf-reminder"
+expect = "context"
+command = "sed -Ei 's/a+/b/' file.md"
+
+[[case]]
+name = "sed-pipe-filter"
+rule = "sed-inplace-crlf-reminder"
+expect = "quiet"
+command = '''git diff | sed 's/\r$//' '''
+
+[[case]]
+name = "sed-extended"
+rule = "sed-inplace-crlf-reminder"
+expect = "quiet"
+command = '''sed -E 's/(a)/\1/' file.md'''
+
+[[case]]
+name = "sed-no-sed"
+rule = "sed-inplace-crlf-reminder"
+expect = "quiet"
+command = "grep -i sed notes.md"

@@ -55,12 +55,10 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$HOME/.claude/hooks/label-guard.sh\"",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "bash \"$HOME/.claude/hooks/language-guard.sh\"",
+            "command": "yhooky",
+            "args": [
+              "hook"
+            ],
             "timeout": 15
           }
         ]
@@ -68,174 +66,30 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "SendUserFile",
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$HOME/.claude/hooks/sendfile-to-ysidepaney.sh\"",
-            "timeout": 15
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "if": "Bash(git push *)",
-            "command": "bash \"$HOME/.claude/hooks/push-check-reminder.sh\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "if": "Bash(git worktree remove *)",
-            "command": "bash \"$HOME/.claude/hooks/worktree-remove-reminder.sh\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "bash \"$HOME/.claude/hooks/set-e-reminder.sh\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "bash \"$HOME/.claude/hooks/crlf-write-reminder.sh\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "bash \"$HOME/.claude/hooks/sed-inplace-crlf-reminder.sh\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "bash \"$HOME/.claude/hooks/backslash-shrink-guard.sh\"",
+            "command": "yhooky",
+            "args": [
+              "hook"
+            ],
             "timeout": 10
-          },
-          {
-            "type": "command",
-            "if": "Bash(rm *)",
-            "command": "bash \"$HOME/.claude/hooks/rm-junction-guard.sh\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "if": "Bash(cmd *)",
-            "command": "bash \"$HOME/.claude/hooks/cmd-switch-guard.sh\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "if": "Bash(cmd.exe *)",
-            "command": "bash \"$HOME/.claude/hooks/cmd-switch-guard.sh\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "if": "Bash(timeout *)",
-            "command": "bash \"$HOME/.claude/hooks/cmd-switch-guard.sh\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "if": "Bash(pnpm *)",
-            "command": "bash \"$HOME/.claude/hooks/devserver-launch-guard.sh\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "if": "Bash(npm *)",
-            "command": "bash \"$HOME/.claude/hooks/devserver-launch-guard.sh\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "if": "Bash(yarn *)",
-            "command": "bash \"$HOME/.claude/hooks/devserver-launch-guard.sh\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "if": "Bash(bun *)",
-            "command": "bash \"$HOME/.claude/hooks/devserver-launch-guard.sh\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "if": "Bash(npx *)",
-            "command": "bash \"$HOME/.claude/hooks/devserver-launch-guard.sh\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "if": "Bash(vite)",
-            "command": "bash \"$HOME/.claude/hooks/devserver-launch-guard.sh\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "if": "Bash(vite *)",
-            "command": "bash \"$HOME/.claude/hooks/devserver-launch-guard.sh\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "if": "Bash(wrangler *)",
-            "command": "bash \"$HOME/.claude/hooks/devserver-launch-guard.sh\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "if": "Bash(next *)",
-            "command": "bash \"$HOME/.claude/hooks/devserver-launch-guard.sh\"",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "Read|Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$HOME/.claude/hooks/settings-template-reminder.sh\"",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$HOME/.claude/hooks/stage-own-edit-reminder.sh\"",
-            "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "AskUserQuestion",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$HOME/.claude/hooks/askuser-label-guard.sh\"",
-            "timeout": 5
           }
         ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$HOME/.claude/hooks/post-push-reminder.sh\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "bash \"$HOME/.claude/hooks/head-truncation-reminder.sh\"",
-            "timeout": 5
+            "command": "yhooky",
+            "args": [
+              "hook"
+            ],
+            "timeout": 10
           }
         ]
       }

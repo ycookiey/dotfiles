@@ -1,0 +1,149 @@
+# Claude Code hook rules, run by yhooky (github.com/ycookiey/yhooky).
+# Each [[rule]] adds a note to Claude's context (action = "context") or
+# refuses the tool call (action = "deny") when the fields it reads match:
+# every pattern in `all` matches some line, and none in `none` does.
+# Patterns are Rust regex, matched one line at a time as grep -E does.
+# Literal strings ('...', '''...''') keep backslashes as written.
+
+# Checks a pattern cannot express, built into yhooky (src/builtin).
+builtins = [
+  "backslash-shrink-guard",
+  "rm-junction-guard",
+  "askuser-label-guard",
+  "sendfile-to-ysidepaney",
+  "stage-own-edit-reminder",
+  "push-check-reminder",
+  "post-push-reminder",
+  "head-truncation-reminder",
+  "label-guard",
+  "language-guard",
+]
+
+# The Bash tool runs commands where errexit has no effect, so `set -e`
+# does not stop on a failure (`( set -e; false; echo after )` prints after).
+[[rule]]
+id = "set-e-reminder"
+event = "PreToolUse"
+tools = '^Bash$'
+fields = ["tool_input.command"]
+all = ['(^|[^[:alnum:]_-])set[[:space:]]+(-[[:alpha:]]*e|-o[[:space:]]+errexit)']
+action = "context"
+message = '''Bash ツールでは set -e が効かない(errexit の効かない文脈で実行される。( set -e; false; echo after ) でも after が出る)。失敗で止めたい手順は && でつなぐか、各段の後で終了コードを確かめる。複数の検査を流して最後の結果だけを見ると、途中の失敗を見逃す。'''
+
+# Windows' Python turns \n into \r\n when writing in text mode, so
+# replacing an LF file makes every line CRLF (docs/bash.md had it, and it
+# was missed). Not for commands that pass `newline=`.
+[[rule]]
+id = "crlf-write-reminder"
+event = "PreToolUse"
+tools = '^Bash$'
+fields = ["tool_input.command"]
+all = ['''write_text\(|open\([^)]*["'](w|a|x)[t+]?["']''']
+none = ['newline=']
+action = "context"
+message = '''Windows の Python は text mode の書き込み(Path.write_text / open(p, "w"))で \n を \r\n に変える。LF のファイルを書き換えると全行が CRLF になる。read_bytes().decode() → write_bytes(s.encode())、または open(p, "w", newline="") を使う。書いた後は file <path> か git ls-files --eol <path> で確かめる(docs/bash.md)。'''
+
+# A CommunityDragon character bin holds several CharacterRecords with
+# different values; `grep | head -1` reads one that is not Root
+# (docs/league-game-data.md had it, and it was missed).
+[[rule]]
+id = "cdragon-root-record-reminder"
+event = "PreToolUse"
+tools = '^(Bash|WebFetch)$'
+fields = ["tool_input.command", "tool_input.url"]
+all = ['communitydragon', '(?i)/characters/']
+action = "context"
+message = '''CommunityDragon の character bin は CharacterRecord を複数持ち、record ごとに値が違う (例: sru_red の Root 2300 / 別 record 5000、sru_blue の Root 2300 / 3750)。SR の値は key `Characters/<Name>/CharacterRecords/Root` の record から読む。grep -o ... | head -1 で先頭を拾わない (docs/league-game-data.md)。'''
+
+# `python -I` also turns off the user site (pip --user), so what is
+# installed there cannot be imported; `python -E -P` keeps it (docs/bash.md).
+[[rule]]
+id = "python-isolated-reminder"
+event = "PreToolUse"
+tools = '^Bash$'
+fields = ["tool_input.command"]
+all = ['(^|[[:space:];&|(/])(python[0-9.]*|py)(\.exe)?[[:space:]]+(-[A-Za-z]+[[:space:]]+)*-[A-Za-z]*I']
+action = "context"
+message = '''python -I は user site (pip --user、AppData/Roaming/Python) も無効にするので、そこに入れた numpy 等が import できない。目的がスクリプトのフォルダや cwd を sys.path に入れないことなら python -E -P (3.11+) で足り、user site は残る (docs/bash.md)。'''
+
+# Windows + pnpm: `git worktree remove` fails on the junctions in
+# node_modules, and rm -rf can follow them.
+[[rule]]
+id = "worktree-remove-reminder"
+event = "PreToolUse"
+tools = '^Bash$'
+fields = ["tool_input.command"]
+all = ['(^|[^[:alnum:]_-])git([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+worktree[[:space:]]+remove([[:space:]]|$)']
+action = "context"
+message = '''worktree の後片付け: pnpm の node_modules(junction)があると git worktree remove は "Directory not empty" で失敗するが、登録は外れる。残ったフォルダは cmd //c "rmdir /s /q C:\path" で消す(junction はリンクだけ消し、先をたどらない)。rm -rf は junction の扱いが環境依存で、link: 依存の先(兄弟の checkout 等)を消しうるので使わない。詳細 ~/.claude/docs/git.md の「部分 stage の単独検証と worktree の後片付け」'''
+
+# Git Bash turns a lone `/c` into `C:/`, so `cmd.exe /c ...` opens cmd's
+# interactive screen and waits.
+[[rule]]
+id = "cmd-switch-guard"
+event = "PreToolUse"
+tools = '^Bash$'
+fields = ["tool_input.command"]
+all = ['(^|[^[:alnum:]_./-])cmd([.]exe)?[[:space:]]+/[[:alpha:]]([[:space:]]|$)']
+none = ['MSYS2_ARG_CONV_EXCL']
+action = "deny"
+message = '''Git Bash は cmd の /c を C:/ に変えるので、cmd が対話の画面で起動して止まる。cmd.exe //c ... と書くか、MSYS2_ARG_CONV_EXCL='*' を付ける(ファイルを既定のアプリで開くなら PowerShell の Start-Process、フォルダなら explorer.exe も可)。詳細 ~/.claude/docs/bash.md の「MSYS パス変換」'''
+
+# A dev server started in the background from Git Bash loses its Windows
+# parent at npm's shim, so TaskStop leaves node and workerd holding the
+# port; from the PowerShell tool it stops cleanly.
+[[rule]]
+id = "devserver-launch-guard"
+event = "PreToolUse"
+tools = '^Bash$'
+fields = ["tool_input.command"]
+equals = { "tool_input.run_in_background" = "true" }
+all = ['(^|[;&|(`[:space:]])(pnpm|npm|yarn|bun)([[:space:]]+(run|exec|-[^[:space:]]+([[:space:]]+[^-;&|[:space:]][^;&|[:space:]]*)?))*[[:space:]]+(dev|start|serve|preview|storybook)([[:space:];&|)]|$)|(^|[;&|(`[:space:]])(npx[[:space:]]+)?(vite([[:space:]]+(dev|serve|preview)([[:space:];&|)]|$)|[[:space:]]+-|[[:space:]]*([;&|)]|$))|(wrangler[[:space:]]+dev|next[[:space:]]+(dev|start)|storybook[[:space:]]+dev)([[:space:];&|)]|$))']
+action = "deny"
+message = '''常駐の dev server は Bash ではなく PowerShell の tool の run_in_background で起動する(例: Set-Location C:/path/app; pnpm dev --port 5190 --strictPort *> <log>)。Git Bash から起動すると npm の shim の所で親子のつながりが切れ、TaskStop の後も node・workerd が残って port を掴む。詳細 ~/.claude/docs/bash.md の「dev server は PowerShell の tool で起動する」'''
+
+# ~/.claude*/settings.json is merged from the dotfiles template.
+[[rule]]
+id = "settings-template-reminder"
+event = "PreToolUse"
+tools = '^(Read|Edit|Write)$'
+fields = ["tool_input.file_path"]
+all = ['[\\/](Users|home)[\\/][^\\/]+[\\/]\.claude(-[^\\/]+)?[\\/]settings\.json$']
+action = "context"
+message = '''~/.claude*/settings.json は dotfiles/claude/settings.json をテンプレートとするマージ先。nushell/pwsh 起動ごとの dotcli sync がテンプレートのキー(model・hooks 等)を上書きし、テンプレートにないキーは残す(消さない)。テンプレートにあるキーを変える・全端末に効かせる変更はテンプレート側も編集する。手元や /model だけの変更は次の sync で戻る。詳細 ~/.claude/docs/symlinks.md'''
+
+# `X=1 cmd "$X"`: the assignment applies to cmd's environment, but the
+# shell expands $X before it, so cmd gets the old (often empty) value.
+# Rust regex has no backreference, so any uppercase expansion on such a
+# line matches. The value is kept to plain words: `S=$(cmd "$X"); next`
+# is an ordinary assignment, not a prefix.
+[[rule]]
+id = "env-prefix-expansion-reminder"
+event = "PreToolUse"
+tools = '^Bash$'
+fields = ["tool_input.command"]
+all = ['''(^|[;&|(`"'[:space:]])[A-Z_][A-Z0-9_]*=[^;&|$"'()`[:space:]]*[[:space:]]+[^;&|#]*\$\{?[A-Z_][A-Z0-9_]*''']
+action = "context"
+message = '''X=1 cmd "$X" の形では、行頭の代入は cmd の環境変数にだけ効き、同じ行の $X は代入の前の値(多くは空)で展開される。実測: TEST_WORKERS=2 pnpm run test --maxWorkers="$TEST_WORKERS" で vitest に --maxWorkers= が空で渡り落ちた。先に export X=1 するか、別の行で設定する。名前の一致までは見ていないので、別の変数なら問題ない。'''
+
+# Git Bash's `timeout` stops only its direct child; on Windows the
+# grandchildren (vitest workers, workerd, browsers) keep running.
+[[rule]]
+id = "timeout-grandchild-reminder"
+event = "PreToolUse"
+tools = '^Bash$'
+fields = ["tool_input.command"]
+all = ['(^|[;&|(`[:space:]])timeout[[:space:]]+(-[^[:space:]]+[[:space:]]+)*[0-9]']
+action = "context"
+message = '''Git Bash の timeout は時間切れで直接の子だけを止め、孫(vitest の worker・workerd・ブラウザ等)は動き続ける。長い処理は run_in_background で起動し、終わったら tasklist で残りを確かめ、自分が起動したものが残っていれば taskkill /PID <pid> /T /F で止める(詳細 ~/.claude/docs/bash.md の「dev server は PowerShell の tool で起動する」)。'''
+
+# Git Bash's `sed -i` turns a CRLF file into LF on every line, changed or
+# not (docs/bash.md had it, and it was missed).
+[[rule]]
+id = "sed-inplace-crlf-reminder"
+event = "PreToolUse"
+tools = '^Bash$'
+fields = ["tool_input.command"]
+all = ['(^|[[:space:];&|(])sed[[:space:]]+([^|;&]*[[:space:]])?(-[A-Za-z]*i|--in-place)']
+action = "context"
+message = '''Git Bash の sed -i は CRLF のファイルを全行 LF にする(置換していない行も)。CRLF のファイルは Edit ツールで直すか、python で bytes のまま置換する。sed -i を使ったら unix2dos -q <file> で戻し、file <file> の「with CRLF line terminators」で確かめる(docs/bash.md)。'''
