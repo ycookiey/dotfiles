@@ -96,6 +96,10 @@ def chrome-yatcy [
         "--no-first-run"
         "--no-default-browser-check"
     ] ++ $extra)
+    # TODO: _dotcli_launch は cmd /c start 経由のため、引数を cmd.exe が再解釈する。
+    #   nu は空白を含む引数しかクォートしないので、空白なしで & | < > ^ ( ) を含む引数
+    #   (例: "https://e.com/?a=1&b=2") はメタ文字の位置で切れ、残りが別コマンドとして実行される。
+    #   %VAR% はクォート内でも展開される。対処方針(cmd を通さない detach / エスケープ / 拒否)は未決定。
     _dotcli_launch $chrome ...$chrome_args
 }
 
