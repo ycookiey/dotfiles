@@ -1,6 +1,7 @@
 mod commands;
 mod definitions;
 mod generate;
+mod paths;
 mod protocol;
 
 use clap::{Parser, Subcommand};
@@ -190,29 +191,12 @@ enum CasAction {
 }
 
 fn main() {
-    // Set DOTFILES_DIR if not already set
-    if std::env::var("DOTFILES_DIR").is_err() {
-        let exe = std::env::current_exe().expect("Failed to get current exe");
-        if let Some(dotfiles) = exe
-            .ancestors()
-            .find(|p| p.join("definitions.toml").exists())
-        {
-            unsafe {
-                std::env::set_var("DOTFILES_DIR", dotfiles.display().to_string());
-            }
-        }
-    }
-
     let cli = Cli::parse();
 
     match cli.command {
         Commands::Generate { output } => {
-            let output_dir = output.unwrap_or_else(|| {
-                let exe = std::env::current_exe().expect("Failed to get current exe path");
-                exe.ancestors()
-                    .find(|p| p.join("cli").join("definitions.toml").exists())
-                    .map(|p| p.to_path_buf())
-                    .unwrap_or_else(|| std::env::current_dir().expect("Failed to get cwd"))
+            let output_dir = output.or_else(paths::dotfiles_root).unwrap_or_else(|| {
+                std::env::current_dir().expect("Failed to get cwd")
             });
             if let Err(e) = generate::run(&output_dir) {
                 eprintln!("Error: {e}");

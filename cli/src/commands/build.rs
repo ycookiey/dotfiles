@@ -1,3 +1,4 @@
+use crate::paths::dotfiles_root;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -53,21 +54,6 @@ const CRATES: &[Crate] = &[
         post: Some(post_pdfview),
     },
 ];
-
-fn dotfiles_dir() -> Option<std::path::PathBuf> {
-    // Try compile-time DOTFILES_DIR first
-    let compiled = env!("DOTFILES_DIR");
-    let dotfiles = Path::new(&compiled);
-    if dotfiles.exists() {
-        return Some(dotfiles.to_path_buf());
-    }
-    // Fallback: find dotfiles from current exe
-    std::env::current_exe().ok().and_then(|exe| {
-        exe.ancestors()
-            .find(|dir| dir.join("definitions.toml").exists())
-            .map(|p| p.to_path_buf())
-    })
-}
 
 fn cargo_bin_dir() -> Option<PathBuf> {
     // Derive from current exe (dotcli itself is in cargo bin)
@@ -269,7 +255,7 @@ fn parse_porcelain_z(out: &str) -> Vec<String> {
 }
 
 pub fn check() {
-    let Some(dotfiles) = dotfiles_dir() else {
+    let Some(dotfiles) = dotfiles_root() else {
         return;
     };
     let Some(cargo_bin) = cargo_bin_dir() else {
@@ -316,7 +302,7 @@ pub fn check() {
 }
 
 pub fn run() {
-    let dotfiles = dotfiles_dir().unwrap_or_else(|| {
+    let dotfiles = dotfiles_root().unwrap_or_else(|| {
         eprintln!("Error: dotfiles directory not found");
         std::process::exit(1);
     });

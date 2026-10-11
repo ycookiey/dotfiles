@@ -212,6 +212,12 @@ mod tests {
         Path::new("C:/Main/dotfiles")
     }
 
+    /// cli/definitions.toml of this checkout, independent of the test cwd.
+    fn load_definitions() -> Definitions {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("definitions.toml");
+        Definitions::load(Some(&path)).unwrap()
+    }
+
     fn nu_available() -> bool {
         Command::new("nu")
             .arg("--version")
@@ -224,7 +230,7 @@ mod tests {
 
     #[test]
     fn nushell_covers_definitions_present_in_powershell() {
-        let defs = Definitions::load();
+        let defs = load_definitions();
         let ps = powershell::generate(&defs, dotfiles_path());
         let nu = generate(&defs, dotfiles_path());
 
@@ -415,7 +421,7 @@ app_name = "Notion Calendar"
         if !nu_available() {
             return;
         }
-        let defs = Definitions::load();
+        let defs = load_definitions();
         let nu_src = generate(&defs, dotfiles_path());
         let path = std::env::temp_dir().join(format!(
             "dotcli-ide-check-{}.nu",

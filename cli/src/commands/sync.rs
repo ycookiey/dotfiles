@@ -63,12 +63,10 @@ fn resolve_dotfiles(arg: Option<String>) -> Result<PathBuf> {
     if let Some(p) = arg {
         return Ok(PathBuf::from(p));
     }
-    if let Ok(env) = std::env::var("DOTFILES_DIR") {
-        if !env.is_empty() {
-            return Ok(PathBuf::from(env));
-        }
+    match crate::paths::dotfiles_root() {
+        Some(p) => Ok(p),
+        None => bail!("dotfiles root not found (DOTFILES_DIR unset); pass --dot <path>"),
     }
-    bail!("DOTFILES_DIR not set; pass --dot <path>")
 }
 
 // --- 1) Claude settings.json merge ---
