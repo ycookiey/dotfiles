@@ -4,7 +4,7 @@
 use memchr::memmem;
 use rayon::prelude::*;
 use serde::de::{Deserialize, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::fs;
@@ -27,6 +27,9 @@ struct Request {
     delta_cc: i64,
     /// Index of the file the requestId was first seen in.
     file_idx: usize,
+    /// tool_key_of(&tools), kept in step with `tools` so the reports do not
+    /// sort and join the names again for every request.
+    tool_key: String,
 }
 
 /// One tool_use block, keeping only the input fields the reports read
@@ -53,6 +56,7 @@ impl Request {
     /// appended (a tool_use id already present is skipped) and usage is taken
     /// from the later line.
     fn merge_line(&mut self, later: Request) {
+        let tool_count = self.tools.len();
         for t in later.tools {
             let dup = t
                 .id
@@ -62,23 +66,31 @@ impl Request {
                 self.tools.push(t);
             }
         }
+        if self.tools.len() != tool_count {
+            self.tool_key = tool_key_of(&self.tools);
+        }
         self.input = later.input;
         self.output = later.output;
         self.cache_read = later.cache_read;
         self.cache_create = later.cache_create;
     }
 
-    /// Tool combination key: ["Edit", "Read"] -> "Edit+Read"
-    /// No tools -> "(response)"
-    fn tool_key(&self) -> String {
-        if self.tools.is_empty() {
-            "(response)".to_string()
-        } else {
-            let mut names: Vec<&str> = self.tools.iter().map(|t| t.name.as_str()).collect();
-            names.sort();
-            names.dedup();
-            names.join("+")
-        }
+    /// Tool combination key (see tool_key_of).
+    fn tool_key(&self) -> &str {
+        &self.tool_key
+    }
+}
+
+/// Tool combination key: ["Edit", "Read"] -> "Edit+Read"
+/// No tools -> "(response)"
+fn tool_key_of(tools: &[ToolUse]) -> String {
+    if tools.is_empty() {
+        "(response)".to_string()
+    } else {
+        let mut names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+        names.sort();
+        names.dedup();
+        names.join("+")
     }
 }
 
@@ -555,10 +567,11 @@ fn parse_line(line: &mut [u8], buffers: &mut simd_json::Buffers) -> Option<Reque
                 query: input.query.into_string(),
             })
         })
-        .collect();
+        .collect::<Vec<_>>();
 
     Some(Request {
         req_id,
+        tool_key: tool_key_of(&tools),
         tools,
         input: usage.input_tokens.0.unwrap_or(0),
         output: usage.output_tokens.0.unwrap_or(0),
@@ -1175,117 +1188,116 @@ fn top_level_requests<'a>(files: &[PathBuf], requests: &'a [Request]) -> Vec<&'a
     requests.iter().filter(|r| top[r.file_idx]).collect()
 }
 
-/// cmd_session: analyze session logs (full report).
-fn cmd_session(mode: &str, value: &str, project: Option<&str>) -> Value {
-    let Collected { files, session_count, parsed: ParsedLogs { requests, sessions } } =
-        match collect_requests(mode, value, project) {
-            Some(x) => x,
-            None => return json!({"error": "no sessions found"}),
-        };
-
-    let is_single_session = mode == "session";
-
-    let (growth, compactions) = if is_single_session {
-        let top = top_level_requests(&files, &requests);
-        (context_growth(&top), detect_compactions(&top))
-    } else {
-        (json!([]), json!([]))
-    };
-
-    let (startup_costs, per_session_max) = per_session_stats(&files, &sessions);
-
-    json!({
-        "sessions_analyzed": session_count,
-        "total_requests": requests.len(),
-        "by_tool": aggregate_by_tool(&requests),
-        "top_reads": aggregate_top_reads(&requests),
-        "large_operations": detect_large_ops(&requests),
-        "large_responses": detect_large_responses(&requests),
-        "duplicate_reads": detect_dup_reads(&requests),
-        "context_growth": growth,
-        "compactions": compactions,
-        "per_session_max_ctx": per_session_max,
-        "startup_costs": startup_costs,
-        "toolsearch_breakdown": aggregate_toolsearch(&requests),
-    })
+/// What the report sections are built from.
+struct SectionInput<'a> {
+    files: &'a [PathBuf],
+    requests: &'a [Request],
+    sessions: &'a [SessionCtx],
+    /// `--session ID`: growth and compactions are built only for one session.
+    single_session: bool,
 }
 
-/// cmd_session_section: emit a single section. Output JSON keeps the same key
-/// names as cmd_session so token-audit-format can render it without changes.
-fn cmd_session_section(
-    section: &str,
-    mode: &str,
-    value: &str,
-    project: Option<&str>,
-) -> Value {
+/// A section's report keys with their values, in the order it emits them.
+type SectionKeys = Vec<(&'static str, Value)>;
+
+/// `token-audit session SECTION`: each section's name and builder, in the
+/// order the unknown-section error lists them.
+const SECTIONS: &[(&str, fn(&SectionInput) -> SectionKeys)] = &[
+    ("by-tool", |s| vec![("by_tool", aggregate_by_tool(s.requests))]),
+    ("top-reads", |s| vec![("top_reads", aggregate_top_reads(s.requests))]),
+    ("duplicates", |s| vec![("duplicate_reads", detect_dup_reads(s.requests))]),
+    ("large-ops", |s| vec![("large_operations", detect_large_ops(s.requests))]),
+    ("large-responses", |s| vec![("large_responses", detect_large_responses(s.requests))]),
+    ("toolsearch", |s| vec![("toolsearch_breakdown", aggregate_toolsearch(s.requests))]),
+    ("startup", section_startup),
+    ("growth", section_growth),
+];
+
+/// Key order of the full report, which holds every section's keys except
+/// growth's "note".
+const FULL_REPORT_KEYS: &[&str] = &[
+    "by_tool",
+    "top_reads",
+    "large_operations",
+    "large_responses",
+    "duplicate_reads",
+    "context_growth",
+    "compactions",
+    "per_session_max_ctx",
+    "startup_costs",
+    "toolsearch_breakdown",
+];
+
+fn section_startup(s: &SectionInput) -> SectionKeys {
+    let (startup_costs, per_session_max) = per_session_stats(s.files, s.sessions);
+    vec![("startup_costs", startup_costs), ("per_session_max_ctx", per_session_max)]
+}
+
+/// growth/compactions are only meaningful for a single session; other modes
+/// get empty lists, plus a note when the section is asked for alone.
+fn section_growth(s: &SectionInput) -> SectionKeys {
+    if s.single_session {
+        let top = top_level_requests(s.files, s.requests);
+        vec![("context_growth", context_growth(&top)), ("compactions", detect_compactions(&top))]
+    } else {
+        vec![
+            ("context_growth", json!([])),
+            ("compactions", json!([])),
+            ("note", json!("growth requires --session ID")),
+        ]
+    }
+}
+
+/// Every section's keys in FULL_REPORT_KEYS order (growth's note dropped).
+fn full_report_keys(input: &SectionInput) -> Map<String, Value> {
+    let mut built: HashMap<&str, Value> =
+        SECTIONS.iter().flat_map(|(_, build)| build(input)).collect();
+    FULL_REPORT_KEYS
+        .iter()
+        .map(|&key| {
+            let value = built.remove(key).expect("FULL_REPORT_KEYS names only keys a section emits");
+            (key.to_string(), value)
+        })
+        .collect()
+}
+
+/// cmd_session: analyze session logs. With `section` None the full report,
+/// otherwise that section alone under the same key names, so
+/// token-audit-format renders either. An unknown section is reported only
+/// after the logs are found (no logs: "no sessions found").
+fn cmd_session(section: Option<&str>, mode: &str, value: &str, project: Option<&str>) -> Value {
     let Collected { files, session_count, parsed: ParsedLogs { requests, sessions } } =
         match collect_requests(mode, value, project) {
             Some(x) => x,
             None => return json!({"error": "no sessions found"}),
         };
 
-    let is_single_session = mode == "session";
+    let input = SectionInput {
+        files: &files,
+        requests: &requests,
+        sessions: &sessions,
+        single_session: mode == "session",
+    };
 
-    let mut out = json!({
-        "sessions_analyzed": session_count,
-        "total_requests": requests.len(),
-    });
-    let obj = out.as_object_mut().unwrap();
-
+    let mut out = Map::new();
+    out.insert("sessions_analyzed".into(), json!(session_count));
+    out.insert("total_requests".into(), json!(requests.len()));
     match section {
-        "by-tool" => {
-            obj.insert("by_tool".into(), aggregate_by_tool(&requests));
-        }
-        "top-reads" => {
-            obj.insert("top_reads".into(), aggregate_top_reads(&requests));
-        }
-        "duplicates" => {
-            obj.insert("duplicate_reads".into(), detect_dup_reads(&requests));
-        }
-        "large-ops" => {
-            obj.insert("large_operations".into(), detect_large_ops(&requests));
-        }
-        "large-responses" => {
-            obj.insert("large_responses".into(), detect_large_responses(&requests));
-        }
-        "toolsearch" => {
-            obj.insert(
-                "toolsearch_breakdown".into(),
-                aggregate_toolsearch(&requests),
-            );
-        }
-        "startup" => {
-            let (sc, ms) = per_session_stats(&files, &sessions);
-            obj.insert("startup_costs".into(), sc);
-            obj.insert("per_session_max_ctx".into(), ms);
-        }
-        "growth" => {
-            // growth/compactions only meaningful for a single session
-            if is_single_session {
-                let top = top_level_requests(&files, &requests);
-                obj.insert("context_growth".into(), context_growth(&top));
-                obj.insert("compactions".into(), detect_compactions(&top));
-            } else {
-                obj.insert("context_growth".into(), json!([]));
-                obj.insert("compactions".into(), json!([]));
-                obj.insert(
-                    "note".into(),
-                    json!("growth requires --session ID"),
-                );
+        None => out.extend(full_report_keys(&input)),
+        Some(name) => match SECTIONS.iter().find(|(n, _)| *n == name) {
+            Some((_, build)) => {
+                out.extend(build(&input).into_iter().map(|(k, v)| (k.to_string(), v)))
             }
-        }
-        _ => {
-            return json!({
-                "error": format!("unknown section: {}", section),
-                "available": [
-                    "by-tool", "top-reads", "duplicates",
-                    "large-ops", "large-responses", "toolsearch",
-                    "startup", "growth"
-                ]
-            });
-        }
+            None => {
+                let available: Vec<&str> = SECTIONS.iter().map(|(n, _)| *n).collect();
+                return json!({
+                    "error": format!("unknown section: {}", name),
+                    "available": available
+                });
+            }
+        },
     }
-    out
+    Value::Object(out)
 }
 
 /// Aggregate delta_cc and output by tool combination key.
@@ -1294,12 +1306,11 @@ fn cmd_session_section(
 const BY_TOOL_TOP_N: usize = 15;
 
 fn aggregate_by_tool(requests: &[Request]) -> Value {
-    let mut by_tool: HashMap<String, (i64, i64)> = HashMap::new(); // tool -> (delta_cc, total_output)
+    let mut by_tool: HashMap<&str, (i64, i64)> = HashMap::new(); // tool -> (delta_cc, total_output)
     let mut total: i64 = 0;
 
     for r in requests {
-        let key = r.tool_key();
-        let entry = by_tool.entry(key).or_default();
+        let entry = by_tool.entry(r.tool_key()).or_default();
         entry.0 += r.delta_cc;
         entry.1 += r.output;
         total += r.delta_cc;
@@ -1307,7 +1318,7 @@ fn aggregate_by_tool(requests: &[Request]) -> Value {
 
     let mut raw: Vec<(String, i64, i64)> = by_tool
         .into_iter()
-        .map(|(tool, (cc, out))| (tool, cc, out))
+        .map(|(tool, (cc, out))| (tool.to_string(), cc, out))
         .collect();
     // Tie-break on the tool key so equal costs (and the top-N cut) do not follow HashMap order.
     raw.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
@@ -1356,7 +1367,7 @@ fn aggregate_by_tool(requests: &[Request]) -> Value {
 
 /// Breakdown of ToolSearch queries by delta_cc cost.
 /// A request's delta_cc is split evenly across its ToolSearch calls, as
-/// aggregate_top_reads does for Read.
+/// read_stats does for Read.
 fn aggregate_toolsearch(requests: &[Request]) -> Value {
     let mut by_query: HashMap<String, (i64, i64)> = HashMap::new(); // query -> (delta_cc, count)
 
@@ -1402,9 +1413,19 @@ fn str_field<'a>(v: &'a Value, key: &str) -> &'a str {
     v[key].as_str().unwrap_or("")
 }
 
-/// Top 10 files by Read consumption. Distribute delta_cc across reads.
-fn aggregate_top_reads(requests: &[Request]) -> Value {
-    let mut by_file: HashMap<String, (i64, i64)> = HashMap::new(); // file -> (count, total_cache_create)
+/// Read cost of one file: how often it was read and the delta_cc charged to it.
+struct ReadStat<'a> {
+    file: &'a str,
+    count: i64,
+    total_cc: i64,
+}
+
+/// Read cost per file, highest total first (ties by file). A request's
+/// delta_cc is split evenly across its Read calls, each share truncated to
+/// an integer; Reads whose file_path is not a string are counted in the
+/// split but not reported.
+fn read_stats(requests: &[Request]) -> Vec<ReadStat<'_>> {
+    let mut by_file: HashMap<&str, (i64, i64)> = HashMap::new(); // file -> (count, total_cache_create)
 
     for r in requests {
         let read_count = r.tools.iter().filter(|t| t.name == "Read").count();
@@ -1417,7 +1438,7 @@ fn aggregate_top_reads(requests: &[Request]) -> Value {
         for tool in &r.tools {
             if tool.name == "Read" {
                 if let Some(fp) = tool.file_path.as_str() {
-                    let entry = by_file.entry(fp.to_string()).or_default();
+                    let entry = by_file.entry(fp).or_default();
                     entry.0 += 1;
                     entry.1 += cc_per_read as i64;
                 }
@@ -1425,25 +1446,31 @@ fn aggregate_top_reads(requests: &[Request]) -> Value {
         }
     }
 
-    let mut items: Vec<_> = by_file
+    let mut stats: Vec<ReadStat> = by_file
         .into_iter()
-        .map(|(file, (count, total_cc))| {
+        .map(|(file, (count, total_cc))| ReadStat { file, count, total_cc })
+        .collect();
+    stats.sort_by(|a, b| b.total_cc.cmp(&a.total_cc).then_with(|| a.file.cmp(b.file)));
+    stats
+}
+
+/// Report items of read stats.
+fn read_stats_json<'a>(stats: impl Iterator<Item = ReadStat<'a>>) -> Value {
+    let items: Vec<Value> = stats
+        .map(|s| {
             json!({
-                "file": file,
-                "count": count,
-                "total_cache_create": total_cc
+                "file": s.file,
+                "count": s.count,
+                "total_cache_create": s.total_cc
             })
         })
         .collect();
-
-    items.sort_by(|a, b| {
-        let a_total = b["total_cache_create"].as_i64().unwrap_or(0);
-        let b_total = a["total_cache_create"].as_i64().unwrap_or(0);
-        a_total.cmp(&b_total).then_with(|| str_field(a, "file").cmp(str_field(b, "file")))
-    });
-
-    items.truncate(10);
     json!(items)
+}
+
+/// Top 10 files by Read consumption.
+fn aggregate_top_reads(requests: &[Request]) -> Value {
+    read_stats_json(read_stats(requests).into_iter().take(10))
 }
 
 /// Longest label kept for a request's file in the large-op/response reports.
@@ -1529,46 +1556,7 @@ fn detect_large_ops(requests: &[Request]) -> Value {
 
 /// Detect duplicate reads (count > 1).
 fn detect_dup_reads(requests: &[Request]) -> Value {
-    let mut by_file: HashMap<String, (i64, i64)> = HashMap::new();
-
-    for r in requests {
-        let read_count = r.tools.iter().filter(|t| t.name == "Read").count();
-        if read_count == 0 {
-            continue;
-        }
-
-        let cc_per_read = r.delta_cc as f64 / read_count as f64;
-
-        for tool in &r.tools {
-            if tool.name == "Read" {
-                if let Some(fp) = tool.file_path.as_str() {
-                    let entry = by_file.entry(fp.to_string()).or_default();
-                    entry.0 += 1;
-                    entry.1 += cc_per_read as i64;
-                }
-            }
-        }
-    }
-
-    let mut items: Vec<_> = by_file
-        .into_iter()
-        .filter(|(_, (count, _))| *count > 1)
-        .map(|(file, (count, total_cc))| {
-            json!({
-                "file": file,
-                "count": count,
-                "total_cache_create": total_cc
-            })
-        })
-        .collect();
-
-    items.sort_by(|a, b| {
-        let a_total = b["total_cache_create"].as_i64().unwrap_or(0);
-        let b_total = a["total_cache_create"].as_i64().unwrap_or(0);
-        a_total.cmp(&b_total).then_with(|| str_field(a, "file").cmp(str_field(b, "file")))
-    });
-
-    json!(items)
+    read_stats_json(read_stats(requests).into_iter().filter(|s| s.count > 1))
 }
 
 /// Context growth curve (first 5 + every 50).
@@ -1714,7 +1702,7 @@ fn cmd_compare(id1: &str, id2: &str) -> Value {
 fn tool_breakdown(requests: &[Request]) -> Value {
     // BTreeMap: serde_json keeps insertion order (preserve_order), so a HashMap here would
     // print the tools in a different order on every run.
-    let mut map: BTreeMap<String, i64> = BTreeMap::new();
+    let mut map: BTreeMap<&str, i64> = BTreeMap::new();
     for r in requests {
         *map.entry(r.tool_key()).or_default() += r.delta_cc;
     }
@@ -1741,15 +1729,7 @@ pub fn run(args: &[String]) {
                 _ => (None, rest),
             };
             let sa = parse_session_args(opts, "all", "");
-            let result = match section {
-                None => cmd_session(&sa.mode, &sa.value, sa.project.as_deref()),
-                Some(sec) => cmd_session_section(
-                    sec,
-                    &sa.mode,
-                    &sa.value,
-                    sa.project.as_deref(),
-                ),
-            };
+            let result = cmd_session(section, &sa.mode, &sa.value, sa.project.as_deref());
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         Some("compare") => {
@@ -1764,7 +1744,7 @@ pub fn run(args: &[String]) {
             // No mode flag means the usage's default of --last 10, even with --project.
             let sa = parse_session_args(&args[1..], "last", "10");
             let static_result = cmd_static();
-            let session_result = cmd_session(&sa.mode, &sa.value, sa.project.as_deref());
+            let session_result = cmd_session(None, &sa.mode, &sa.value, sa.project.as_deref());
             print!("{}", super::token_audit_format::format_static(&static_result));
             println!();
             print!("{}", super::token_audit_format::format_session(&session_result));
@@ -2368,6 +2348,7 @@ mod tests {
         let usage = &v["message"]["usage"];
         Some(Request {
             req_id,
+            tool_key: tool_key_of(&tools),
             tools,
             input: usage["input_tokens"].as_i64().unwrap_or(0),
             output: usage["output_tokens"].as_i64().unwrap_or(0),
@@ -2667,5 +2648,36 @@ mod tests {
 
         let sa = parse_session_args(&strings(&["--session", "abc"]), "last", "10");
         assert_eq!((sa.mode.as_str(), sa.value.as_str()), ("session", "abc"));
+    }
+
+    #[test]
+    fn full_report_keys_are_exactly_the_sections_keys_without_the_note() {
+        for single_session in [true, false] {
+            let input = SectionInput { files: &[], requests: &[], sessions: &[], single_session };
+            let mut emitted: Vec<&str> = SECTIONS
+                .iter()
+                .flat_map(|(_, build)| build(&input))
+                .map(|(k, _)| k)
+                .filter(|&k| k != "note")
+                .collect();
+            emitted.sort();
+            let mut want = FULL_REPORT_KEYS.to_vec();
+            want.sort();
+            assert_eq!(emitted, want);
+            let full = full_report_keys(&input);
+            assert_eq!(full.keys().map(String::as_str).collect::<Vec<_>>(), FULL_REPORT_KEYS);
+        }
+    }
+
+    #[test]
+    fn tool_key_follows_tools_added_by_later_lines() {
+        let mut req = typed_parse_line(&log_line("r", text_block(), (0, 1, 0, 0))).unwrap();
+        assert_eq!(req.tool_key(), "(response)");
+        req.merge_line(typed_parse_line(&log_line("r", tool_block("t1", "Read", json!({})), (0, 1, 0, 0))).unwrap());
+        req.merge_line(typed_parse_line(&log_line("r", tool_block("t2", "Edit", json!({})), (0, 1, 0, 0))).unwrap());
+        // A repeated tool_use id adds nothing.
+        req.merge_line(typed_parse_line(&log_line("r", tool_block("t1", "Read", json!({})), (0, 1, 0, 0))).unwrap());
+        assert_eq!(req.tool_key(), "Edit+Read");
+        assert_eq!(req.tool_key, tool_key_of(&req.tools));
     }
 }
