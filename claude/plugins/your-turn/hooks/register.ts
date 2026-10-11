@@ -185,7 +185,42 @@ async function judge($: Engine, id: string, reason: string, answer: string): Pro
   return record($, file, { ...base, decision: 'user', ...extra })
 }
 
+type Verdict = { at: number; turnId: string; decision: string; tasks?: number; crons?: number }
+
+// On load (session start, resume, /reload-plugins), redraws the line from
+// the session's last verdict: a reload keeps the line the old module drew,
+// in its old wording and with its timer stopped.
+async function restore($: Engine): Promise<void> {
+  const dir = await stateDir($)
+  if (dir === undefined) return
+  const session = stem(await $.session.id())
+  const log = await $.fs.read(`${dir}/${session}.verdicts.jsonl`).then(String, () => '')
+  const last = log.trim().split('\n').pop()
+  if (turnId !== undefined) return // a turn began meanwhile; it draws its own
+  let v: Verdict | undefined
+  try {
+    v = last ? (JSON.parse(last) as Verdict) : undefined
+  } catch {
+    v = undefined
+  }
+  const kind: Kind | undefined =
+    v?.decision === 'user' ? 'user' : v?.decision === 'error' ? 'error' : v?.decision === 'refusal' ? 'refusal' : undefined
+  if (v === undefined || kind === undefined) {
+    $.ui.status(undefined)
+    return
+  }
+  turnId = v.turnId
+  endedAt = v.at
+  await show($, v.turnId, kind, (v.tasks ?? 0) + (v.crons ?? 0))
+}
+
 export const register: Register = on => {
+  on('session.start', async ($, e, next) => {
+    const done = await next(e)
+    void restore($).catch(() => undefined)
+    return done
+  })
+
   on('turn.start', async ($, e, next) => {
     turnId = e.turnId
     startedAt = await $.clock.now()
