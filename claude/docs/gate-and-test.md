@@ -242,3 +242,12 @@ fixture drift 修正時、`as any` / assertion 削除 / cast 追加は「signal 
 - 分岐点は状態を持つ瞬間 (飛行中の弾・遅延効果の待ち・跳躍中・回収中 等) を選び、各瞬間がどれかの scenario で起きたことを必須にする (起きなければ NG = 空回り検出)
 - copy の過不足は変異で確かめる: field ごとに copy を壊し (共有 / null) NG が出るか見る。出ない field は、共有しても再代入で切れるなど実害が無いか理由を確かめる
 - 実例: tick sim の World.clone gate。当初は複製だけ続ける形で、弾・event 配列の共有を見逃した (変異で発覚)
+
+## 26. 読み込み 0 件で黙る runner = quiet/negative case が空振り PASS
+
+検査対象 (規則・fixture・case) を folder から読む runner が、読めない・0 件を黙って飛ばすと、「何も起きない」を期待する case だけ PASS し続ける。positive case の NG は個々の規則の不具合に見え、原因が読み込みと気づきにくい。
+
+- 正: 読み込み 0 件はエラー。case が名指しする対象 (規則名等) が読み込み済みに無ければ NG
+- 任意の folder (project 側の設定等) の「無い」は黙ってよい。空パス・not-a-dir・権限エラーは問題として出す
+- 罠 (Rust/Windows): 相対パスの `parent()` を重ねると空パス `""` (`Path::new("tests/x.toml").parent().parent()`)。`fs::read_dir("")` は存在しない folder と同じ `NotFound` (os error 3) を返し、kind では区別不可。親を取る前に `std::path::absolute`
+- 実例: hook 規則の test runner。規則 folder 直下から相対パスで渡すと規則 0 件 → context 期待の全 case が NG、quiet 期待の全 case が空振り OK
