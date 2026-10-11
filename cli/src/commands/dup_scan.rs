@@ -58,7 +58,6 @@ struct Cluster {
     gap_tokens: usize,   // substitution-gap tokens
     line_count: usize,
     occurrences: Vec<Occurrence>,
-    preview: String,
 }
 
 struct Args {
@@ -892,18 +891,26 @@ fn extend_right(
     (w, gaps)
 }
 
+/// The first MAX_PREVIEW_LINES lines of start_line..=end_line (1-based), then a count of the
+/// rest. end_line is clamped to the file's line count. Reads only up to end_line instead of
+/// splitting the whole file.
 fn build_preview(file: &FileTokens, start_line: u32, end_line: u32) -> String {
-    let lines: Vec<&str> = file.src.lines().collect();
+    const MAX_PREVIEW_LINES: usize = 6;
     let s = (start_line as usize).saturating_sub(1);
-    let e = (end_line as usize).min(lines.len());
+    let e = end_line as usize;
     if s >= e {
         return String::new();
     }
-    const MAX_PREVIEW_LINES: usize = 6;
-    let actual_e = (s + MAX_PREVIEW_LINES).min(e);
-    let mut preview = lines[s..actual_e].join("\n");
-    if e > actual_e {
-        preview.push_str(&format!("\n... ({} more lines)", e - actual_e));
+    let mut lines = file.src.lines().skip(s);
+    let shown: Vec<&str> = lines.by_ref().take(MAX_PREVIEW_LINES.min(e - s)).collect();
+    if shown.is_empty() {
+        return String::new();
+    }
+    let mut preview = shown.join("\n");
+    // Lines left up to end_line, stopping at the end of the file.
+    let more = lines.take(e - s - shown.len()).count();
+    if more > 0 {
+        preview.push_str(&format!("\n... ({} more lines)", more));
     }
     preview
 }
@@ -994,17 +1001,12 @@ fn build_clusters(
                 return None;
             }
 
-            let first_occ = &occurrences[0];
-            let preview =
-                build_preview(&files[first_occ.file_idx], first_occ.start_line, first_occ.end_line);
-
             Some(Cluster {
                 token_count: ext_len,
                 match_tokens,
                 gap_tokens: gaps,
                 line_count,
                 occurrences,
-                preview,
             })
         })
         .collect();
@@ -1098,8 +1100,12 @@ fn display_path(p: &Path, root: &Path) -> String {
     }
 }
 
+/// Builds the preview here rather than in build_clusters, so only the clusters shown under
+/// --top read their source lines.
 fn cluster_to_json(c: &Cluster, files: &[FileTokens], root: &Path) -> Value {
     let match_type = if c.gap_tokens == 0 { "exact" } else { "type3" };
+    let first = &c.occurrences[0];
+    let preview = build_preview(&files[first.file_idx], first.start_line, first.end_line);
     json!({
         "match_type": match_type,
         "token_count": c.token_count,
@@ -1113,7 +1119,7 @@ fn cluster_to_json(c: &Cluster, files: &[FileTokens], root: &Path) -> Value {
             "start_line": o.start_line,
             "end_line": o.end_line,
         })).collect::<Vec<_>>(),
-        "preview": c.preview,
+        "preview": preview,
     })
 }
 
@@ -1390,7 +1396,7 @@ mod subsumption_tests {
                 }
             })
             .collect();
-        Cluster { token_count: 0, match_tokens: 0, gap_tokens: 0, line_count: 0, occurrences, preview: String::new() }
+        Cluster { token_count: 0, match_tokens: 0, gap_tokens: 0, line_count: 0, occurrences }
     }
 
     #[test]
@@ -1447,5 +1453,63 @@ mod subsumption_tests {
         let got: Vec<_> = kept.iter().map(occs).collect();
         let want: Vec<_> = [0, 1, 3, 4, 5].iter().map(|&i| input[i]).collect();
         assert_eq!(got, want);
+    }
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::*;
+
+    /// The preview as built by splitting the whole file into lines.
+    fn reference(src: &str, start_line: u32, end_line: u32) -> String {
+        let lines: Vec<&str> = src.lines().collect();
+        let s = (start_line as usize).saturating_sub(1);
+        let e = (end_line as usize).min(lines.len());
+        if s >= e {
+            return String::new();
+        }
+        let actual_e = (s + 6).min(e);
+        let mut preview = lines[s..actual_e].join("\n");
+        if e > actual_e {
+            preview.push_str(&format!("\n... ({} more lines)", e - actual_e));
+        }
+        preview
+    }
+
+    #[test]
+    fn matches_whole_file_split_for_every_range() {
+        let numbered = |n: usize, eol: &str, last_eol: bool| {
+            let mut s: String = (1..=n).map(|i| format!("line {i}{eol}")).collect();
+            if !last_eol {
+                s.truncate(s.len() - eol.len());
+            }
+            s
+        };
+        let sources = [
+            String::new(),
+            "\n".to_string(),
+            numbered(3, "\n", true),
+            numbered(12, "\n", false),
+            numbered(12, "\r\n", true),
+            "a\n\nb\r\n\r\nc".to_string(),
+        ];
+        for src in sources {
+            let file = FileTokens {
+                path: PathBuf::new(),
+                tokens: Vec::new(),
+                src: src.clone(),
+                ext: String::new(),
+                lexer: "",
+            };
+            for start in 0..16u32 {
+                for end in 0..16u32 {
+                    assert_eq!(
+                        build_preview(&file, start, end),
+                        reference(&src, start, end),
+                        "src={src:?} start={start} end={end}"
+                    );
+                }
+            }
+        }
     }
 }
