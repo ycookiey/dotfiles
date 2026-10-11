@@ -4,7 +4,21 @@ $alias:tp = 'Test-Path'
 $alias:sc = 'Set-Content'
 function wh { Write-Host @args }
 function mkd($p) { [void](ni -I Directory $p -Force) }
-function mkl($p,$t) { [void](ni -I SymbolicLink $p -Target $t -Force) }
+# リンク先 $t が無ければ警告してリンクを作らない (New-Item はリンク切れでも黙って作る)。
+# $t 自身がリンク切れのリンクでも Test-Path は True を返すので、symlink / junction を辿って最終的な実体まで確かめる
+function mkl($p,$t) {
+    $cur = $t; $it = $null
+    for ($n = 0; $n -lt 32; $n++) {  # 循環リンク対策の上限
+        $it = Get-Item -LiteralPath $cur -Force -ea 0
+        if (!$it -or $it.LinkType -notin 'SymbolicLink', 'Junction') { break }
+        $next = @($it.Target)[0]
+        # 相対 symlink の Target はリンクのある dir が起点
+        if (![IO.Path]::IsPathRooted($next)) { $next = Join-Path (Split-Path $cur) $next }
+        $cur = $next
+    }
+    if (!$it -or $it.LinkType -in 'SymbolicLink', 'Junction') { Write-Warning "mkl: target missing: $t"; return }
+    [void](ni -I SymbolicLink $p -Target $t -Force)
+}
 function isadmin { ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) }
 function elevate($args_str) { start pwsh -Verb RunAs -Arg "-ExecutionPolicy Bypass $args_str" -Wait; exit }
 function Start-App($Name) {
