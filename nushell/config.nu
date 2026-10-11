@@ -96,7 +96,7 @@ def chrome-yatcy [
         "--no-first-run"
         "--no-default-browser-check"
     ] ++ $extra)
-    job spawn { ^$chrome ...$chrome_args } | ignore
+    _dotcli_launch $chrome ...$chrome_args
 }
 
 # --- Dotfiles auto-update (background git-prompt) ---
