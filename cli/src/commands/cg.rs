@@ -1,3 +1,4 @@
+use super::claude_launch::claude_args as launch_args;
 use crate::protocol::{CLAUDE_PROVIDER_ENV, ExecCommand, Message, MessageLevel, ShellAction};
 use std::collections::HashMap;
 
@@ -37,24 +38,8 @@ pub fn run(args: &[String]) {
     env.insert("ANTHROPIC_DEFAULT_SONNET_MODEL".into(), "glm-4.7".into());
     env.insert("ANTHROPIC_DEFAULT_HAIKU_MODEL".into(), "glm-4.5-air".into());
 
-    let mut claude_args: Vec<String> = Vec::new();
-    claude_args.push("--model".into());
-    claude_args.push("claude-opus-4-6".into());
-    let rest: Vec<String>;
-    let safe_mode = args.first().map(|s| s.as_str()) == Some("s");
-    if matches!(args.first().map(|s| s.as_str()), Some("r" | "rs")) {
-        if args[0] != "rs" {
-            claude_args.push("--dangerously-skip-permissions".into());
-        }
-        claude_args.push("/resume".into());
-        rest = args[1..].to_vec();
-    } else if safe_mode {
-        rest = args[1..].to_vec();
-    } else {
-        claude_args.push("--dangerously-skip-permissions".into());
-        rest = args.to_vec();
-    }
-    claude_args.extend(rest);
+    let mut claude_args: Vec<String> = vec!["--model".into(), "claude-opus-4-6".into()];
+    claude_args.extend(launch_args(args));
 
     let unset_env = CLAUDE_PROVIDER_ENV.iter().map(|s| s.to_string()).collect();
 

@@ -1,68 +1,10 @@
-use std::process::{Command, Stdio};
+use super::fd_fzf::fd_fzf_pick;
+use std::process::Command;
 
 /// fd でカレント配下のファイルを列挙 → fzf で選択 → nvim で開く
 /// 追加 args は fd にそのまま渡る（例: `vf .rs` で絞り込み）
 pub fn run(args: &[String]) {
-    let fd = Command::new("fd")
-        .args([
-            "--type", "f",
-            "--hidden",
-            "--exclude", ".git",
-            "--exclude", "node_modules",
-            "--exclude", "target",
-        ])
-        .args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn();
-
-    let fd = match fd {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Failed to spawn fd: {e}");
-            return;
-        }
-    };
-
-    let fd_stdout = match fd.stdout {
-        Some(s) => s,
-        None => {
-            eprintln!("fd stdout unavailable");
-            return;
-        }
-    };
-
-    let fzf = Command::new("fzf")
-        .args(["--height", "40%", "--reverse", "--prompt", "vf> "])
-        .stdin(fd_stdout)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn();
-
-    let fzf = match fzf {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Failed to spawn fzf: {e}");
-            return;
-        }
-    };
-
-    let output = match fzf.wait_with_output() {
-        Ok(o) => o,
-        Err(e) => {
-            eprintln!("fzf wait failed: {e}");
-            return;
-        }
-    };
-
-    if !output.status.success() {
-        return;
+    if let Some(selected) = fd_fzf_pick("f", "vf> ", args) {
+        let _ = Command::new("nvim").arg(&selected).status();
     }
-
-    let selected = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if selected.is_empty() {
-        return;
-    }
-
-    let _ = Command::new("nvim").arg(&selected).status();
 }

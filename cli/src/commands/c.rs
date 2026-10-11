@@ -1,8 +1,9 @@
+use super::claude_launch::{SAFE_ARG, SKIP_PERMISSIONS};
 use super::resume;
 use crate::protocol::{CLAUDE_PROVIDER_ENV, ExecCommand, Message, MessageLevel, ShellAction};
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn claude_dir() -> PathBuf {
@@ -21,7 +22,9 @@ pub fn run(args: &[String]) {
 
     let mut claude_args: Vec<String> = args.to_vec();
 
-    // Determine account number
+    // Determine account number; `recommended` is read only when auto-detecting,
+    // the only case that uses it (account pick and the "(recommended)" label).
+    let mut recommended: Option<Recommended> = None;
     let (account, shifted) = if args
         .first()
         .map(|s| s.chars().all(|c| c.is_ascii_digit()))
@@ -33,7 +36,8 @@ pub fn run(args: &[String]) {
         (Some(n), true)
     } else {
         // Auto-detect: recommended (within 5 min) or last used
-        let picked = pick_account(&d, &last_file);
+        recommended = read_recommended(&d);
+        let picked = pick_account(recommended.as_ref(), &last_file);
         (picked, false)
     };
 
@@ -65,8 +69,10 @@ pub fn run(args: &[String]) {
     let mut messages: Vec<Message> = Vec::new();
     if let Some(ref n) = account {
         if !shifted {
-            let recommended = is_recommended(&d, n);
-            let text = if recommended {
+            let is_recommended = recommended
+                .as_ref()
+                .is_some_and(|r| r.fresh && r.account == *n);
+            let text = if is_recommended {
                 format!("Claude Acc {n} (recommended)")
             } else {
                 format!("Claude Acc {n}")
@@ -90,7 +96,7 @@ pub fn run(args: &[String]) {
     let unset_env: Vec<String> = CLAUDE_PROVIDER_ENV.iter().map(|s| s.to_string()).collect();
 
     // s → safe mode (no --dangerously-skip-permissions)
-    let safe_mode = claude_args.first().map(|s| s.as_str()) == Some("s");
+    let safe_mode = claude_args.first().map(|s| s.as_str()) == Some(SAFE_ARG);
     if safe_mode {
         claude_args.remove(0);
     }
@@ -115,7 +121,7 @@ pub fn run(args: &[String]) {
 
     // Default: add --dangerously-skip-permissions unless safe mode
     if !safe_mode {
-        claude_args.insert(0, "--dangerously-skip-permissions".into());
+        claude_args.insert(0, SKIP_PERMISSIONS.into());
     }
 
     let action = ShellAction {
@@ -169,22 +175,39 @@ fn save(name: &str, d: &PathBuf) {
     .print();
 }
 
-fn pick_account(d: &PathBuf, last_file: &PathBuf) -> Option<String> {
-    // Check recommended file (within 5 minutes)
-    let rf = d.join(".recommended");
-    if let Ok(content) = fs::read_to_string(&rf) {
-        let parts: Vec<&str> = content.split('\t').collect();
-        if parts.len() >= 2 {
-            if let Ok(ts) = parts[1].trim().parse::<u64>() {
-                let now = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs();
-                if now - ts < 300 {
-                    return Some(parts[0].trim().to_string());
-                }
-            }
-        }
+/// How long a `.recommended` entry stays valid, in seconds.
+const RECOMMENDED_TTL_SECS: u64 = 300;
+
+/// A parsed `<claude_dir>/.recommended` entry (`<account>\t<unix secs>`).
+struct Recommended {
+    account: String,
+    /// Written within `RECOMMENDED_TTL_SECS` (or with a timestamp in the future).
+    fresh: bool,
+}
+
+fn read_recommended(d: &Path) -> Option<Recommended> {
+    let content = fs::read_to_string(d.join(".recommended")).ok()?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    parse_recommended(&content, now)
+}
+
+fn parse_recommended(content: &str, now: u64) -> Option<Recommended> {
+    let mut parts = content.split('\t');
+    let account = parts.next()?.trim().to_string();
+    let ts = parts.next()?.trim().parse::<u64>().ok()?;
+    Some(Recommended {
+        account,
+        fresh: now.saturating_sub(ts) < RECOMMENDED_TTL_SECS,
+    })
+}
+
+fn pick_account(recommended: Option<&Recommended>, last_file: &PathBuf) -> Option<String> {
+    // Recommended account (within 5 minutes)
+    if let Some(r) = recommended.filter(|r| r.fresh) {
+        return Some(r.account.clone());
     }
 
     // Fallback: last used account
@@ -198,21 +221,39 @@ fn pick_account(d: &PathBuf, last_file: &PathBuf) -> Option<String> {
     }
 }
 
-fn is_recommended(d: &PathBuf, n: &str) -> bool {
-    let rf = d.join(".recommended");
-    if let Ok(content) = fs::read_to_string(&rf) {
-        let parts: Vec<&str> = content.split('\t').collect();
-        if parts.len() >= 2 {
-            if let Ok(ts) = parts[1].trim().parse::<u64>() {
-                let now = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs();
-                if now - ts < 300 && parts[0].trim() == n {
-                    return true;
-                }
-            }
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recommended_entry_parsing_and_freshness() {
+        let r = parse_recommended("2\t1000\n", 1299).unwrap();
+        assert_eq!(r.account, "2");
+        assert!(r.fresh);
+        assert!(!parse_recommended("2\t1000", 1300).unwrap().fresh);
+        // A timestamp ahead of the clock counts as fresh instead of wrapping around.
+        assert!(parse_recommended("3\t2000", 1000).unwrap().fresh);
+        assert!(parse_recommended("2", 1000).is_none());
+        assert!(parse_recommended("2\tnope", 1000).is_none());
     }
-    false
+
+    #[test]
+    fn pick_prefers_fresh_recommended_then_last_account() {
+        let dir = std::env::temp_dir().join(format!("dotcli-c-pick-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let last = dir.join(".last_account");
+        fs::write(&last, "5\n").unwrap();
+        let fresh = Recommended {
+            account: "2".into(),
+            fresh: true,
+        };
+        let stale = Recommended {
+            account: "2".into(),
+            fresh: false,
+        };
+        assert_eq!(pick_account(Some(&fresh), &last).as_deref(), Some("2"));
+        assert_eq!(pick_account(Some(&stale), &last).as_deref(), Some("5"));
+        assert_eq!(pick_account(None, &last).as_deref(), Some("5"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
 }
