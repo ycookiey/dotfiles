@@ -241,8 +241,17 @@ if ($script:IsInteractive) {
         $s -gt [IO.File]::GetLastWriteTimeUtc($global:_gitPromptDone) -and
             [DateTime]::UtcNow - $s -lt $global:_gitPromptGrace
     }
-    # 起動に成功したら $stamp を touch し @{Process; Out; Err} を返す。失敗時は 1 行表示して $null
+    # $stamp を touch してから起動し @{Process; Out; Err} を返す。失敗時は $stamp を元に戻し、1 行表示して $null。
+    # touch を起動より先にするのは、同時に開いた別 pane が起動の間 (数十 ms) に due と判定して二重に起動しないため。
+    # due 判定と touch の間は atomic でないので、ほぼ同時の判定どうしは両方通りうる (lock file は stale 時の回復が要るので使わない)
     function global:__dotcli_start([string[]]$a, [string]$stamp) {
+        $prev = $null
+        if ($stamp) {
+            try {
+                $prev = [IO.File]::Exists($stamp) ? [IO.File]::GetLastWriteTimeUtc($stamp) : [DateTime]::MinValue
+                [IO.File]::WriteAllBytes($stamp, [byte[]]@())
+            } catch {}
+        }
         try {
             $si = [Diagnostics.ProcessStartInfo]::new($global:_dotcli)
             foreach ($x in $a) { $si.ArgumentList.Add($x) }
@@ -254,10 +263,15 @@ if ($script:IsInteractive) {
             $pr = [Diagnostics.Process]::Start($si)
             $pr.StandardInput.Close()  # 子 (git / scoop / winget) が入力待ちで止まらないよう即 EOF
             # stdout/stderr は両方非同期で読む (片方を同期で読むと他方の pipe が詰まり deadlock)
-            $job = @{ Process = $pr; Out = $pr.StandardOutput.ReadToEndAsync(); Err = $pr.StandardError.ReadToEndAsync() }
-            if ($stamp) { try { [IO.File]::WriteAllBytes($stamp, [byte[]]@()) } catch {} }
-            $job
+            @{ Process = $pr; Out = $pr.StandardOutput.ReadToEndAsync(); Err = $pr.StandardError.ReadToEndAsync() }
         } catch {
+            # 起動できなかったのに間隔分 throttle されないよう、stamp を touch 前の状態に戻す
+            if ($null -ne $prev) {
+                try {
+                    if ($prev -eq [DateTime]::MinValue) { [IO.File]::Delete($stamp) }
+                    else { [IO.File]::SetLastWriteTimeUtc($stamp, $prev) }
+                } catch {}
+            }
             wh "`n✗ dotcli $($a[0]): failed to start ($($_.Exception.Message))" -Fo Red
         }
     }
@@ -287,6 +301,8 @@ if ($script:IsInteractive) {
             $global:j = $null
             # 結果 (updated / dirty / error / 出力なし) によらず完了を記録し、別 pane の sync の待ちを解く
             try { [IO.File]::WriteAllBytes($global:_gitPromptDone, [byte[]]@()) } catch {}
+            # done の直後に sync を起動して sync.stamp を touch する (表示を挟むと、別 pane が due と判定できる窓が広がる)
+            __dotcli_kickSync
             $v = $r.Out.Trim()
             if ($v.StartsWith('updated:')) {
                 $p = $v.Substring(8) -split ':', 2
