@@ -49,14 +49,13 @@ pub fn generate(defs: &Definitions, _dotfiles_dir: &Path) -> String {
                 .map(nu_literal)
                 .collect::<Vec<_>>()
                 .join(" ");
-            // Loads the profile: bin/git-new.ps1 uses aliases.ps1's `tp`/`sc` without
-            // dot-sourcing it, and under -NoProfile `sc` resolves to sc.exe, so gnew would
-            // skip its files and still run `gh repo create`.
-            // TODO: add -NoProfile (as in bash.rs) once every [[script]] in
-            // definitions.toml dot-sources what it needs.
+            // -NoProfile, as in bash.rs: nushell is interactive, so a plain `pwsh -File`
+            // would run profile.ps1's interactive part (mise, zoxide, starship, ...) on
+            // every call. Each [[script]] must dot-source pwsh/aliases.ps1 itself when it
+            // uses those aliases; under -NoProfile `sc` resolves to sc.exe.
             writeln!(
                 out,
-                "def {name} [...args: string] {{ pwsh -File ([$env.DOT {segments}] | path join) ...$args }}",
+                "def {name} [...args: string] {{ pwsh -NoProfile -File ([$env.DOT {segments}] | path join) ...$args }}",
                 name = s.name,
                 segments = segments,
             )
@@ -372,7 +371,7 @@ path = "C:\\it's\\a.exe"
     }
 
     #[test]
-    fn script_wrapper_loads_profile_and_uses_env_dot() {
+    fn script_wrapper_uses_noprofile_and_env_dot() {
         let defs = defs_from(
             r#"
 [[script]]
@@ -383,7 +382,7 @@ path = 'bin\git-new.ps1'
         let nu = generate(&defs, dotfiles_path());
         assert!(
             nu.contains(
-                "def gnew [...args: string] { pwsh -File ([$env.DOT 'bin' 'git-new.ps1'] | path join) ...$args }"
+                "def gnew [...args: string] { pwsh -NoProfile -File ([$env.DOT 'bin' 'git-new.ps1'] | path join) ...$args }"
             ),
             "{nu}"
         );
