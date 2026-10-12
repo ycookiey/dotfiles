@@ -324,7 +324,7 @@ Invoke-Step 'Fonts' { & "$ScriptDir\install\fonts.ps1" } 'Fonts install checked'
 # Winget アプリ (wingetfile.json)
 # winget.ps1 はアプリの失敗を一覧と再実行コマンドを出して exit 1 で返す。他の手順と同じく失敗として数える
 # (導入済み・再起動で完了する戻り値は winget.ps1 側で失敗に数えない)
-# (setup が exit 1 になり bootstrap は Phase 2 の後で止まる。後続 Phase を続けるかは bootstrap 側の判断)
+# (setup が exit 1 になり、bootstrap は Phase 2 の失敗として最後の一覧に載せて後続 Phase を続ける)
 Invoke-Step 'Winget apps' {
     & "$ScriptDir\install\winget.ps1"
     if ($global:LASTEXITCODE) {

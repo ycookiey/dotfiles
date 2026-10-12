@@ -101,7 +101,8 @@ if ($failed.Count -gt 0) {
     wh "`nFailed scoop apps: $($failed -join ', ')" -Fo Yellow
     if (Test-Path $orderFile) { wh "Retry: scoop install $($failed -join ' ')" -Fo Yellow }
     if ($UseAria2 -and (tp $aria2Exe)) { wh "If aria2 downloads failed: scoop config aria2-enabled false, then retry" -Fo Yellow }
-    # 大きいアプリ (OnlyLarge) の失敗は非致命。それ以外は呼び出し元 (bootstrap Phase 1) が止まれるよう exit 1
+    # 大きいアプリ (OnlyLarge) の失敗は非致命。それ以外は呼び出し元が失敗を知れるよう exit 1
+    # (bootstrap は Phase 1 の失敗として最後の一覧に載せ、後続 Phase は続ける)
     if (!$OnlyLarge) {
         wh "Scoop setup finished with failures." -Fo Red
         exit 1
