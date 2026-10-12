@@ -344,3 +344,15 @@ fields = ["tool_input.value", "tool_input.text"]
 all = ['「[^」]*」.*「[^」]*」.*「']
 action = "context"
 message = '''外に出る文のカギかっこは、画面の表記と発言の引用だけに使う。強調や用語の囲みに使わない(docs/external-japanese.md)。'''
+
+# cargo fmt formats the whole workspace: in a repo that was never formatted
+# it rewrites dozens of untouched files (happened in dotfiles' cli).
+[[rule]]
+id = "cargo-fmt-scope-reminder"
+event = "PreToolUse"
+tools = '^Bash$'
+fields = ["tool_input.command"]
+all = ['(^|[[:space:];&|(])cargo[[:space:]]+fmt([[:space:]]|$)']
+none = ['--check']
+action = "context"
+message = '''cargo fmt は workspace 全体(-p ならその crate 全体)を整形する。整形されていない repo では触っていないファイルまで書き換わる。先に cargo fmt --check で差の出るファイルを見るか、触ったファイルだけ rustfmt --edition <crate の edition> <file> で整える。rustfmt はそのファイルを LF にするので、作業ツリーが CRLF なら unix2dos -q <file> で戻す。'''
