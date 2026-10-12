@@ -123,6 +123,19 @@ all = [
 action = "deny"
 message = '''git worktree remove --force は、worktree の中の junction (つないだ node_modules 等) をたどって、つないだ先 (本体の node_modules など) の中身まで消すことがある (実例: 本体の node_modules から 142 パッケージと .bin が消えた)。先に junction をリンクだけ外す (PowerShell: (Get-Item <worktree>\node_modules -Force).Delete()、または cmd //c rmdir <worktree>\node_modules)。その後 --force なしで git worktree remove を実行し、消えない残骸は cmd //c "rmdir /s /q C:\path" で消す (~/.claude/docs/git.md の「部分 stage の単独検証と worktree の後片付け」)。'''
 
+# Agent with isolation: "worktree" (forks / subagents in their own worktree).
+# Seen with 4 parallel forks: every worktree branched from the repo's first
+# commit instead of HEAD; the forks fought over the one Claude in Chrome;
+# edits to the same file (and a change of draw order) collided on merge.
+[[rule]]
+id = "agent-worktree-reminder"
+event = "PreToolUse"
+tools = '^Agent$'
+fields = ["tool_input.isolation"]
+all = ['^worktree$']
+action = "context"
+message = '''isolation: worktree の agent に渡す prompt に入れる: (1) worktree が今の HEAD でなく古い commit (実例: repo の最初の commit) から作られることがある。今の HEAD の hash を書き、作業前に git log -1 で確かめて違えば git reset --hard <hash> させる (2) 並列で画面を確かめるなら、Claude in Chrome は 1 つを取り合ってタブの組が消え・スクリーンショットが時間切れになるので、headless の Playwright (skill ui-visual-check の scripts/node_modules) を使わせる (3) 並列の agent が同じファイルを触るなら、処理は新しいファイルに分け、元のファイルの変更は呼び出しの差し替えだけにさせる。処理の順序を変える変更 (描画の順など) は 1 つの agent にまとめる (取り込みで大きく衝突する)。node_modules は worktree に無いので junction で足し、後片付けは junction を先に外す (worktree-remove の規則)。'''
+
 # Git Bash turns a lone `/c` into `C:/`, so `cmd.exe /c ...` opens cmd's
 # interactive screen and waits.
 [[rule]]
