@@ -8,6 +8,7 @@ Subcommands:
 """
 
 import argparse
+import heapq
 import json
 import os
 import re
@@ -15,8 +16,12 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-CLAUDE_DIR = Path.home() / ".claude"
+# Claude Code honors CLAUDE_CONFIG_DIR for its config root; fall back to ~/.claude.
+CLAUDE_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
 PROJECTS_DIR = CLAUDE_DIR / "projects"
+
+# Leading text of the record Claude Code writes when the user interrupts a turn.
+_INTERRUPT_PREFIX = "[Request interrupted by user"
 
 
 def _derive_project_dir_name(cwd):
@@ -32,10 +37,15 @@ def _derive_project_dir_name(cwd):
 def _current_session_id():
     """Best-effort detection of the currently active session ID.
 
-    The current session is assumed to be the most recently modified
-    .jsonl file in the project directory derived from os.getcwd().
+    Uses CLAUDE_CODE_SESSION_ID when Claude Code provides it. Otherwise the
+    current session is assumed to be the most recently modified .jsonl file
+    in the project directory derived from os.getcwd(), which can pick the
+    wrong file when several sessions run in the same project.
     Returns None if detection fails.
     """
+    env_id = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if env_id:
+        return env_id
     try:
         cwd = os.getcwd()
     except OSError:
@@ -80,36 +90,53 @@ def _session_files(project_path):
 
 
 def _load_first_user_message(session_path):
-    """Load the first user message from a session file."""
+    """Load the first user message from a session file.
+
+    Meta records (isMeta, e.g. local-command caveats) and interrupt markers are
+    skipped. If a session has only such records, the first of them is returned
+    with empty text so the session is still listed.
+    """
+    fallback = None
     with open(session_path, encoding="utf-8") as f:
         for line in f:
+            # Cheap prefilter: session files are compact JSON, so every user
+            # record contains this exact substring.
+            if '"type":"user"' not in line:
+                continue
             try:
                 obj = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if obj.get("type") == "user":
-                content = obj.get("message", {}).get("content", "")
-                if isinstance(content, str):
-                    text = content
-                elif isinstance(content, list):
-                    text = next(
-                        (
-                            c.get("text", "")
-                            for c in content
-                            if isinstance(c, dict) and c.get("type") == "text"
-                        ),
-                        "",
-                    )
-                else:
-                    text = ""
-                return {
-                    "timestamp": obj.get("timestamp"),
-                    "cwd": obj.get("cwd", ""),
-                    "git_branch": obj.get("gitBranch", ""),
-                    "version": obj.get("version", ""),
-                    "text": text[:200],
-                }
-    return None
+            if obj.get("type") != "user":
+                continue
+            message = obj.get("message")
+            content = message.get("content", "") if isinstance(message, dict) else ""
+            if isinstance(content, str):
+                text = content
+            elif isinstance(content, list):
+                text = next(
+                    (
+                        c.get("text", "")
+                        for c in content
+                        if isinstance(c, dict) and c.get("type") == "text"
+                    ),
+                    "",
+                )
+            else:
+                text = ""
+            info = {
+                "timestamp": obj.get("timestamp"),
+                "cwd": obj.get("cwd", ""),
+                "git_branch": obj.get("gitBranch", ""),
+                "version": obj.get("version", ""),
+                "text": text[:200],
+            }
+            if obj.get("isMeta") or text.startswith(_INTERRUPT_PREFIX):
+                if fallback is None:
+                    fallback = dict(info, text="")
+                continue
+            return info
+    return fallback
 
 
 def cmd_list(args):
@@ -158,60 +185,103 @@ def cmd_search(args):
         except re.error as e:
             print(json.dumps({"error": f"Invalid regex: {e}"}, ensure_ascii=False))
             sys.exit(1)
+        raw_pattern = None
     else:
         pattern = re.compile(re.escape(args.query), re.IGNORECASE)
+        # Cheap prefilter on the raw JSONL line: the query as it appears inside a
+        # JSON string. Relies on session files being compact JSON with non-ASCII
+        # written as raw UTF-8 (JSON escaping is per character, so a match in the
+        # decoded text implies a match in the raw line). Not applied to --regex.
+        raw_pattern = re.compile(
+            re.escape(json.dumps(args.query, ensure_ascii=False)[1:-1]), re.IGNORECASE
+        )
+    limit = args.limit if args.limit and args.limit > 0 else None
     results = []
 
     current_id = None if args.include_current else _current_session_id()
 
+    # Scan newest files first so that --limit can stop early without losing the
+    # newest matches.
+    targets = []
     for proj_name, proj_path in _project_dirs(args.project):
         for sf in _session_files(proj_path):
             if current_id and sf.stem == current_id:
                 continue
-            mtime = datetime.fromtimestamp(sf.stat().st_mtime, tz=timezone.utc)
-            if cutoff and mtime < cutoff:
+            mtime = sf.stat().st_mtime
+            if cutoff and datetime.fromtimestamp(mtime, tz=timezone.utc) < cutoff:
                 continue
+            targets.append((mtime, str(sf), sf, proj_name))
+    targets.sort(key=lambda t: (-t[0], t[1]))
 
-            with open(sf, encoding="utf-8") as f:
-                for line in f:
-                    try:
-                        obj = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    msg_type = obj.get("type")
-                    if msg_type not in ("user", "assistant"):
-                        continue
+    for mtime, _key, sf, proj_name in targets:
+        if limit and len(results) >= limit and _older_than_kth(mtime, results, limit):
+            # A message's timestamp is never newer than its file's mtime, so no
+            # remaining file can contain a message that ranks in the top `limit`.
+            break
 
-                    texts = _extract_texts(obj)
-                    for text in texts:
-                        if pattern.search(text):
-                            ts = obj.get("timestamp", "")
-                            # Context: surrounding text around match
-                            match = pattern.search(text)
-                            start = max(0, match.start() - 80)
-                            end = min(len(text), match.end() + 80)
-                            snippet = text[start:end]
-                            if start > 0:
-                                snippet = "..." + snippet
-                            if end < len(text):
-                                snippet = snippet + "..."
+        with open(sf, encoding="utf-8") as f:
+            for line in f:
+                if '"type":"user"' not in line and '"type":"assistant"' not in line:
+                    continue
+                if raw_pattern and not raw_pattern.search(line):
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                msg_type = obj.get("type")
+                if msg_type not in ("user", "assistant"):
+                    continue
 
-                            results.append(
-                                {
-                                    "session_id": sf.stem,
-                                    "project": proj_name,
-                                    "role": msg_type,
-                                    "timestamp": ts,
-                                    "snippet": snippet,
-                                }
-                            )
-                            if args.limit and len(results) >= args.limit:
-                                print(json.dumps(results, ensure_ascii=False, indent=2))
-                                return
-                            break  # One match per message is enough
+                texts = _extract_texts(obj)
+                for text in texts:
+                    match = pattern.search(text)
+                    if match:
+                        ts = obj.get("timestamp", "")
+                        # Context: surrounding text around match
+                        start = max(0, match.start() - 80)
+                        end = min(len(text), match.end() + 80)
+                        snippet = text[start:end]
+                        if start > 0:
+                            snippet = "..." + snippet
+                        if end < len(text):
+                            snippet = snippet + "..."
 
-    results.sort(key=lambda r: r.get("timestamp", ""), reverse=True)
+                        results.append(
+                            {
+                                "session_id": sf.stem,
+                                "project": proj_name,
+                                "role": msg_type,
+                                "timestamp": ts,
+                                "snippet": snippet,
+                            }
+                        )
+                        break  # One match per message is enough
+
+    results.sort(key=_timestamp_key, reverse=True)
+    if limit:
+        results = results[:limit]
     print(json.dumps(results, ensure_ascii=False, indent=2))
+
+
+def _timestamp_key(result):
+    return result.get("timestamp", "")
+
+
+def _older_than_kth(mtime, results, k):
+    """True if a file with this mtime cannot hold a result ranking in the top k.
+
+    Message timestamps are ISO 8601 strings in one fixed format, so their string
+    order is their time order. Returns False when the k-th timestamp is missing
+    or unparseable, so the caller keeps scanning.
+    """
+    kth = heapq.nlargest(k, (_timestamp_key(r) for r in results))[-1]
+    if not kth:
+        return False
+    try:
+        return mtime < _parse_timestamp(kth).timestamp()
+    except (ValueError, TypeError, AttributeError):
+        return False
 
 
 def _extract_texts(obj):

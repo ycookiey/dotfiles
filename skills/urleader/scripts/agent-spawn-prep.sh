@@ -54,7 +54,8 @@ fi
 # --- 1. repo root取得 (CWD drift対策) ---
 # main worktree (= 本体 repo) を取得。cwd が worktree 内/外いずれでも同じ結果。
 # 旧実装は .git ディレクトリ内で fatal となり worktree から呼ぶと cwd を返していた。
-REPO_ROOT=$(git worktree list --porcelain | awk '/^worktree / {print $2; exit}')
+# 空白を含むパスを切らないよう、フィールド分割せず "worktree " 以降の行全体を取る。
+REPO_ROOT=$(git worktree list --porcelain | awk '/^worktree / {sub(/^worktree /, ""); print; exit}')
 if [[ -z "$REPO_ROOT" ]]; then
   echo "ERROR: failed to resolve main repo root via git worktree list" >&2
   exit 1
@@ -87,11 +88,20 @@ REPO_ROOT=$REPO_ROOT
 MODE=warn
 GUARD_EOF
 
-# configをgit管理外に (worktreeの.gitはファイルなのでgit rev-parse --git-dirで実際のgitdirを取得)
-WT_GIT_DIR=$(git -C "$WT_DIR" rev-parse --git-dir)
-WT_GIT_DIR=$(cygpath -u "$WT_GIT_DIR" 2>/dev/null || echo "$WT_GIT_DIR")
-mkdir -p "$WT_GIT_DIR/info"
-echo ".worktree-guard-config" >> "$WT_GIT_DIR/info/exclude"
+# configをgit管理外に。git は linked worktree 固有の gitdir (.git/worktrees/<name>/info/exclude)
+# を読まず、common dir 側の info/exclude だけを読む。--git-path info/exclude はその実際の
+# 読み先を返す。common 側は本体と全 worktree で共有されるため、1 行だけ追記する (再利用時も重複させない)。
+EXCLUDE_FILE=$(git -C "$WT_DIR" rev-parse --git-path info/exclude)
+EXCLUDE_FILE=$(cygpath -u "$EXCLUDE_FILE" 2>/dev/null || echo "$EXCLUDE_FILE")
+[[ "$EXCLUDE_FILE" == /* ]] || EXCLUDE_FILE="$WT_DIR/$EXCLUDE_FILE"
+mkdir -p "$(dirname "$EXCLUDE_FILE")"
+if ! grep -qxF ".worktree-guard-config" "$EXCLUDE_FILE" 2>/dev/null; then
+  # 末尾に改行がないと既存の最終パターンと連結されて両方壊れるので補う
+  if [[ -s "$EXCLUDE_FILE" && -n "$(tail -c 1 "$EXCLUDE_FILE")" ]]; then
+    echo >> "$EXCLUDE_FILE"
+  fi
+  echo ".worktree-guard-config" >> "$EXCLUDE_FILE"
+fi
 
 # --- 6. allowlistによるファイルコピー ---
 # global ($HOME/.claude/worktree-copy.list) と project ($REPO_ROOT/.claude/worktree-copy.list)
@@ -167,8 +177,10 @@ junction_one_dir() {
     if [[ -d "$dst" ]]; then
       rm -rf "$dst"
     else
-      echo "WARN: $dst exists and is not a directory, cannot junction" >&2
-      return 1
+      # 非ディレクトリの上には junction も copy_one_dir (mkdir -p) も作れないので、
+      # このエントリだけ飛ばして spawn は続ける (WARN 表示と挙動を揃える)。
+      echo "WARN: $dst exists and is not a directory, cannot junction, skipping: $src_dir" >&2
+      return 0
     fi
   fi
   mkdir -p "$(dirname "$dst")"
@@ -207,8 +219,9 @@ parse_allowlist_line() {
   [[ -z "$stripped" ]] && return 0
 
   local -a tokens
-  # shellcheck disable=SC2206
-  tokens=( $stripped )
+  # 単語分割のみ。glob は copy_from_allowlist で nullglob/dotglob 付きで展開するので
+  # ここで展開すると `.env.*` が複数 token になり "multiple patterns" で行ごと捨てられる。
+  read -ra tokens <<< "$stripped"
 
   local tok
   for tok in "${tokens[@]}"; do

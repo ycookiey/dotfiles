@@ -3,6 +3,11 @@
 # Usage: run.sh <dir> <request> [plan_file] [workspace]
 set -euo pipefail
 
+if [[ $# -lt 2 ]]; then
+  echo "usage: run.sh <dir> <request> [plan_file] [workspace]" >&2
+  exit 2
+fi
+
 dir="${1:-.}"
 request="$2"
 plan_file="${3:-}"
@@ -12,6 +17,8 @@ summary_file="$dir/.cursor-summary.md"
 prompt_file="$dir/.cursor-prompt.md"
 log_file="$dir/.cursor-agent.log"
 rm -f "$summary_file"
+# プロンプトは失敗・中断時も作業 repo に残さない
+trap 'rm -f "$prompt_file"' EXIT
 
 # プロンプトをファイルに書き出す
 {

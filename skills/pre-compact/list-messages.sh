@@ -26,21 +26,37 @@ done
 
 CFG_DIR=$(cygpath -u "$CLAUDE_CONFIG_DIR")
 
-SESSION_FILE=$(find -L "$CFG_DIR/projects" -name "$CLAUDE_CODE_SESSION_ID.jsonl" -type f 2>/dev/null | head -1)
+# A session file always sits at projects/<project>/<id>.jsonl, so a depth-2 glob
+# finds it without walking the whole tree (subagent logs live deeper).
+SESSION_FILE=
+shopt -s nullglob
+for f in "$CFG_DIR"/projects/*/"$CLAUDE_CODE_SESSION_ID".jsonl; do
+    if [[ -f "$f" ]]; then SESSION_FILE=$f; break; fi
+done
+shopt -u nullglob
 if [[ -z "$SESSION_FILE" ]]; then
     echo "Session JSONL not found for $CLAUDE_CODE_SESSION_ID under $CFG_DIR/projects" >&2
     exit 1
 fi
 
-jq -r --argjson w "$WIDTH" '
+# grep drops non-user lines before jq parses them (session files are compact
+# JSON, so every user record contains the literal '"type":"user"'). Exit 1 means
+# no match and must not trip pipefail; real errors (exit 2) still do. -a keeps
+# grep from switching to "Binary file matches" on a stray invalid byte.
+# jq prints one finished preview per line (newlines are already folded) and awk
+# only numbers the lines, so backslashes stay as written. Tabs and NULs are
+# still shown as \t and \0 so they do not reach the terminal raw.
+# TODO: also exclude meta records with `and (.isMeta | not)` once the numbering
+# is confirmed to match the candidates in the UI's "Summarize up to here".
+{ grep -aF '"type":"user"' "$SESSION_FILE" || [[ $? -eq 1 ]]; } | jq -r --argjson w "$WIDTH" '
     select(.type == "user" and (.isSidechain | not) and (.message.content | type == "string"))
     | (.message.content | gsub("\r"; "") | gsub("\n"; " ") | gsub(" +"; " ")) as $c
-    | [$c[0:$w], ($c | length > $w)] | @tsv
-' "$SESSION_FILE" | awk -F'\t' '
+    | ($c[0:$w] | gsub("\t"; "\\t") | gsub("\u0000"; "\\0"))
+      + (if ($c | length) > $w then "..." else "" end)
+' | awk '
 {
     n++
-    suffix = ($2 == "true") ? "..." : ""
-    printf "#%d  %s%s\n", n, $1, suffix
+    printf "#%d  %s\n", n, $0
 }
 END {
     printf "\nTotal: %d user messages (session: %s)\n", n, ENVIRON["CLAUDE_CODE_SESSION_ID"]

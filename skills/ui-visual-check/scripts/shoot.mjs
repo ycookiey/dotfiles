@@ -29,20 +29,8 @@ const VIEWPORT = (() => {
     return m ? { width: Number(m[1]), height: Number(m[2]) } : undefined;
 })();
 
-const browser = await chromium.launch();
-const context = await browser.newContext({ deviceScaleFactor: SCALE, ...(VIEWPORT ? { viewport: VIEWPORT } : {}) });
-const page = await context.newPage();
-
-// SPA hydration後まで待つ。`load` だと描画前で計測値がブレる。
-// networkidle は dev サーバの定期 fetch / 初回チャンクコンパイルで到達しないことがあるため
-// timeout を延ばしつつ、未達なら domcontentloaded + selector 出現で代替する。
-try {
-    await page.goto(url, { waitUntil: "networkidle", timeout: 120000 });
-} catch {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 120000 });
-    await page.waitForSelector(selector, { timeout: 60000 });
-    await page.waitForTimeout(1500);
-}
+// 想定内の失敗(要素なし・大きさ 0 等)。スタックトレースを出さず理由 1 行で exit 1 にする
+class ShootError extends Error {}
 
 // rect は要素を内側に含む clip 矩形(x/y/width/height)に正規化して返す
 function toClip(rect) {
@@ -52,7 +40,7 @@ function toClip(rect) {
 // clip を 1枚 or 縦横グリッドで撮影。生成した PNG パス配列と行列数を返す。
 // 実ピクセル寸法 = CSS寸法 × scale。これが MAX_EDGE を超えると Read で開けないため分割する。
 // 縦分割だけでは横長要素(navbar等)の幅超過を救えないため両軸でタイル化する。
-async function shootClip(outBase, clip) {
+async function shootClip(page, outBase, clip) {
     const tileCss = MAX_EDGE / SCALE; // タイル1辺のCSSサイズ
     const cols = Math.max(1, Math.ceil((clip.width * SCALE) / MAX_EDGE));
     const rows = Math.max(1, Math.ceil((clip.height * SCALE) / MAX_EDGE));
@@ -88,129 +76,161 @@ async function shootClip(outBase, clip) {
     return { paths, rows, cols };
 }
 
-// 計測 + 兄弟要素の整列情報を収集（ガイド注入はまだしない＝素版を先に撮るため）
-const measured = await page.evaluate((sel) => {
-    const el = document.querySelector(sel);
-    if (!el) return null;
-    const rect = el.getBoundingClientRect();
-    const cs = getComputedStyle(el);
-    // 検証で頻繁に参照する代表値のみ抽出（全プロパティはノイズになる）
-    const pick = [
-        "fontSize", "fontFamily", "fontWeight", "lineHeight", "letterSpacing",
-        "color", "backgroundColor",
-        "width", "height",
-        "marginTop", "marginRight", "marginBottom", "marginLeft",
-        "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
-        "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth",
-        "display", "position", "alignItems", "justifyContent", "textAlign",
-    ];
-    const style = Object.fromEntries(pick.map((k) => [k, cs[k]]));
+const browser = await chromium.launch();
+let plain, guide;
+// 例外で終わっても Chromium を残さないよう、launch 以降は finally で必ず close する
+try {
+    const context = await browser.newContext({ deviceScaleFactor: SCALE, ...(VIEWPORT ? { viewport: VIEWPORT } : {}) });
+    const page = await context.newPage();
 
-    const r2 = (n) => Math.round(n * 100) / 100;
-    const edges = (el2) => {
-        const r = el2.getBoundingClientRect();
-        return {
-            tag: el2.tagName.toLowerCase(),
-            left: r2(r.left), right: r2(r.right), centerX: r2(r.left + r.width / 2),
-            top: r2(r.top), bottom: r2(r.bottom), centerY: r2(r.top + r.height / 2),
-            width: r2(r.width), height: r2(r.height),
+    // SPA hydration後まで待つ。`load` だと描画前で計測値がブレる。
+    // networkidle を goto の完了条件にすると、dev サーバの定期 fetch では到達せず timeout まで待たされる。
+    // そこで domcontentloaded で開き、selector の出現(遅れて挿入される要素も拾う)を待ってから
+    // networkidle を短く待ち(未達なら諦める)、最後に固定時間だけ描画の落ち着きを待つ。
+    // state は attached: display:none 等の大きさ 0 の要素も待ち続けず、下の検査で理由を出せる。
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 120000 });
+    try {
+        await page.waitForSelector(selector, { state: "attached", timeout: 60000 });
+    } catch (e) {
+        if (e?.name === "TimeoutError") throw new ShootError(`selector not found: ${selector}`);
+        throw e;
+    }
+    await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+    await page.waitForTimeout(1500);
+
+    // 計測 + 兄弟要素の整列情報を収集（ガイド注入はまだしない＝素版を先に撮るため）
+    const measured = await page.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        if (!el) return null;
+        const rect = el.getBoundingClientRect();
+        const cs = getComputedStyle(el);
+        // 検証で頻繁に参照する代表値のみ抽出（全プロパティはノイズになる）
+        const pick = [
+            "fontSize", "fontFamily", "fontWeight", "lineHeight", "letterSpacing",
+            "color", "backgroundColor",
+            "width", "height",
+            "marginTop", "marginRight", "marginBottom", "marginLeft",
+            "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
+            "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth",
+            "display", "position", "alignItems", "justifyContent", "textAlign",
+        ];
+        const style = Object.fromEntries(pick.map((k) => [k, cs[k]]));
+
+        const r2 = (n) => Math.round(n * 100) / 100;
+        const edges = (el2) => {
+            const r = el2.getBoundingClientRect();
+            return {
+                tag: el2.tagName.toLowerCase(),
+                left: r2(r.left), right: r2(r.right), centerX: r2(r.left + r.width / 2),
+                top: r2(r.top), bottom: r2(r.bottom), centerY: r2(r.top + r.height / 2),
+                width: r2(r.width), height: r2(r.height),
+            };
         };
-    };
 
-    // 整合性チェックの本丸＝兄弟要素との揃い。親の直接の子(自身含む)の端/中心を数値で並べる。
-    const parent = el.parentElement;
-    const siblings = parent
-        ? Array.from(parent.children)
-            .filter((c) => { const r = c.getBoundingClientRect(); return r.width > 0 && r.height > 0; })
-            .map((c) => ({ ...edges(c), self: c === el }))
-        : [];
+        // 整合性チェックの本丸＝兄弟要素との揃い。親の直接の子(自身含む)の端/中心を数値で並べる。
+        const parent = el.parentElement;
+        const siblings = parent
+            ? Array.from(parent.children)
+                .filter((c) => { const r = c.getBoundingClientRect(); return r.width > 0 && r.height > 0; })
+                .map((c) => ({ ...edges(c), self: c === el }))
+            : [];
 
-    return {
-        rect: {
-            x: rect.x, y: rect.y, width: rect.width, height: rect.height,
-            top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left,
-        },
-        style,
-        text: el.textContent?.trim().slice(0, 200) ?? null,
-        siblings,
-        parentRect: parent
-            ? (() => { const p = parent.getBoundingClientRect(); return { x: p.x, y: p.y, width: p.width, height: p.height }; })()
-            : null,
-        viewport: { width: window.innerWidth, height: window.innerHeight },
-    };
-}, selector);
+        return {
+            rect: {
+                x: rect.x, y: rect.y, width: rect.width, height: rect.height,
+                top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left,
+            },
+            style,
+            text: el.textContent?.trim().slice(0, 200) ?? null,
+            siblings,
+            parentRect: parent
+                ? (() => { const p = parent.getBoundingClientRect(); return { x: p.x, y: p.y, width: p.width, height: p.height }; })()
+                : null,
+            viewport: { width: window.innerWidth, height: window.innerHeight },
+        };
+    }, selector);
 
-if (!measured) {
-    console.error(`selector not found: ${selector}`);
-    await browser.close();
-    process.exit(1);
-}
-
-writeFileSync(jsonPath, JSON.stringify({ url, selector, ...measured }, null, 2));
-
-// 1) 素版: 対象要素そのものを撮る（実際の見た目を保持）
-const plain = await shootClip(basename, toClip(measured.rect));
-
-// 2) ガイド版: 端/中心の基準線 + 兄弟枠を注入して撮る
-//    対象の左端/中心ライン上に兄弟の端が乗っているか＝整列を一目で検証できる。
-await page.evaluate((sel) => {
-    const el = document.querySelector(sel);
-    const rect = el.getBoundingClientRect();
-    const vw = window.innerWidth, vh = window.innerHeight;
-
-    // overlay は position:fixed でビューポート基準にし、getBoundingClientRect 値をそのまま使う
-    const layer = document.createElement("div");
-    layer.id = "__ui_check_guides__";
-    layer.style.cssText = "position:fixed;inset:0;z-index:2147483647;pointer-events:none;margin:0;";
-    document.body.appendChild(layer);
-    const add = (css) => {
-        const d = document.createElement("div");
-        d.style.cssText = "position:fixed;pointer-events:none;box-sizing:border-box;" + css;
-        layer.appendChild(d);
-    };
-
-    // 兄弟要素の枠（薄青）。基準線とエッジが一致するか目視する対象
-    const parent = el.parentElement;
-    if (parent) {
-        for (const sib of parent.children) {
-            const r = sib.getBoundingClientRect();
-            if (r.width === 0 || r.height === 0) continue;
-            add(`left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;outline:1px solid rgba(0,128,255,0.55);`);
-        }
+    if (!measured) throw new ShootError(`selector not found: ${selector}`);
+    // display:none 等で幅か高さが 0 だと screenshot の clip が空になり reject するため、先に理由を出して止める
+    if (!(measured.rect.width > 0) || !(measured.rect.height > 0)) {
+        throw new ShootError(
+            `selector has zero size: ${selector} ` +
+            `(${measured.rect.width}x${measured.rect.height}, display: ${measured.style.display})`,
+        );
     }
 
-    // 対象要素の基準線。端=赤、中心=橙。ページ全幅/全高に延ばす
-    const RED = "rgba(255,0,0,0.7)", ORG = "rgba(255,140,0,0.75)";
-    const vline = (x, c) => add(`left:${x}px;top:0;width:1px;height:${vh}px;background:${c};`);
-    const hline = (y, c) => add(`top:${y}px;left:0;height:1px;width:${vw}px;background:${c};`);
-    vline(rect.left, RED);
-    vline(rect.right, RED);
-    vline(rect.left + rect.width / 2, ORG);
-    hline(rect.top, RED);
-    hline(rect.bottom, RED);
-    hline(rect.top + rect.height / 2, ORG);
-}, selector);
+    writeFileSync(jsonPath, JSON.stringify({ url, selector, ...measured }, null, 2));
 
-// ガイド版の撮影範囲: 兄弟群が入る親rectをビューポートと交差させる（巨大親でのタイル爆発を抑制）。
-// 親が無い等で取れなければ対象rectにフォールバック。
-let guideClip;
-if (measured.parentRect && measured.parentRect.width > 0 && measured.parentRect.height > 0) {
-    const p = measured.parentRect;
-    const vp = measured.viewport;
-    const x = Math.max(0, p.x), y = Math.max(0, p.y);
-    const w = Math.min(vp.width, p.x + p.width) - x;
-    const h = Math.min(vp.height, p.y + p.height) - y;
-    guideClip = (w > 0 && h > 0) ? { x, y, width: w, height: h } : toClip(measured.rect);
-} else {
-    guideClip = toClip(measured.rect);
+    // 1) 素版: 対象要素そのものを撮る（実際の見た目を保持）
+    plain = await shootClip(page, basename, toClip(measured.rect));
+
+    // 2) ガイド版: 端/中心の基準線 + 兄弟枠を注入して撮る
+    //    対象の左端/中心ライン上に兄弟の端が乗っているか＝整列を一目で検証できる。
+    await page.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        const rect = el.getBoundingClientRect();
+        const vw = window.innerWidth, vh = window.innerHeight;
+
+        // overlay は position:fixed でビューポート基準にし、getBoundingClientRect 値をそのまま使う
+        const layer = document.createElement("div");
+        layer.id = "__ui_check_guides__";
+        layer.style.cssText = "position:fixed;inset:0;z-index:2147483647;pointer-events:none;margin:0;";
+        document.body.appendChild(layer);
+        const add = (css) => {
+            const d = document.createElement("div");
+            d.style.cssText = "position:fixed;pointer-events:none;box-sizing:border-box;" + css;
+            layer.appendChild(d);
+        };
+
+        // 兄弟要素の枠（薄青）。基準線とエッジが一致するか目視する対象
+        const parent = el.parentElement;
+        if (parent) {
+            for (const sib of parent.children) {
+                const r = sib.getBoundingClientRect();
+                if (r.width === 0 || r.height === 0) continue;
+                add(`left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;outline:1px solid rgba(0,128,255,0.55);`);
+            }
+        }
+
+        // 対象要素の基準線。端=赤、中心=橙。ページ全幅/全高に延ばす
+        const RED = "rgba(255,0,0,0.7)", ORG = "rgba(255,140,0,0.75)";
+        const vline = (x, c) => add(`left:${x}px;top:0;width:1px;height:${vh}px;background:${c};`);
+        const hline = (y, c) => add(`top:${y}px;left:0;height:1px;width:${vw}px;background:${c};`);
+        vline(rect.left, RED);
+        vline(rect.right, RED);
+        vline(rect.left + rect.width / 2, ORG);
+        hline(rect.top, RED);
+        hline(rect.bottom, RED);
+        hline(rect.top + rect.height / 2, ORG);
+    }, selector);
+
+    // ガイド版の撮影範囲: 兄弟群が入る親rectをビューポートと交差させる（巨大親でのタイル爆発を抑制）。
+    // 親が無い等で取れなければ対象rectにフォールバック。
+    let guideClip;
+    if (measured.parentRect && measured.parentRect.width > 0 && measured.parentRect.height > 0) {
+        const p = measured.parentRect;
+        const vp = measured.viewport;
+        const x = Math.max(0, p.x), y = Math.max(0, p.y);
+        const w = Math.min(vp.width, p.x + p.width) - x;
+        const h = Math.min(vp.height, p.y + p.height) - y;
+        guideClip = (w > 0 && h > 0) ? { x, y, width: w, height: h } : toClip(measured.rect);
+    } else {
+        guideClip = toClip(measured.rect);
+    }
+    guide = await shootClip(page, `${basename}-guides`, guideClip);
+} catch (e) {
+    if (!(e instanceof ShootError)) throw e;
+    console.error(e.message);
+    process.exitCode = 1;
+} finally {
+    await browser.close();
 }
-const guide = await shootClip(`${basename}-guides`, guideClip);
 
-await browser.close();
-
-// 分割時は左上→右下の順。タイル位置は r{行}c{列} で表現
-for (const p of plain.paths) console.log(`PNG: ${p}`);
-for (const p of guide.paths) console.log(`GUIDE: ${p}`);
-console.log(`JSON: ${jsonPath}`);
-console.log(`TILES: ${plain.rows}x${plain.cols}`);
-console.log(`GUIDE_TILES: ${guide.rows}x${guide.cols}`);
+if (plain && guide) {
+    // 分割時は左上→右下の順。タイル位置は r{行}c{列} で表現
+    for (const p of plain.paths) console.log(`PNG: ${p}`);
+    for (const p of guide.paths) console.log(`GUIDE: ${p}`);
+    console.log(`JSON: ${jsonPath}`);
+    console.log(`TILES: ${plain.rows}x${plain.cols}`);
+    console.log(`GUIDE_TILES: ${guide.rows}x${guide.cols}`);
+}

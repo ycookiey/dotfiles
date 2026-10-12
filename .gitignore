@@ -41,17 +41,26 @@ claude/skills/private
 # Node modules
 node_modules/
 
+# Python bytecode cache
+__pycache__/
+
 # GCC (GLM Claude Code) agent temp files
 .gcc-summary.md
 .gcc-prompt.md
 .gcc-agent.log
 .gcc-result.json
+.gcc-stderr.log
 
 # Cursor agent temp files
 .cursor/
 .cursor-summary.md
 .cursor-prompt.md
 .cursor-agent.log
+
+# Codex agent temp files
+.codex-summary.md
+.codex-plan.md
+.codex-agent.log
 
 # Agent team output
 .agent-output/

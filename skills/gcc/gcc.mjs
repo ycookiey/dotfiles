@@ -1,5 +1,5 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -57,7 +57,8 @@ const queryOpts = {
 };
 
 let sessionId = null;
-const logLines = [];
+// ログは逐次追記する（強制終了・timeout でもそれまでのメッセージを残す）
+writeFileSync(logPath, "", "utf8");
 
 // 常に JSON を stdout に出力するため try/catch で包む（stderr は SDK の内部ログ用）
 try {
@@ -66,12 +67,8 @@ try {
     if (message.type === "system" && message.subtype === "init" && message.session_id) {
       sessionId = message.session_id;
     }
-    // ログ蓄積
-    logLines.push(JSON.stringify(message));
+    appendFileSync(logPath, JSON.stringify(message) + "\n", "utf8");
   }
-
-  // ログ書き出し
-  writeFileSync(logPath, logLines.join("\n"), "utf8");
 
   // 結果出力（JSON: CCCがパース可能）
   console.log(JSON.stringify({
@@ -81,7 +78,7 @@ try {
   }));
 } catch (err) {
   // クラッシュ時もJSONで返す（stderr混入を防ぐ）
-  writeFileSync(logPath, logLines.join("\n") + "\n[error] " + err.message, "utf8");
+  appendFileSync(logPath, "[error] " + err.message + "\n", "utf8");
   console.log(JSON.stringify({ sessionId, error: err.message, summary: null }));
   process.exit(1);
 }

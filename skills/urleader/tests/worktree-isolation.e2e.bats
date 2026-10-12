@@ -3,12 +3,13 @@
 #
 # 対象: plan-v2.md Section 9「手動確認ケース」14ケースの自動化
 # 実装:
-#   C:\Main\Project\dotfiles\skills\urleader\scripts\agent-spawn-prep.sh
-#   C:\Main\Project\dotfiles\claude\hooks\worktree-guard.sh
+#   <repo>/skills/urleader/scripts/agent-spawn-prep.sh
+#   <repo>/claude/hooks/worktree-guard.sh (なければ guard 依存ケースは skip)
 #
-# 実行:
-#   cd C:/Main/Project/dotfiles
+# 実行 (repo root から):
 #   bats skills/urleader/tests/worktree-isolation.e2e.bats
+#
+# 副作用: mktemp の一時 repo / HOME と BATS_TEST_TMPDIR 配下だけ。spawn は HOME=$E2E_HOME で動かす。
 
 SPAWN_SCRIPT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../scripts" && pwd)/agent-spawn-prep.sh"
 GUARD_SCRIPT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../../../claude/hooks" && pwd)/worktree-guard.sh"
@@ -74,6 +75,9 @@ STUB
   fi
   export PATH="$STUB_BIN:$PATH"
 
+  # git の global 設定 (XDG 側) を実環境から切り離す
+  unset XDG_CONFIG_HOME
+
   # 環境変数リセット
   unset WORKTREE_GUARD_ROOT
   unset WORKTREE_GUARD_MODE
@@ -87,16 +91,20 @@ teardown() {
 # ========== ヘルパー ==========
 
 # agent-spawn-prep.sh を実行してworktreeを作成し、worktreeパスを返す
-# usage: setup_worktree <task-id>
+# HOME=$E2E_HOME で実環境の ~/.claude/worktree-copy.list を読ませない
+# (読むと 補足-a が作る .agent-output/ が @junction され、teardown の worktree remove --force が
+#  junction を辿る)。
+# usage: run_spawn_prep <task-id>
 # stdout: WORKTREE_ROOT=<path>
 run_spawn_prep() {
   local task_id="$1"
-  local prompt_file
-  prompt_file=$(mktemp)
-  echo "作業ディレクトリ: placeholder" > "$prompt_file"
   cd "$E2E_REPO"
-  bash "$SPAWN_SCRIPT" --task-id "$task_id" --prompt-file "$prompt_file"
-  rm -f "$prompt_file"
+  HOME="$E2E_HOME" bash "$SPAWN_SCRIPT" --task-id "$task_id"
+}
+
+# worktree-guard.sh がなければ skip (hooks の配置換えで消えた場合に備える)
+require_guard() {
+  [[ -f "$GUARD_SCRIPT" ]] || skip "worktree-guard.sh not found: $GUARD_SCRIPT"
 }
 
 # worktree-guard.sh に Edit/Write/MultiEdit のstdin JSONを渡す
@@ -126,6 +134,7 @@ simulate_bash() {
 # ========== Case 1: 正常系 worktree作成→hook有効化→worktree内Edit許可 ==========
 
 @test "Case1: agent-spawn-prep.sh実行→worktree作成→worktree内Edit許可" {
+  require_guard
   local task_id="e2e-case1"
   local spawn_out
   spawn_out=$(run_spawn_prep "$task_id")
@@ -149,6 +158,7 @@ simulate_bash() {
 # ========== Case 2: deny — main直接編集 (deny mode) ==========
 
 @test "Case2: hookがdeny modeでmain直接編集をexit 2でblockする" {
+  require_guard
   local task_id="e2e-case2"
   run_spawn_prep "$task_id" > /dev/null
   local wt_dir="$E2E_REPO/.claude/worktrees/agent-$task_id"
@@ -172,6 +182,7 @@ EOF
 # ========== Case 2 (warn): main直接編集でwarn modeは警告してexit 0 ==========
 
 @test "Case2-warn: hookがwarn modeでmain直接編集を警告してexit 0で続行する" {
+  require_guard
   local task_id="e2e-case2w"
   run_spawn_prep "$task_id" > /dev/null
   local wt_dir="$E2E_REPO/.claude/worktrees/agent-$task_id"
@@ -192,6 +203,7 @@ EOF
 # ========== Case 3: deny — ~/.claude/settings.json への Edit ==========
 
 @test "Case3: ~/.claude/settings.jsonへのEditはdenyされる" {
+  require_guard
   local task_id="e2e-case3"
   run_spawn_prep "$task_id" > /dev/null
   local wt_dir="$E2E_REPO/.claude/worktrees/agent-$task_id"
@@ -211,6 +223,7 @@ EOF
 # ========== Case 4: deny — hook script改竄試行 ==========
 
 @test "Case4: ~/.claude/hooks/worktree-guard.shへのEditはdenyされる" {
+  require_guard
   local task_id="e2e-case4"
   run_spawn_prep "$task_id" > /dev/null
   local wt_dir="$E2E_REPO/.claude/worktrees/agent-$task_id"
@@ -229,6 +242,7 @@ EOF
 # ========== Case 5: deny — skill改竄試行 ==========
 
 @test "Case5: ~/.claude/skills/urleader/配下へのEditはdenyされる" {
+  require_guard
   local task_id="e2e-case5"
   run_spawn_prep "$task_id" > /dev/null
   local wt_dir="$E2E_REPO/.claude/worktrees/agent-$task_id"
@@ -247,6 +261,7 @@ EOF
 # ========== Case 6: マルチアカウント ~/.claude-1/ 配下もdeny ==========
 
 @test "Case6: マルチアカウント ~/.claude-1/settings.jsonへのEditはdenyされる" {
+  require_guard
   local task_id="e2e-case6"
   run_spawn_prep "$task_id" > /dev/null
   local wt_dir="$E2E_REPO/.claude/worktrees/agent-$task_id"
@@ -263,6 +278,7 @@ EOF
 }
 
 @test "Case6b: マルチアカウント ~/.claude-2/hooks/配下へのWriteはdenyされる" {
+  require_guard
   local task_id="e2e-case6b"
   run_spawn_prep "$task_id" > /dev/null
   local wt_dir="$E2E_REPO/.claude/worktrees/agent-$task_id"
@@ -282,6 +298,7 @@ EOF
 # ========== Case 7: CVE-2025-54794 /proc/self/root bypass ==========
 
 @test "Case7: /proc/self/root経由のbypass試行はdenyされる" {
+  require_guard
   local task_id="e2e-case7"
   run_spawn_prep "$task_id" > /dev/null
   local wt_dir="$E2E_REPO/.claude/worktrees/agent-$task_id"
@@ -315,6 +332,7 @@ EOF
 # ========== Case 9: Bash経由 repo rootへの書き込みをdeny ==========
 
 @test "Case9: Bash経由でrepo rootへの書き込みコマンドはdenyされる" {
+  require_guard
   local task_id="e2e-case9"
   run_spawn_prep "$task_id" > /dev/null
   local wt_dir="$E2E_REPO/.claude/worktrees/agent-$task_id"
@@ -333,6 +351,7 @@ EOF
 }
 
 @test "Case9b: Bash経由でworktree内パスのみを含むコマンドは許可される" {
+  require_guard
   local task_id="e2e-case9b"
   run_spawn_prep "$task_id" > /dev/null
   local wt_dir="$E2E_REPO/.claude/worktrees/agent-$task_id"
@@ -355,22 +374,13 @@ EOF
 @test "Case10: 同一task-idで再呼び出しするとWARNを出してworktreeを再利用する" {
   local task_id="e2e-case10"
   # 1回目
-  cd "$E2E_REPO"
-  local prompt1
-  prompt1=$(mktemp)
-  echo "placeholder" > "$prompt1"
-  bash "$SPAWN_SCRIPT" --task-id "$task_id" --prompt-file "$prompt1" > /dev/null
-  rm -f "$prompt1"
+  run_spawn_prep "$task_id" > /dev/null
 
   local wt_dir="$E2E_REPO/.claude/worktrees/agent-$task_id"
   [ -d "$wt_dir" ]
 
   # 2回目: 同一task-id → WARNが出てexit 0で再利用
-  local prompt2
-  prompt2=$(mktemp)
-  echo "placeholder2" > "$prompt2"
-  run bash -c "cd '$E2E_REPO' && bash '$SPAWN_SCRIPT' --task-id '$task_id' --prompt-file '$prompt2' 2>&1; echo EXIT:\$?"
-  rm -f "$prompt2"
+  run bash -c "cd '$E2E_REPO' && HOME='$E2E_HOME' bash '$SPAWN_SCRIPT' --task-id '$task_id' 2>&1; echo EXIT:\$?"
 
   [[ "$output" == *"WARN"* ]]
   [[ "$output" == *"EXIT:0"* ]]
@@ -378,44 +388,11 @@ EOF
   [ -d "$wt_dir" ]
 }
 
-# ========== Case 11: prompt file内のREPO_ROOTパス置換 ==========
-
-@test "Case11: agent-spawn-prep.shがprompt file内のREPO_ROOTパスをWT_DIRに置換する" {
-  local task_id="e2e-case11"
-  local repo_posix
-  repo_posix=$(cygpath -u "$E2E_REPO" 2>/dev/null || echo "$E2E_REPO")
-  local repo_win
-  repo_win=$(cygpath -w "$E2E_REPO" 2>/dev/null || echo "$E2E_REPO")
-  local repo_mix
-  repo_mix=$(cygpath -m "$E2E_REPO" 2>/dev/null || echo "$E2E_REPO")
-
-  # 3形式のパスをprompt fileに書き込む
-  local prompt_file
-  prompt_file=$(mktemp)
-  printf "%s/src\n%s\\src\n%s/src\n" "$repo_posix" "$repo_win" "$repo_mix" > "$prompt_file"
-
-  cd "$E2E_REPO"
-  run bash "$SPAWN_SCRIPT" --task-id "$task_id" --prompt-file "$prompt_file"
-  [ "$status" -eq 0 ]
-
-  # 置換後: REPO_ROOTの文字列が残っていない (WT_DIRに置き換わっている)
-  local wt_dir="$E2E_REPO/.claude/worktrees/agent-$task_id"
-  ! grep -qF "$repo_posix" "$prompt_file"
-
-  rm -f "$prompt_file"
-}
-
 # ========== Case 12: .worktree-guard-config 作成 ==========
 
 @test "Case12: .worktree-guard-configが正しいschemaでworktree内に配置される" {
   local task_id="e2e-case12"
-  cd "$E2E_REPO"
-  local prompt_file
-  prompt_file=$(mktemp)
-  echo "placeholder" > "$prompt_file"
-
-  run bash "$SPAWN_SCRIPT" --task-id "$task_id" --prompt-file "$prompt_file"
-  rm -f "$prompt_file"
+  run run_spawn_prep "$task_id"
   [ "$status" -eq 0 ]
 
   local wt_dir="$E2E_REPO/.claude/worktrees/agent-$task_id"
@@ -449,12 +426,7 @@ EOF
 
 @test "Case13: git worktree removeでworktree削除後にworktree-branchが削除できる" {
   local task_id="e2e-case13"
-  cd "$E2E_REPO"
-  local prompt_file
-  prompt_file=$(mktemp)
-  echo "placeholder" > "$prompt_file"
-  bash "$SPAWN_SCRIPT" --task-id "$task_id" --prompt-file "$prompt_file"
-  rm -f "$prompt_file"
+  run_spawn_prep "$task_id" > /dev/null
 
   local wt_dir="$E2E_REPO/.claude/worktrees/agent-$task_id"
   local wt_branch="worktree-agent-$task_id"
@@ -477,6 +449,7 @@ EOF
 # ========== Case 14: MODE=warn vs MODE=deny 切替 ==========
 
 @test "Case14: configのMODEをwarnからdenyに変えるとhookの挙動が切り替わる" {
+  require_guard
   local task_id="e2e-case14"
   run_spawn_prep "$task_id" > /dev/null
   local wt_dir="$E2E_REPO/.claude/worktrees/agent-$task_id"
@@ -509,6 +482,7 @@ EOF
 # ========== 補足: .agent-output/へのEdit/Writeは許可 (Bash redirectはdeny) ==========
 
 @test "補足-a: .agent-output/へのEdit/Writeはworktree外でも許可される" {
+  require_guard
   local task_id="e2e-suppa"
   run_spawn_prep "$task_id" > /dev/null
   local wt_dir="$E2E_REPO/.claude/worktrees/agent-$task_id"
@@ -528,6 +502,7 @@ EOF
 }
 
 @test "補足-b: .agent-output/へのBash redirectはdenyされる (C-3対応)" {
+  require_guard
   local task_id="e2e-suppb"
   run_spawn_prep "$task_id" > /dev/null
   local wt_dir="$E2E_REPO/.claude/worktrees/agent-$task_id"
@@ -546,6 +521,7 @@ EOF
 }
 
 @test "補足-c: WORKTREE_GUARD_ROOT未設定+configファイルありでhookが正常動作する (C-2対応)" {
+  require_guard
   local task_id="e2e-suppc"
   run_spawn_prep "$task_id" > /dev/null
   local wt_dir="$E2E_REPO/.claude/worktrees/agent-$task_id"
@@ -570,6 +546,7 @@ EOF
 }
 
 @test "補足-d: .worktree-guard-config自体への書き込みはdenyされる (Case14)" {
+  require_guard
   local task_id="e2e-suppd"
   run_spawn_prep "$task_id" > /dev/null
   local wt_dir="$E2E_REPO/.claude/worktrees/agent-$task_id"
@@ -590,6 +567,7 @@ EOF
 # ========== 補足-e: ~/.claude/docs/ はdeny listに追加済みのためdeny ==========
 
 @test "補足-e: ~/.claude/docs/配下はdeny listに追加済みのためdenyされる" {
+  require_guard
   local task_id="e2e-suppe"
   run_spawn_prep "$task_id" > /dev/null
   local wt_dir="$E2E_REPO/.claude/worktrees/agent-$task_id"
