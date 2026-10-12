@@ -1,31 +1,43 @@
 # starship/zoxide の init スクリプトをキャッシュ生成
 #
-# デフォルトは stale チェック (exe mtime > cache mtime のときのみ再生成)。
+# デフォルトは stale チェック: キャッシュ先頭行の `# key: ...` が cache-key.nu の期待キーと
+# 異なるとき (exe の版が変わった・GENERATOR_VERSION が上がった・キャッシュが無い) のみ再生成。
 # --force で強制再生成。
 #
-# 後処理:
-#   - 埋め込まれた starship.exe path を $env.STARSHIP_EXE 参照に置換
+# 後処理 (変えたら cache-key.nu の GENERATOR_VERSION を上げる):
+#   - starship: 埋め込まれた exe path (scoop shim 等) を $env.STARSHIP_EXE 参照に置換
 #     (ユーザ名・SCOOP_HOME に非依存。env.nu で動的に解決)
-#   - PROMPT_MULTILINE_INDICATOR は静的なので subprocess を文字列リテラルに置換
+#   - starship: PROMPT_MULTILINE_INDICATOR は静的なので subprocess を文字列リテラルに置換
+#   - zoxide: `^zoxide` (PATH 経由で shim を通る) を $env.ZOXIDE_EXE 参照に置換
+#
+# exe が無いときもコメントと key だけの stub を書く (config.nu の use/source を壊さない)。
+# 保存は一時ファイル経由の mv で置換し、job kill 等で書込み途中の cache が残らないようにする。
+
+use cache-key.nu [scoop-exe expected-key cache-stale]
+
+# config.nu が読む <このファイルのディレクトリ>/cache に書く ($nu.default-config-dir は
+# `nu --config <repo>/nushell/config.nu` で起動した repo と別の場所を指しうる)
+const NU_DIR = path self .
 
 def main [--force] {
-    let cache_dir = ($nu.default-config-dir | path join 'cache')
+    let cache_dir = ($NU_DIR | path join 'cache')
     mkdir $cache_dir
-
-    let starship_exe = (resolve-exe 'starship')
-    let zoxide_exe = (resolve-exe 'zoxide')
 
     let starship_cache = ($cache_dir | path join 'starship.nu')
     let zoxide_cache = ($cache_dir | path join 'zoxide.nu')
 
-    let starship_stale = $force or (is-stale $starship_exe $starship_cache)
-    let zoxide_stale = $force or (is-stale $zoxide_exe $zoxide_cache)
+    let starship_stale = $force or (cache-stale 'starship' $starship_cache)
+    let zoxide_stale = $force or (cache-stale 'zoxide' $zoxide_cache)
 
-    if $starship_stale and ($starship_exe | path exists) {
-        gen-starship $starship_exe $starship_cache
+    if $starship_stale {
+        let exe = (scoop-exe 'starship')
+        let body = if ($exe | path exists) { gen-starship $exe } else { stub 'starship' $exe }
+        write-cache $starship_cache (expected-key 'starship') $body
     }
-    if $zoxide_stale and ($zoxide_exe | path exists) {
-        gen-zoxide $zoxide_exe $zoxide_cache
+    if $zoxide_stale {
+        let exe = (scoop-exe 'zoxide')
+        let body = if ($exe | path exists) { gen-zoxide $exe } else { stub 'zoxide' $exe }
+        write-cache $zoxide_cache (expected-key 'zoxide') $body
     }
 
     if $starship_stale or $zoxide_stale {
@@ -33,24 +45,19 @@ def main [--force] {
     }
 }
 
-def resolve-exe [name: string]: nothing -> string {
-    # 標準 scoop パスを優先 (高速)。なければ scoop prefix にフォールバック (SCOOP_HOME カスタム時)
-    let standard = ($env.USERPROFILE | path join $"scoop\\apps\\($name)\\current\\($name).exe")
-    if ($standard | path exists) {
-        return $standard
-    }
-    try {
-        ((^scoop prefix $name | str trim) | path join $"($name).exe")
-    } catch { '' }
+def stub [name: string, exe: string]: nothing -> string {
+    $"# ($name) not found \(($exe)\): stub so that config.nu still parses\n"
 }
 
-def is-stale [exe: string, cache: string]: nothing -> bool {
-    if not ($cache | path exists) { return true }
-    if not ($exe | path exists) { return false }
-    (ls $exe | get 0.modified) > (ls $cache | get 0.modified)
+# 先頭行に key を付け、プロセス固有の一時ファイルに書いてから置換する
+# (同時に起動した nu が同じ一時ファイルを書き合わないよう pid を含める)
+def write-cache [cache: string, key: string, body: string] {
+    let tmp = $"($cache).($nu.pid).tmp"
+    $"($key)\n($body)" | save -f $tmp
+    mv -f $tmp $cache
 }
 
-def gen-starship [exe: string, cache: string] {
+def gen-starship [exe: string]: nothing -> string {
     let continuation = (^$exe prompt --continuation | complete | get stdout)
     let init = (^$exe init nu)
 
@@ -61,10 +68,9 @@ def gen-starship [exe: string, cache: string] {
         $patched = ($patched | str replace --all $"'($p)'" '($env.STARSHIP_EXE)')
     }
     let pattern = r#'\(\s*\^\(\$env.STARSHIP_EXE\) prompt --continuation\s*\)'#
-    $patched = ($patched | str replace --regex $pattern ($continuation | to nuon))
-    $patched | save -f $cache
+    $patched | str replace --regex --no-expand $pattern ($continuation | to nuon)
 }
 
-def gen-zoxide [exe: string, cache: string] {
-    ^$exe init nushell | save -f $cache
+def gen-zoxide [exe: string]: nothing -> string {
+    ^$exe init nushell | str replace --all '^zoxide ' '^($env.ZOXIDE_EXE) '
 }

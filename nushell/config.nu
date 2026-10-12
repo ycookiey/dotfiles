@@ -1,6 +1,10 @@
 # config.nu — nushell 設定
 # user コマンド追加は cli/definitions.toml (dotcli generate)。ここは nushell 固有(env/hooks/直操作 def)。
 
+# source/use の基準ディレクトリ。$nu.default-config-dir ではなくこのファイル自身の場所を使い、
+# `nu --config <repo>/nushell/config.nu` でもその repo のファイルを読む
+const NU_DIR = path self .
+
 $env.config.show_banner = "short"
 
 # 端末 (WezTerm) に今いるフォルダを OSC 7 で知らせる。Windows では既定で無効。
@@ -9,24 +13,31 @@ $env.config.show_banner = "short"
 $env.config.shell_integration.osc7 = true
 
 # --- PATH ---
+# gtr は repo と同じ親ディレクトリに置いた git-worktree-runner (pwsh/profile.ps1 の $gtrBin と同じ導出)。
+# 存在しないディレクトリは継承分 (User PATH の古いエントリ等) も含めて落とす
 $env.PATH = ($env.PATH | split row (char esep)
-  | append 'C:\Main\Script\git-worktree-runner\bin'
+  | append ($env.DOT | path dirname | path join 'git-worktree-runner' 'bin')
   | append ($env.USERPROFILE | path join 'scoop\apps\miktex\current\texmfs\install\miktex\bin\x64')
   | append ($env.LOCALAPPDATA | path join 'Android\Sdk\platform-tools')
   | append ($env.USERPROFILE | path join '.opencode/bin')
+  | where {|p| $p | path exists }
   | uniq)
 
+# git-worktree-runner/bin の gtr は拡張子なしの bash スクリプトで nushell からは解決されない。
+# pwsh の `gtr` (git-gtr の alias) と同じく git サブコマンド経由で呼ぶ (git は shebang を解釈する)
+def --wrapped gtr [...args] { ^git gtr ...$args }
+
 # --- starship ---
-use ($nu.default-config-dir | path join 'cache/starship.nu')
+use ($NU_DIR | path join 'cache/starship.nu')
 
 # --- zoxide ---
-source ($nu.default-config-dir | path join 'cache/zoxide.nu')
+source ($NU_DIR | path join 'cache/zoxide.nu')
 
 # --- Generated aliases (from dotcli) ---
-source ($nu.default-config-dir | path join 'generated-aliases.nu')
+source ($NU_DIR | path join 'generated-aliases.nu')
 
 # --- run-task (F5) ---
-source ($nu.default-config-dir | path join 'run-task.nu')
+source ($NU_DIR | path join 'run-task.nu')
 
 $env.config = ($env.config | upsert keybindings (
     ($env.config.keybindings? | default []) | append {
@@ -38,16 +49,22 @@ $env.config = ($env.config | upsert keybindings (
     }
 ))
 
-# --- yazi (TUI needs direct terminal, can't pipe through dotcli) ---
 # --- Background sync (settings.json / scoopfile / wingetfile / MCP servers) ---
-if (which dotcli | is-not-empty) {
+# dotcli の有無は起動時に 1 回だけ判定し、pre_prompt hook でも再利用する
+$env.DOTCLI_AVAILABLE = (which dotcli | is-not-empty)
+if $env.DOTCLI_AVAILABLE {
     job spawn { ^dotcli sync --dot $env.DOT | ignore } | ignore
 }
 
-# --- Background starship/zoxide cache refresh (idempotent, no-op if fresh) ---
-job spawn {
-    ^nu ($env.DOT | path join 'nushell\generate-cache.nu') | ignore
-} | ignore
+# --- Background starship/zoxide cache refresh (stale のときだけ spawn) ---
+# 先頭行の key を inline で比較し、fresh なら nu 子プロセスを起動しない。
+# $nu.current-exe は scoop shim を経由しない実体の nu.exe
+use ($NU_DIR | path join 'cache-key.nu') cache-stale
+if (cache-stale 'starship' ($NU_DIR | path join 'cache/starship.nu')) or (cache-stale 'zoxide' ($NU_DIR | path join 'cache/zoxide.nu')) {
+    job spawn {
+        ^$nu.current-exe -n ($NU_DIR | path join 'generate-cache.nu') | ignore
+    } | ignore
+}
 
 # --- yazi (TUI needs direct terminal, can't pipe through dotcli) ---
 def --env y [...args: string] {
@@ -66,16 +83,10 @@ def chrome-yatcy [
     ...extra: string
 ] {
     let profile_dir = ($env.LOCALAPPDATA | path join "chrome-profiles" $profile)
-    if not ($profile_dir | path exists) {
-        mkdir $profile_dir
-    }
     let chrome = (which chrome | get path.0?)
     if ($chrome | is-empty) {
         error make { msg: "chrome.exe not found. Try: scoop install extras/googlechrome" }
     }
-    print $"chrome-yatcy: port=($port), profile=($profile)"
-    print $"  exe : ($chrome)"
-    print $"  data: ($profile_dir)"
     let chrome_args = ([
         $"--remote-debugging-port=($port)"
         "--remote-allow-origins=*"
@@ -83,7 +94,38 @@ def chrome-yatcy [
         "--no-first-run"
         "--no-default-browser-check"
     ] ++ $extra)
-    job spawn { ^$chrome ...$chrome_args } | ignore
+    # _dotcli_launch は cmd /c start 経由なので、引数を cmd.exe がもう一度解釈する。
+    # 壊れる引数は起動前 (プロファイル作成前) に拒む:
+    # - & | < > ^ : nu は空白を含む引数しかクォートしないので、区切り・エスケープとして効く
+    #   (例: "https://e.com/?a=1&b=2" は & で切れ、残りが別コマンドとして実行される)
+    # - "        : cmd へは \" で渡り、cmd のクォート状態を反転させる
+    # - %NAME%   : NAME (":" 以降の置換・部分指定は除く) が定義済みならクォート内でも展開される。
+    #              未定義なら残るので、%20 等のパーセントエンコードは通す
+    # ( ) はコマンド先頭でなければそのまま渡るので許す。
+    # TODO: 拒否は暫定。cmd を通さない detach (pwsh Start-Process) かエスケープへ移すかは未決定。
+    let cmd_dynamic_vars = [cd date time random errorlevel cmdextversion cmdcmdline highestnumanodenumber __cd__ __appdir__]
+    let defined_vars = ($env | columns | str downcase | append $cmd_dynamic_vars)
+    for arg in ([$chrome] ++ $chrome_args) {
+        let reason = if ($arg =~ '[&|<>^"]') {
+            'contains one of & | < > ^ "'
+        } else {
+            # "%" で割った内側の区間がそれぞれ %...% の候補 (a%20%OS% の OS も拾う)
+            let segs = ($arg | split row '%')
+            let names = if ($segs | length) > 2 { $segs | skip 1 | drop 1 } else { [] }
+            let hit = ($names | each {|s| $s | split row ':' | first | str downcase } | where {|n| $n in $defined_vars })
+            if ($hit | is-empty) { "" } else { $"would expand %($hit | first)%" }
+        }
+        if $reason != "" {
+            error make { msg: $"chrome-yatcy: argument '($arg)' ($reason) and cmd.exe would re-parse it. Use the pwsh version instead: pwsh -NoProfile -File '($env.DOT | path join bin chrome-yatcy.ps1)' ..." }
+        }
+    }
+    if not ($profile_dir | path exists) {
+        mkdir $profile_dir
+    }
+    print $"chrome-yatcy: port=($port), profile=($profile)"
+    print $"  exe : ($chrome)"
+    print $"  data: ($profile_dir)"
+    _dotcli_launch $chrome ...$chrome_args
 }
 
 # --- Dotfiles auto-update (background git-prompt) ---
@@ -92,55 +134,100 @@ $env.DOTCLI_JOB_ID = null
 # --- Build outdated check (background) ---
 $env.BUILD_CHECK_JOB_ID = null
 
+# background job は結果を `job send 0 --tag <tag>` で main thread (job id 0) に送る。
+# `job send` の位置引数は送信先 job id で tag ではない。tag なしの `job recv` は全 tag を受け取るので、
+# 回収側も必ず `--tag` を付ける。tag: 1 = git-prompt, 2 = build --check
+#
+# $env.<var> の job id の結果を回収し、format closure で整形して 1 回だけ表示する。
+# 回収済み or job 終了後は env を -1 にし、以降のプロンプトでは job recv / job list を走らせない
+def --env collect-job-message [var: string, tag: int, format: closure] {
+    let id = ($env | get $var)
+    if $id == null or $id == -1 { return }
+    mut msg = try { job recv --tag $tag --timeout 0sec } catch { null }
+    if $msg == null {
+        if (job list | where id == $id | is-not-empty) { return }
+        # recv と job list の間に send して終了した job の結果を取りこぼさないよう、もう一度回収する
+        $msg = try { job recv --tag $tag --timeout 0sec } catch { null }
+    }
+    if $msg != null {
+        let out = (do $format ($msg | str trim))
+        if ($out | is-not-empty) { print $out }
+    }
+    load-env {$var: -1}
+}
+
+# dotcli git-prompt の機械向けトークン (updated:N:areas / dirty / error / 空) を
+# pwsh/profile.ps1 の prompt hook と同じ文言・色に整形する。未知のトークンと空は表示しない (pwsh と同じ)。
+# 色は pwsh の ConsoleColor Green/Yellow/Red (= SGR 92/93/91) に合わせて light_* を使う
+def format-git-prompt [token: string] {
+    if ($token | str starts-with 'updated:') {
+        let p = ($token | str substring 8.. | split row --number 2 ':')
+        let n = $p.0
+        let label = if $n == '1' { 'commit' } else { 'commits' }
+        let areas = ($p.1? | default '')
+        $"\n(ansi light_green)✨ Dotfiles Updated! \(($n) ($label): ($areas)\)(ansi reset)"
+    } else if $token == 'dirty' {
+        $"\n(ansi light_yellow)⚠ Dotfiles: dirty \(behind remote\)(ansi reset)"
+    } else if $token == 'error' {
+        $"\n(ansi light_red)✗ Dotfiles: pull failed(ansi reset)"
+    } else {
+        ''
+    }
+}
+
 $env.config = ($env.config | upsert hooks.pre_prompt {|cfg|
     let existing = try { $cfg.hooks.pre_prompt } catch { [] }
     $existing | append { ||
-        # ① 前回 job の結果を回収して表示（1回のみ）
-        if ($env.DOTCLI_JOB_ID != null and $env.DOTCLI_JOB_ID != -1) {
-            let msg = try { job recv --timeout 0sec } catch { null }
-            if ($msg != null) {
-                let trimmed = ($msg | str trim)
-                if ($trimmed | is-not-empty) {
-                    print $trimmed
-                }
-                $env.DOTCLI_JOB_ID = -1
-            } else {
-                # job が既に終了していたら完了扱い
-                let running = (job list | where id == $env.DOTCLI_JOB_ID | length)
-                if $running == 0 { $env.DOTCLI_JOB_ID = -1 }
-            }
-        }
+        # ① git-prompt job の結果を回収して表示（1回のみ）
+        collect-job-message DOTCLI_JOB_ID 1 {|m| format-git-prompt $m }
         # ② 初回のみ job spawn（dotcli が PATH にある場合のみ）
-        if ($env.DOTCLI_JOB_ID == null and (which dotcli | is-not-empty)) {
+        if ($env.DOTCLI_JOB_ID == null and $env.DOTCLI_AVAILABLE) {
             let dot = $env.DOT
             $env.DOTCLI_JOB_ID = (job spawn {
                 let r = (^dotcli git-prompt $dot | complete)
-                if $r.exit_code == 0 { $r.stdout | job send 0 }
+                if $r.exit_code == 0 { $r.stdout | job send 0 --tag 1 }
             })
         }
         # ③ build --check の結果を回収して表示（1回のみ）
-        if ($env.BUILD_CHECK_JOB_ID != null and $env.BUILD_CHECK_JOB_ID != -1) {
-            let msg = try { job recv --tag 1 --timeout 0sec } catch { null }
-            if ($msg != null) {
-                let trimmed = ($msg | str trim)
-                if ($trimmed | is-not-empty) {
-                    print $trimmed
-                }
-                $env.BUILD_CHECK_JOB_ID = -1
-            } else {
-                let running = (job list | where id == $env.BUILD_CHECK_JOB_ID | length)
-                if $running == 0 { $env.BUILD_CHECK_JOB_ID = -1 }
-            }
-        }
+        collect-job-message BUILD_CHECK_JOB_ID 2 {|m| $m }
         # ④ 初回のみ build --check を job spawn
-        if ($env.BUILD_CHECK_JOB_ID == null and (which dotcli | is-not-empty)) {
+        if ($env.BUILD_CHECK_JOB_ID == null and $env.DOTCLI_AVAILABLE) {
             $env.BUILD_CHECK_JOB_ID = (job spawn {
                 let r = (^dotcli build --check | complete)
                 if $r.exit_code != 0 {
                     let out = ($r.stdout + $r.stderr)
-                    if ($out | str trim | is-not-empty) { $out | job send 1 }
+                    if ($out | str trim | is-not-empty) { $out | job send 0 --tag 2 }
                 }
             })
         }
     }
 })
+
+# --- Right prompt (cmd_duration) ---
+# starship.toml の right_format は $cmd_duration だけなので、毎プロンプト `starship prompt --right` を
+# 起動せず nushell 内で同じ表示を作る (cache/starship.nu の PROMPT_COMMAND_RIGHT を上書き)。
+# starship.toml の [cmd_duration] (min_time = 500, format = "took [$duration](bold yellow)") を
+# 変えたら、ここの閾値・書式も合わせる。right_format に他の module を足した場合も同様に追従しない
+const CMD_DURATION_MIN_MS = 500
+
+# starship の cmd_duration と同じ表記 (show_milliseconds = false): 先頭の 0 の単位を省き、
+# 秒は常に出す。例 0s / 59s / 2m0s / 1h0m0s / 1d0h0m1s
+def format-cmd-duration [ms: int]: nothing -> string {
+    let s = ($ms // 1000)
+    [
+        [n u];
+        [($s // 86400) d]
+        [(($s mod 86400) // 3600) h]
+        [(($s mod 3600) // 60) m]
+        [($s mod 60) s]
+    ] | skip while {|p| $p.n == 0 and $p.u != 's' } | each {|p| $"($p.n)($p.u)" } | str join
+}
+
+$env.PROMPT_COMMAND_RIGHT = {||
+    # CMD_DURATION_MS の初期値 "0823" は未実行の意味 (starship init と同じく 0 扱い)
+    let raw = ($env.CMD_DURATION_MS? | default '0823')
+    let ms = if $raw == '0823' { 0 } else { $raw | into int }
+    if $ms < $CMD_DURATION_MIN_MS { '' } else {
+        $"took (ansi yellow_bold)(format-cmd-duration $ms)(ansi reset)"
+    }
+}

@@ -1,7 +1,8 @@
 # run-task.nu — F5 で起動するタスクランナー
 # 以下のソースを統合してエントリ化し、input list で選択して実行する。
 #   - ルート package.json の scripts
-#   - packages/*/package.json の scripts (workspace)
+#   - workspace の各 package.json の scripts
+#     (pnpm-workspace.yaml の packages → package.json の workspaces → packages/* の順に探す)
 #   - justfile の recipes
 # 直近の使用履歴を frecency でスコアリングしてディレクトリ別に並び替える。
 # 候補が1つなら自動実行、複数なら fzy 選択。
@@ -114,6 +115,47 @@ def pm-exec [pm: string, args: list<string>] {
     }
 }
 
+# workspace の package.json の glob パターン (ディレクトリ単位) を返す。
+# 1. pnpm-workspace.yaml の packages
+# 2. package.json の workspaces (配列、または yarn の {packages: [...]})
+# 3. どちらも無ければ packages/*
+# キーがあれば空配列でもその定義に従う (packages/* には戻らない)。
+# packages を持たない pnpm-workspace.yaml (catalog や設定だけ) は定義なしとして次へ進む。
+def workspace-patterns [pkg_root: any] {
+    let pnpm_ws = if ('pnpm-workspace.yaml' | path exists) {
+        try { open pnpm-workspace.yaml | get -o packages } catch { null }
+    } else { null }
+    if ($pnpm_ws | describe | str starts-with 'list') { return $pnpm_ws }
+
+    let ws = (try { $pkg_root | get -o workspaces } catch { null })
+    let ws = if ($ws | describe | str starts-with 'record') { $ws | get -o packages } else { $ws }
+    if ($ws | describe | str starts-with 'list') { return $ws }
+
+    ['packages/*']
+}
+
+# workspace パターンに一致するディレクトリの package.json を返す (絶対パス、重複なし)。
+# TODO: `!` で始まる除外パターンは未対応。現在は無視しているため、除外したパッケージも候補に出る
+def workspace-package-files [pkg_root: any] {
+    let root_pkg = ('package.json' | path expand)
+    workspace-patterns $pkg_root
+        | where { |p| ($p | describe) == 'string' and not ($p | str starts-with '!') }
+        | each { |p|
+            # glob では `\` がエスケープ扱いになり得るので `/` で連結する
+            let dir = ($p | str replace --regex '^(\./)+' '' | str trim --right --char '/')
+            let pattern = if ($dir | is-empty) or $dir == '.' { 'package.json' } else { $"($dir)/package.json" }
+            if ($pattern =~ '[*?\[{]') {
+                try { glob $pattern --exclude ['**/node_modules/**'] } catch { [] }
+            } else if ($pattern | path exists) {
+                # nushell 0.110 の glob は --exclude を付けるとワイルドカードの無いパターンに何も返さない
+                [($pattern | path expand)]
+            } else { [] }
+        }
+        | flatten
+        | uniq
+        | where { |f| $f != $root_pkg }
+}
+
 def run-task [] {
     mut entries = []
 
@@ -126,7 +168,7 @@ def run-task [] {
                 $entries = ($entries | append { display: $"root: ($s)", scope: "root", script: $s })
             }
 
-            let workspace_pkgs = (try { glob packages/*/package.json } catch { [] })
+            let workspace_pkgs = (workspace-package-files $pkg_root)
             for p in $workspace_pkgs {
                 let pkg = (try { open $p } catch { null })
                 if $pkg == null { continue }
