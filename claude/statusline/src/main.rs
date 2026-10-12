@@ -575,6 +575,21 @@ fn read_glm_cache(path: &str) -> GlmCacheRead {
     }
 }
 
+/// Cache to write just before calling the API, recording the attempt as a
+/// failure. A run that never gets to record its result (killed by the
+/// watchdog while DNS resolution hangs, which ureq's timeout does not cover,
+/// or cancelled by Claude Code) then still keeps the next runs off the
+/// network for FAIL_CACHE_TTL_SECONDS. A successful fetch overwrites it with
+/// failed_at 0. None for an unparsable file, which is left alone for the
+/// same reason as in glm_fetch_failed.
+fn attempt_marker(prev: &GlmCacheRead, now: u64) -> Option<CachedRateLimits> {
+    match prev {
+        GlmCacheRead::Unparsable => None,
+        GlmCacheRead::Missing => Some(failure_cache(None, now)),
+        GlmCacheRead::Parsed(c) => Some(failure_cache(Some(c.clone()), now)),
+    }
+}
+
 /// Records a failed fetch and returns the rate limits to display.
 /// An unparsable file is left alone: it may be a good cache being written by
 /// a concurrent run, and replacing it would drop the last fetched data.
@@ -623,6 +638,11 @@ fn get_glm_rate_limits(dir: Option<&str>) -> RateLimits {
             }
         }
     };
+
+    // parsed_cache stays unchanged so a failure below still keeps its data.
+    if let Some(marker) = attempt_marker(&parsed_cache, now) {
+        write_glm_cache(&cache_path, &marker);
+    }
 
     let resp = match ureq::get("https://api.z.ai/api/monitor/usage/quota/limit")
         .set("Authorization", &api_key)
@@ -870,9 +890,12 @@ fn cache_rate_limits(dir: Option<&str>, rl: &RateLimits, now: u64) {
 }
 
 fn main() {
-    // Watchdog: a normal run takes a few ms up to ~2s (GLM_API_TIMEOUT), so
-    // exit after 5s if this process stalls once main is running, e.g. stdin
-    // never reaches EOF or a network call hangs.
+    // Watchdog: a normal run takes a few ms, or about GLM_API_TIMEOUT when it
+    // calls the GLM API, so exit after 5s if this process stalls once main is
+    // running, e.g. stdin never reaches EOF or a network call hangs. DNS
+    // resolution is not covered by GLM_API_TIMEOUT (ureq 2 resolves without a
+    // deadline) and can run until this exit; the attempt marker written
+    // before the call keeps later runs off the network meanwhile.
     // It does not cover the orphans seen on Windows: Git Bash (MSYS) creates
     // the child suspended, and if Claude Code cancels the bash in between,
     // the child stays suspended with main never run (1 thread, CPU 0), so
@@ -1129,6 +1152,37 @@ mod tests {
         let c: CachedRateLimits =
             serde_json::from_str(r#"{"cached_at":0,"provider":"z.ai","failed_at":5}"#).unwrap();
         assert!(c.rate_limits.is_none());
+    }
+
+    #[test]
+    fn attempt_marker_keeps_data_and_skips_network_until_fail_ttl() {
+        // a run killed after writing the marker (DNS hang, cancel) must still
+        // keep the next runs off the network
+        let now = 1_000_000;
+        let mut prev = zai_cache(now - 3600, 0);
+        prev.rate_limits.as_mut().unwrap().five_hour = Some(Window {
+            used_percentage: Some(42.0),
+            resets_at: None,
+        });
+        assert!(!cache_is_fresh(&prev, now));
+        let m = attempt_marker(&GlmCacheRead::Parsed(prev), now).unwrap();
+        assert_eq!(m.cached_at, now - 3600);
+        assert_eq!(m.failed_at, now);
+        assert_eq!(
+            m.rate_limits.as_ref().and_then(|r| r.five_hour.as_ref()).and_then(|w| w.used_percentage),
+            Some(42.0)
+        );
+        assert!(cache_is_fresh(&m, now + FAIL_CACHE_TTL_SECONDS - 1));
+        assert!(!cache_is_fresh(&m, now + FAIL_CACHE_TTL_SECONDS));
+
+        // no cache yet: a marker without data
+        let m = attempt_marker(&GlmCacheRead::Missing, now).unwrap();
+        assert_eq!(m.cached_at, 0);
+        assert!(m.rate_limits.is_none());
+        assert!(cache_is_fresh(&m, now + 1));
+
+        // a possibly torn cache is left alone
+        assert!(attempt_marker(&GlmCacheRead::Unparsable, now).is_none());
     }
 
     #[test]
