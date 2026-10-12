@@ -18,6 +18,8 @@
 
 bootstrap.ps1（リポジトリルート）は以下の順序で実行される。
 
+失敗の扱い: Phase 0 の失敗だけは bootstrap を止める (後続のすべての前提)。Phase 1-5 は 1 つが失敗しても残りを続け、最後に失敗した Phase (Phase 2 は setup.log の Error 行 = 失敗した手順も) と再実行コマンドを一覧にして非 0 で終わる。`irm | iex` でコンソールが閉じないよう、終わり方は exit でなく throw。
+
 ### Phase 0（bootstrap.ps1 直接）: 前提条件
 
 bootstrap.ps1 自体に直接書く。Phase 1 以降の前提となる設定。
@@ -30,7 +32,7 @@ bootstrap.ps1 自体に直接書く。Phase 1 以降の前提となる設定。
 
 install/scoopfile.json に記載された小型アプリをインストール。
 install/install-order.json の `large` リストに含まれないものが対象。
-失敗時は bootstrap 全体が中断する。
+失敗したアプリは scoop.ps1 が一覧にし exit 1。bootstrap は失敗として記録し、Phase 2 以降を続ける。
 
 ### Phase 2: 設定 — setup.ps1
 
