@@ -41,8 +41,11 @@ if (!(gcm winget -ea 0)) {
     Remove-Item $tmp -Recurse -Force -ea 0
     $ProgressPreference = 'Continue'
 
+    # winget を入れられない環境 (LTSC / Sandbox 等) では wingetfile.json のアプリが 1 つも入らないので、
+    # 失敗として exit 1 で返す。setup.ps1 は 'Winget apps' 手順の失敗に数え、bootstrap は最後の一覧に載せる
+    # (他の手順・Phase は止まらない)
     if (!(gcm winget -ea 0)) {
-        wh "winget installation failed. Skipping." -Fo Yellow
+        wh "winget installation failed: no winget apps were installed. Install App Installer (winget), then rerun install\winget.ps1" -Fo Red
         exit 1
     }
     wh "winget installed." -Fo Green
