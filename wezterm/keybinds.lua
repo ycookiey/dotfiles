@@ -1,86 +1,76 @@
 local wezterm = require("wezterm")
 local act = wezterm.action
+local session_restore = require("session_restore")
 
--- フォーカス中のペインのプロセス名を取得
-local function fg_name(pane)
-  local proc = pane:get_foreground_process_name()
-  if not proc then return "" end
-  return proc:match("([^/\\]+)$") or ""
+-- wezterm cli の実行ファイル。GUI と同じフォルダの本体を直接呼び、scoop の shim を経由する
+-- 分のプロセス起動を省く。見つからなければ PATH 上の wezterm に任せる
+local wezterm_exe = (function()
+  local is_windows = wezterm.target_triple:find("windows") ~= nil
+  local sep = is_windows and "\\" or "/"
+  local path = wezterm.executable_dir .. sep .. (is_windows and "wezterm.exe" or "wezterm")
+  local f = io.open(path, "rb")
+  if f then
+    f:close()
+    return path
+  end
+  return "wezterm"
+end)()
+
+-- `wezterm cli <args...>` を実行し、成否を返す。失敗時は stderr をログに出す
+local function cli(args)
+  local argv = { wezterm_exe, "cli" }
+  for _, a in ipairs(args) do argv[#argv + 1] = a end
+  local ok, _, stderr = wezterm.run_child_process(argv)
+  if not ok then
+    wezterm.log_error("wezterm cli " .. table.concat(args, " ") .. " failed: " .. tostring(stderr))
+  end
+  return ok
 end
 
-local function is_nushell(pane)
-  local name = fg_name(pane)
-  return name == "nu.exe" or name == "nu"
+-- ペインとそのタブにフォーカスを移す
+local function focus_pane(pane_id)
+  local p = wezterm.mux.get_pane(pane_id)
+  if not p then return end
+  local t = p:tab()
+  if t then t:activate() end
+  p:activate()
 end
 
--- Show which key table is active in the status area
-wezterm.on("update-right-status", function(window, pane)
-  local name = window:active_key_table()
-  if name then
-    name = "TABLE: " .. name
-  end
-  window:set_right_status(name or "")
-end)
-
--- ペイン/タブ統合ナビゲーション（次へ）
-local navigate_next = wezterm.action_callback(function(window, pane)
-  local tab = window:active_tab()
-  local panes = tab:panes()
-
-  if #panes == 1 then
-    window:perform_action(act.ActivateTabRelative(1), pane)
-    return
-  end
-
-  local current_id = pane:pane_id()
-  local current_idx = nil
+-- tab:panes() の並びで pane の位置を返す (見つからなければ nil)
+local function pane_index(panes, pane_id)
   for i, p in ipairs(panes) do
-    if p:pane_id() == current_id then
-      current_idx = i
-      break
+    if p:pane_id() == pane_id then return i end
+  end
+  return nil
+end
+
+-- ペイン/タブ統合ナビゲーション。delta=1 で次へ、-1 で前へ。端のペインではタブを移る
+local function navigate(delta)
+  return wezterm.action_callback(function(window, pane)
+    local panes = window:active_tab():panes()
+
+    if #panes == 1 then
+      window:perform_action(act.ActivateTabRelative(delta), pane)
+      return
     end
-  end
 
-  if current_idx == #panes then
-    window:perform_action(act.ActivateTabRelative(1), pane)
-  else
-    window:perform_action(act.ActivatePaneDirection("Next"), pane)
-  end
-end)
+    local idx = pane_index(panes, pane:pane_id())
+    if idx == nil then return end
 
--- ペイン/タブ統合ナビゲーション（前へ）
-local navigate_prev = wezterm.action_callback(function(window, pane)
-  local tab = window:active_tab()
-  local panes = tab:panes()
-
-  if #panes == 1 then
-    window:perform_action(act.ActivateTabRelative(-1), pane)
-    return
-  end
-
-  local current_id = pane:pane_id()
-  local current_idx = nil
-  for i, p in ipairs(panes) do
-    if p:pane_id() == current_id then
-      current_idx = i
-      break
+    if (delta > 0 and idx == #panes) or (delta < 0 and idx == 1) then
+      window:perform_action(act.ActivateTabRelative(delta), pane)
+    else
+      window:perform_action(act.ActivatePaneDirection(delta > 0 and "Next" or "Prev"), pane)
     end
-  end
+  end)
+end
 
-  if current_idx == 1 then
-    window:perform_action(act.ActivateTabRelative(-1), pane)
-  else
-    window:perform_action(act.ActivatePaneDirection("Prev"), pane)
-  end
-end)
-
--- 現在のタブの全ペインを左隣のタブに統合
+-- 現在のタブの全ペインを左隣のタブに統合する。T (左隣のアクティブペイン) の右に、
+-- tab:panes() の順で A|B|C とつなげ、全ペインの幅をそろえる
 local merge_adjacent_tab = wezterm.action_callback(function(window, pane)
   local tab = window:active_tab()
-  local mux_window = tab:window()
-  local tabs = mux_window:tabs()
+  local tabs = tab:window():tabs()
 
-  -- 現在のタブインデックスを取得
   local current_tab_idx = nil
   for i, t in ipairs(tabs) do
     if t:tab_id() == tab:tab_id() then
@@ -94,30 +84,124 @@ local merge_adjacent_tab = wezterm.action_callback(function(window, pane)
     return
   end
 
-  -- 左隣のタブのアクティブペインIDを取得
-  local prev_tab = tabs[current_tab_idx - 1]
-  local target_pane_id = prev_tab:active_pane():pane_id()
-
-  -- 直前のアクティブペインIDを記録
+  local target_pane_id = tabs[current_tab_idx - 1]:active_pane():pane_id()
   local active_pane_id = pane:pane_id()
 
-  -- 現在のタブの全ペインを左隣に統合
-  local current_panes = tab:panes()
-  for _, p in ipairs(current_panes) do
-    wezterm.run_child_process({
-      "wezterm", "cli", "split-pane",
-      "--move-pane-id", tostring(p:pane_id()),
-      "--right",
+  -- 最後のペインを移すとタブが消えるので、先に ID だけを控える
+  local ids = {}
+  for _, p in ipairs(tab:panes()) do ids[#ids + 1] = p:pane_id() end
+
+  -- i 番目の split で移したペインに直前のセルの (n-i+1)/(n-i+2) を渡すと、
+  -- T を含む n+1 個のペインがほぼ等幅になる (n=3 なら 75, 67, 50)
+  local n = #ids
+  for i, id in ipairs(ids) do
+    local pct = math.floor(100 * (n - i + 1) / (n - i + 2) + 0.5)
+    if not cli({
+      "split-pane",
+      "--move-pane-id", tostring(id),
       "--pane-id", tostring(target_pane_id),
-    })
+      "--right", "--percent", tostring(pct),
+    }) then
+      return
+    end
+    target_pane_id = id
   end
 
-  -- 元のアクティブペインにフォーカスを戻す
-  wezterm.run_child_process({
-    "wezterm", "cli", "activate-pane",
-    "--pane-id", tostring(active_pane_id),
-  })
+  focus_pane(active_pane_id)
 end)
+
+-- 隣のペインを画面上の配置から探す。dir は "left" / "right" / "up" / "down"。
+-- 辺を丸ごと共有するペイン (左右なら同じ top と height、上下なら同じ left と width) だけを隣とみなす。
+-- 部分的に接するペインと入れ替えると分割の木が作り替わるため対象外
+local function find_neighbor(infos, cur, dir)
+  local function touches(a_start, a_len, b_start)
+    -- 区切り線の幅は 0 か 1 セル
+    local gap = b_start - (a_start + a_len)
+    return gap == 0 or gap == 1
+  end
+  for _, o in ipairs(infos) do
+    if o.pane:pane_id() ~= cur.pane:pane_id() then
+      local same_row = o.top == cur.top and o.height == cur.height
+      local same_col = o.left == cur.left and o.width == cur.width
+      if (dir == "left" and same_row and touches(o.left, o.width, cur.left))
+        or (dir == "right" and same_row and touches(cur.left, cur.width, o.left))
+        or (dir == "up" and same_col and touches(o.top, o.height, cur.top))
+        or (dir == "down" and same_col and touches(cur.top, cur.height, o.top)) then
+        return o
+      end
+    end
+  end
+  return nil
+end
+
+-- swap で何をするかを決める。戻り値:
+--   "swap", nbr, flag, size  辺を丸ごと共有する隣 nbr と入れ替える (flag は split-pane の向き)
+--   "tab"                    delta 方向の角のペイン (-1 は左上、1 は右下) なのでタブを動かす
+--   "none"                   その方向に部分的にしか接しない隣しかない。分割の木を作り替えないよう何もしない
+-- ペインはタブを隙間なく埋めるので、左上の角は left == 0 かつ top == 0、右下の角は
+-- 右端と下端がそれぞれ全ペインの最大値に届くことで判定できる
+-- TODO: 辺を丸ごと共有する隣が無いときの動作はユーザの選択待ち。
+--   A (今の動作): 角のペインだけタブを動かし、それ以外は何もしない
+--   B: 角かどうかに関わらず MoveTabRelative(delta) でタブを動かす
+--   C: A に加え、何もしないときに window:toast_notification で理由を短く知らせる
+local function swap_plan(infos, cur, delta)
+  local candidates = delta < 0
+    and { { "left", "--left", "width" }, { "up", "--top", "height" } }
+    or { { "right", "--right", "width" }, { "down", "--bottom", "height" } }
+
+  for _, c in ipairs(candidates) do
+    local nbr = find_neighbor(infos, cur, c[1])
+    if nbr then return "swap", nbr, c[2], c[3] end
+  end
+
+  local at_corner
+  if delta < 0 then
+    at_corner = cur.left == 0 and cur.top == 0
+  else
+    local max_right, max_bottom = 0, 0
+    for _, o in ipairs(infos) do
+      max_right = math.max(max_right, o.left + o.width)
+      max_bottom = math.max(max_bottom, o.top + o.height)
+    end
+    at_corner = cur.left + cur.width == max_right and cur.top + cur.height == max_bottom
+  end
+  return at_corner and "tab" or "none"
+end
+
+-- 隣のペインと位置を入れ替える。delta=-1 は左 (なければ上)、1 は右 (なければ下)。
+-- サイズは 2 ペインの合計に対する今の比で保つ。delta 方向の角のペインならタブ自体を動かし、
+-- 部分的に接する隣しかなければ何もしない
+local function swap(delta)
+  return wezterm.action_callback(function(window, pane)
+    local tab = window:active_tab()
+    local infos = tab:panes_with_info()
+    local current_id = pane:pane_id()
+
+    local cur = nil
+    for _, pi in ipairs(infos) do
+      if pi.pane:pane_id() == current_id then cur = pi; break end
+    end
+    if cur == nil then return end
+
+    local plan, nbr, flag, size = swap_plan(infos, cur, delta)
+    if plan == "swap" then
+      local pct = math.floor(cur[size] / (cur[size] + nbr[size]) * 100 + 0.5)
+      if cli({
+        "split-pane",
+        "--move-pane-id", tostring(current_id),
+        "--pane-id", tostring(nbr.pane:pane_id()),
+        flag, "--percent", tostring(pct),
+      }) then
+        focus_pane(current_id)
+      end
+    elseif plan == "tab" then
+      window:perform_action(act.MoveTabRelative(delta), pane)
+    else
+      wezterm.log_info("swap: pane " .. current_id .. " has no neighbor sharing a whole edge in direction "
+        .. delta .. "; nothing to do")
+    end
+  end)
+end
 
 -- 現在のペインを新規タブに分離
 local split_pane_to_tab = wezterm.action_callback(function(window, pane)
@@ -127,20 +211,10 @@ end)
 return {
   keys = {
     -- タブ/ペイン統合ナビゲーション
-    { key = "Tab", mods = "CTRL", action = navigate_next },
-    { key = "Tab", mods = "SHIFT|CTRL", action = navigate_prev },
-    -- タブ新規作成（nushellペインならnushellで開く）
-    {
-      key = "t",
-      mods = "CTRL",
-      action = wezterm.action_callback(function(window, pane)
-        if is_nushell(pane) then
-          window:perform_action(act.SpawnCommandInNewTab({ args = { "nu" } }), pane)
-        else
-          window:perform_action(act.SpawnTab("CurrentPaneDomain"), pane)
-        end
-      end),
-    },
+    { key = "Tab", mods = "CTRL", action = navigate(1) },
+    { key = "Tab", mods = "SHIFT|CTRL", action = navigate(-1) },
+    -- タブ新規作成 (default_prog で開き、cwd は現在ペインから引き継ぐ)
+    { key = "t", mods = "CTRL", action = act.SpawnTab("CurrentPaneDomain") },
     -- 新規ウィンドウ
     { key = "n", mods = "SHIFT|CTRL", action = act.SpawnWindow },
     -- nvimを新規ウィンドウで開く（現在ペインのCWDを引き継ぐ）
@@ -148,92 +222,17 @@ return {
       key = "e",
       mods = "ALT",
       action = wezterm.action_callback(function(window, pane)
-        local cwd_uri = pane:get_current_working_dir()
-        local cwd = nil
-        if cwd_uri then
-          if type(cwd_uri) == "string" then
-            cwd = cwd_uri:gsub("^file://[^/]*", "")
-          elseif cwd_uri.file_path then
-            cwd = cwd_uri.file_path
-          end
-        end
         window:perform_action(act.SpawnCommandInNewWindow({
           args = { "nvim" },
-          cwd = cwd,
+          cwd = session_restore.pane_cwd(pane),
         }), pane)
       end),
     },
     -- タブを閉じる
     { key = "w", mods = "CTRL", action = act({ CloseCurrentTab = { confirm = true } }) },
-    -- タブ/ペイン位置入れ替え（隣のペインとスワップ、端なら外へ → タブ移動）
-    {
-      key = ",",
-      mods = "ALT",
-      action = wezterm.action_callback(function(window, pane)
-        local tab = window:active_tab()
-        local panes = tab:panes()
-        local current_id = pane:pane_id()
-        local idx = nil
-        for i, p in ipairs(panes) do
-          if p:pane_id() == current_id then idx = i; break end
-        end
-        if #panes <= 1 or idx == 1 then
-          window:perform_action(act.MoveTabRelative(-1), pane)
-        else
-          local info = tab:panes_with_info()
-          local cur_w, nbr_w
-          for _, pi in ipairs(info) do
-            if pi.pane:pane_id() == current_id then cur_w = pi.width end
-            if pi.pane:pane_id() == panes[idx - 1]:pane_id() then nbr_w = pi.width end
-          end
-          local pct = math.floor(cur_w / (cur_w + nbr_w) * 100 + 0.5)
-          wezterm.run_child_process({
-            "wezterm", "cli", "split-pane",
-            "--move-pane-id", tostring(current_id),
-            "--pane-id", tostring(panes[idx - 1]:pane_id()),
-            "--left", "--percent", tostring(pct),
-          })
-          wezterm.run_child_process({
-            "wezterm", "cli", "activate-pane",
-            "--pane-id", tostring(current_id),
-          })
-        end
-      end),
-    },
-    {
-      key = ".",
-      mods = "ALT",
-      action = wezterm.action_callback(function(window, pane)
-        local tab = window:active_tab()
-        local panes = tab:panes()
-        local current_id = pane:pane_id()
-        local idx = nil
-        for i, p in ipairs(panes) do
-          if p:pane_id() == current_id then idx = i; break end
-        end
-        if #panes <= 1 or idx == #panes then
-          window:perform_action(act.MoveTabRelative(1), pane)
-        else
-          local info = tab:panes_with_info()
-          local cur_w, nbr_w
-          for _, pi in ipairs(info) do
-            if pi.pane:pane_id() == current_id then cur_w = pi.width end
-            if pi.pane:pane_id() == panes[idx + 1]:pane_id() then nbr_w = pi.width end
-          end
-          local pct = math.floor(cur_w / (cur_w + nbr_w) * 100 + 0.5)
-          wezterm.run_child_process({
-            "wezterm", "cli", "split-pane",
-            "--move-pane-id", tostring(current_id),
-            "--pane-id", tostring(panes[idx + 1]:pane_id()),
-            "--right", "--percent", tostring(pct),
-          })
-          wezterm.run_child_process({
-            "wezterm", "cli", "activate-pane",
-            "--pane-id", tostring(current_id),
-          })
-        end
-      end),
-    },
+    -- タブ/ペイン位置入れ替え（隣のペインとスワップ、隣がなければタブ移動）
+    { key = ",", mods = "ALT", action = swap(-1) },
+    { key = ".", mods = "ALT", action = swap(1) },
 
     -- タブ合成・分離
     { key = "m", mods = "ALT", action = merge_adjacent_tab },
@@ -259,27 +258,9 @@ return {
     -- 貼り付け
     { key = "v", mods = "CTRL", action = act.PasteFrom("Clipboard") },
 
-    -- ペイン作成（nushellペインならnushellで開く）
-    {
-      key = "d",
-      mods = "ALT",
-      action = wezterm.action_callback(function(window, pane)
-        local split = is_nushell(pane)
-          and act.SplitVertical({ args = { "nu" }, domain = "CurrentPaneDomain" })
-          or act.SplitVertical({ domain = "CurrentPaneDomain" })
-        window:perform_action(split, pane)
-      end),
-    },
-    {
-      key = "r",
-      mods = "ALT",
-      action = wezterm.action_callback(function(window, pane)
-        local split = is_nushell(pane)
-          and act.SplitHorizontal({ args = { "nu" }, domain = "CurrentPaneDomain" })
-          or act.SplitHorizontal({ domain = "CurrentPaneDomain" })
-        window:perform_action(split, pane)
-      end),
-    },
+    -- ペイン作成 (default_prog で開き、cwd は現在ペインから引き継ぐ)
+    { key = "d", mods = "ALT", action = act.SplitVertical({ domain = "CurrentPaneDomain" }) },
+    { key = "r", mods = "ALT", action = act.SplitHorizontal({ domain = "CurrentPaneDomain" }) },
     -- ペインを閉じる
     { key = "x", mods = "ALT", action = act({ CloseCurrentPane = { confirm = true } }) },
     -- ペイン移動 (Alt+矢印。Alt+hjkl は nvim の編集操作用に解放)
@@ -290,7 +271,7 @@ return {
     -- ペインズーム
     { key = "z", mods = "ALT", action = act.TogglePaneZoomState },
     -- 前回の WezTerm の窓・タブ・ペインと Claude Code の会話を復元
-    { key = "R", mods = "ALT|SHIFT", action = require("session_restore").restore_action() },
+    { key = "R", mods = "ALT|SHIFT", action = session_restore.restore_action() },
     -- フォントサイズ
     { key = "+", mods = "CTRL", action = act.IncreaseFontSize },
     { key = "-", mods = "CTRL", action = act.DecreaseFontSize },

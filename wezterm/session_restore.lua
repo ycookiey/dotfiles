@@ -87,12 +87,6 @@ local function current_pid()
   return wezterm.procinfo.pid()
 end
 
--- 保存するのは GUI プロセスだけ (`wezterm cli` 等も同じ設定を読むため)
-local function should_save()
-  local info = wezterm.procinfo.get_info_for_pid(current_pid())
-  return proc_name(info):match("^wezterm%-gui") ~= nil
-end
-
 local function instance_id()
   if not wezterm.GLOBAL.session_restore_instance then
     wezterm.GLOBAL.session_restore_instance = string.format("%d-%d", os.time(), current_pid())
@@ -100,14 +94,17 @@ local function instance_id()
   return wezterm.GLOBAL.session_restore_instance
 end
 
+-- ペインの cwd を、spawn の cwd にそのまま渡せるパスで返す (分からなければ nil)。
+-- Windows の Url.file_path は /C:/foo/ の形なので、先頭の / を外して C:/foo/ にする
 local function cwd_of(pane)
   local ok, url = pcall(function() return pane:get_current_working_dir() end)
   if not ok or not url then return nil end
   local path = type(url) == "string" and url:gsub("^file://[^/]*", "") or url.file_path
   if not path then return nil end
-  -- /C:/foo/ → C:/foo/
   return (path:gsub("^/(%a):", "%1:"))
 end
+
+M.pane_cwd = cwd_of
 
 -- ペインの前面プロセスから親をたどり、シェルに最も近い claude を返す。
 -- Claude から起動された入れ子の `claude -p` はこれで除外される
@@ -117,9 +114,14 @@ local function top_claude_pid(pane)
   -- 前面のプロセスは短命なもの (Claude のステータス行の表示で起動するコマンド等) のことがあり、
   -- pid で問い合わせ直すと既に終了していて nil になる (実測)。最初は受け取った情報をそのまま使う
   local pid, info, top = fg.pid, fg, nil
+  local gui_pid = current_pid()
   for _ = 1, 32 do
     local name = proc_name(info)
     if is_claude_name(name) then top = pid end
+    -- 親がこの GUI なら問い合わせずに止める。get_info_for_pid は渡した pid の配下の全プロセス木を
+    -- キャッシュせずに作るため、GUI の pid を渡すと全ペインのプロセスを読むことになる。
+    -- 名前の判定の後に置くので、GUI の直下で動く claude (`wezterm start -- claude`) も拾う
+    if info.ppid == gui_pid then break end
     if name:match("^wezterm") or not info.ppid or info.ppid == 0 or info.ppid == pid then break end
     pid = info.ppid
     info = wezterm.procinfo.get_info_for_pid(pid)
@@ -460,9 +462,55 @@ local function restore_tab(tab_spec, spawn)
   return tab, placed
 end
 
+-- 復元の途中の状態 (窓の大きさ待ち・最大化待ち・会話再開の確認) は、設定の再読み込み
+-- (automatically_reload_config) で Lua の状態が作り直されても続くよう wezterm.GLOBAL に置く。
+-- GLOBAL に入れた表の入れ子の書き換えに頼らないよう、表は JSON 文字列として丸ごと読み書きする
+local STATE_PREFIX = "session_restore_state_"
+
+local function state_get(name)
+  local s = wezterm.GLOBAL[STATE_PREFIX .. name]
+  if type(s) ~= "string" then return nil end
+  local ok, v = pcall(wezterm.serde.json_decode, s)
+  if ok and type(v) == "table" then return v end
+  return nil
+end
+
+-- value が nil なら消す
+local function state_set(name, value)
+  wezterm.GLOBAL[STATE_PREFIX .. name] = value ~= nil and wezterm.serde.json_encode(value) or nil
+end
+
+-- 窓の大きさを合わせる途中の復元。window_id (文字列) → 保存。window-resized を受けたら分割を作る
+local function pending_get(window_id)
+  local all = state_get("pending")
+  return all and all[tostring(window_id)] or nil
+end
+
+local function pending_set(window_id, snap)
+  local all = state_get("pending")
+  if not all and snap == nil then return end
+  all = all or {}
+  all[tostring(window_id)] = snap
+  state_set("pending", next(all) and all or nil)
+end
+
 -- 復元で新しく開いた窓のうち、GUI の窓ができたら最大化するもの (mux の window_id の集合)。
 -- window-config-reloaded だけでは取りこぼす窓があった (実測) ため、update-status でも確かめる
-local maximize_on_open = {}
+local function maximize_on_open(window_id)
+  local all = state_get("maximize") or {}
+  all[tostring(window_id)] = true
+  state_set("maximize", all)
+end
+
+local function maximize_if_pending(window)
+  local all = state_get("maximize")
+  if not all then return end
+  local key = tostring(window:window_id())
+  if not all[key] then return end
+  all[key] = nil
+  state_set("maximize", next(all) and all or nil)
+  window:maximize()
+end
 
 -- 復元後の確認。spawn / split の指定 (cwd・起動コマンド) が丸ごと使われないことがあった (実測、
 -- 9 ペイン中 1 つ、原因は未確認) ため、会話を再開するはずのペインで claude が動いているかを
@@ -470,34 +518,47 @@ local maximize_on_open = {}
 --   0: 見つからなければ 10 秒後にもう一度確かめる (判定の取りこぼしで Claude に文字を送らないため)
 --   1: それでも見つからなければ、そのペインのシェルに再開コマンドを打ち込み、20 秒後に確かめる
 --   2: まだ見つからなければ、手で戻すコマンドを通知とファイルで知らせる
--- 文字を送るのは、ペインを作ってから 30 秒以上たち、シェルが入力待ちになっている時点だけ
-local verify_list, verify_at, verify_stage = nil, nil, 0
+-- 文字を送るのは、ペインを作ってから 30 秒以上たち、シェルが入力待ちになっている時点だけ。
+-- 確かめる時刻は update-status で毎回読むため、表とは別の数値で持つ
+local VERIFY_AT_KEY = STATE_PREFIX .. "verify_at"
 local failed_file = snapshot_dir .. "\\session-restore-failed.txt"
 
+-- list が空なら確認をやめる (状態を消す)
+local function set_verify(list, stage, at)
+  if #list == 0 then
+    wezterm.GLOBAL[VERIFY_AT_KEY] = nil
+    state_set("verify", nil)
+    return
+  end
+  state_set("verify", { list = list, stage = stage })
+  wezterm.GLOBAL[VERIFY_AT_KEY] = at
+end
+
 local function verify_resumed(window)
-  if not verify_at or os.time() < verify_at then return end
-  local list = verify_list
-  verify_list, verify_at = nil, nil
+  local at = wezterm.GLOBAL[VERIFY_AT_KEY]
+  if not at or os.time() < at then return end
+  local v = state_get("verify") or {}
+  local stage = v.stage or 0
+  -- 先に消し、続ける場合は下で次の段階を置き直す
+  set_verify({})
   local missing = {}
-  for _, item in ipairs(list or {}) do
+  for _, item in ipairs(v.list or {}) do
     local pane = wezterm.mux.get_pane(item.pane_id)
     if pane and not top_claude_pid(pane) then table.insert(missing, item) end
   end
   if #missing == 0 then return end
-  if verify_stage == 0 then
-    verify_stage = 1
-    verify_list, verify_at = missing, os.time() + 10
+  if stage == 0 then
+    set_verify(missing, 1, os.time() + 10)
     return
   end
-  if verify_stage == 1 then
-    verify_stage = 2
+  if stage == 1 then
     for _, item in ipairs(missing) do
       local pane = wezterm.mux.get_pane(item.pane_id)
       local text = opts.retry_command(item.session_id)
       wezterm.log_info("session_restore: retry pane " .. item.pane_id .. ": " .. text)
       pane:send_text(text .. "\r")
     end
-    verify_list, verify_at = missing, os.time() + 20
+    set_verify(missing, 2, os.time() + 20)
     return
   end
   local lines = {}
@@ -518,14 +579,8 @@ local function verify_resumed(window)
   )
 end
 
-local function build(window, pane, snap)
-  local done_key = "session_restore_done_" .. snap.instance
-  if wezterm.GLOBAL[done_key] then
-    window:toast_notification("WezTerm", "前回の状態はこの起動中に復元済み", nil, 4000)
-    return
-  end
-  wezterm.GLOBAL[done_key] = true
-
+-- 保存どおりに窓・タブ・ペインを作る。progress.created に作ったタブの数を数える
+local function restore_all(window, pane, snap, progress)
   local mux_window = window:mux_window()
   -- 起動直後の 1 タブ 1 ペインだけの窓なら、復元後にその初期ペインを閉じる
   local fresh = #mux_window:tabs() == 1 and #mux_window:tabs()[1]:panes() == 1
@@ -540,6 +595,7 @@ local function build(window, pane, snap)
         local tab, placed = restore_tab(tab_spec, function(o)
           if target then
             local t, p = target:spawn_tab(o)
+            progress.created = progress.created + 1
             return t, p
           end
           -- 2 枚目以降の窓は、分割の前にセル数で保存時の大きさにしておく。
@@ -550,7 +606,8 @@ local function build(window, pane, snap)
             o.height = size.rows
           end
           local t, p, w = wezterm.mux.spawn_window(o)
-          if size and size.maximized then maximize_on_open[w:window_id()] = true end
+          progress.created = progress.created + 1
+          if size and size.maximized then maximize_on_open(w:window_id()) end
           target = w
           return t, p
         end)
@@ -571,14 +628,13 @@ local function build(window, pane, snap)
     window:perform_action(wezterm.action.CloseCurrentPane({ confirm = false }), pane)
   end
   for _, obj in ipairs(actives) do obj:activate() end
-  verify_list = {}
+  local verify_list = {}
   for _, item in ipairs(all_placed) do
     if item.spec.resumable then
       table.insert(verify_list, { pane_id = item.pane:pane_id(), session_id = item.spec.claude.id, cwd = item.spec.cwd })
     end
   end
-  verify_at = os.time() + math.ceil(resumed * RESUME_STAGGER_MS / 1000) + 20
-  verify_stage = 0
+  set_verify(verify_list, 0, os.time() + math.ceil(resumed * RESUME_STAGGER_MS / 1000) + 20)
   window:toast_notification(
     "WezTerm",
     string.format("%s の状態を復元: %d ペイン (Claude %d)", os.date("%m/%d %H:%M", snap.saved_at), #all_placed, resumed),
@@ -587,8 +643,23 @@ local function build(window, pane, snap)
   )
 end
 
--- 窓の大きさを合わせる途中の復元。window_id → 保存。window-resized を受けたら分割を作る
-local pending = {}
+local function build(window, pane, snap)
+  local done_key = "session_restore_done_" .. snap.instance
+  if wezterm.GLOBAL[done_key] then
+    window:toast_notification("WezTerm", "前回の状態はこの起動中に復元済み", nil, 4000)
+    return
+  end
+  wezterm.GLOBAL[done_key] = true
+  local progress = { created = 0 }
+  local ok, err = pcall(restore_all, window, pane, snap, progress)
+  if ok then return end
+  -- タブも窓も作らずに失敗したなら、もう一度押せばやり直せるようにする
+  if progress.created == 0 then wezterm.GLOBAL[done_key] = nil end
+  -- TODO: タブや窓を作った後の失敗 (pane:split の "No space for split!" 等) では done_key が残り、
+  --   WezTerm を再起動するまでやり直せない。作りかけのタブ・窓を閉じてから消すか、消すだけにして
+  --   重複することをトーストで知らせるかを決めて対処する
+  error(err, 0)
+end
 
 local function size_matches(window, spec)
   local tab = window:active_tab()
@@ -607,8 +678,8 @@ function M.restore(window, pane)
   local id = window:window_id()
   local spec = snap.windows and snap.windows[1] and snap.windows[1].size
   -- 大きさが変わらずイベントが来なかったときは、もう一度押すとそのまま作る
-  if spec and not pending[id] and not size_matches(window, spec) then
-    pending[id] = snap
+  if spec and not pending_get(id) and not size_matches(window, spec) then
+    pending_set(id, snap)
     if spec.maximized then
       window:maximize()
     else
@@ -616,40 +687,39 @@ function M.restore(window, pane)
     end
     return
   end
-  pending[id] = nil
+  pending_set(id, nil)
   build(window, pane, snap)
+end
+
+-- update-status のたびに呼ぶ (ハンドラは wezterm.lua にまとめてある)。
+-- 復元で開いた窓の最大化と、会話を再開できたかの確認を進める
+function M.on_update_status(window)
+  local ok, err = pcall(maximize_if_pending, window)
+  if not ok then wezterm.log_error("session_restore: maximize failed: " .. tostring(err)) end
+  ok, err = pcall(verify_resumed, window)
+  if not ok then wezterm.log_error("session_restore: verify failed: " .. tostring(err)) end
 end
 
 -- user_opts.pane_args(cwd, session_id, delay_ms) -> 復元する各ペインの起動コマンド (argv) または nil
 function M.setup(user_opts)
   for k, v in pairs(user_opts or {}) do opts[k] = v end
   wezterm.on("window-resized", function(window, pane)
-    local snap = pending[window:window_id()]
+    local snap = pending_get(window:window_id())
     if not snap then return end
-    pending[window:window_id()] = nil
+    pending_set(window:window_id(), nil)
     local ok, err = pcall(build, window, pane, snap)
     if not ok then
       wezterm.log_error("session_restore: restore failed: " .. tostring(err))
       window:toast_notification("WezTerm", "復元に失敗: " .. tostring(err), nil, 8000)
     end
   end)
-  local function maximize_if_pending(window)
-    local id = window:window_id()
-    if maximize_on_open[id] then
-      maximize_on_open[id] = nil
-      window:maximize()
-    end
-  end
-  wezterm.on("update-status", function(window)
-    maximize_if_pending(window)
-    local ok, err = pcall(verify_resumed, window)
-    if not ok then wezterm.log_error("session_restore: verify failed: " .. tostring(err)) end
-  end)
   wezterm.on("window-config-reloaded", function(window)
     maximize_if_pending(window)
     if loop_started then return end
     local ok, err = pcall(function()
-      if should_save() then
+      -- 保存するのは GUI プロセスだけ。このイベントは GUI の窓でしか発火しないが、wezterm.gui を
+      -- 持たない評価 (wezterm-mux-server 等) で保存を始めないよう、念のため確かめる
+      if wezterm.gui then
         loop_started = true
         start_saving()
       end
