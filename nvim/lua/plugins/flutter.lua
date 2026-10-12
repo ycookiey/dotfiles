@@ -1,17 +1,9 @@
 return {
   "nvim-flutter/flutter-tools.nvim",
   ft = "dart",
-  init = function()
-    -- pubspec.yaml 保存時に自動 pub get (VSCode runPubGetOnPubspecChanges 相当)
-    vim.api.nvim_create_autocmd("BufWritePost", {
-      group = vim.api.nvim_create_augroup("FlutterPubGetOnSave", { clear = true }),
-      pattern = "pubspec.yaml",
-      callback = function()
-        require("lazy").load({ plugins = { "flutter-tools.nvim" } })
-        vim.cmd("FlutterPubGet")
-      end,
-    })
-  end,
+  -- pubspec.yaml を開いた時点でも読み込む。保存時の pub get (VSCode runPubGetOnPubspecChanges 相当) は
+  -- flutter-tools が setup で登録する BufWritePost */pubspec.yaml に任せる (自前で足すと二重に走る)
+  event = { "BufReadPre pubspec.yaml", "BufNewFile pubspec.yaml" },
   dependencies = {
     "nvim-lua/plenary.nvim",
     "nvim-telescope/telescope.nvim",

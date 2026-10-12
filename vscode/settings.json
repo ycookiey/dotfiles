@@ -3,8 +3,13 @@
         "editor.formatOnType": true,
         "editor.defaultFormatter": "ms-python.black-formatter"
     },
-    "python.autoComplete.extraPaths": [],
-    "python.analysis.extraPaths": [],
+    // TODO: pending a user choice: keep the Anaconda site-packages path or go back to [].
+    "python.autoComplete.extraPaths": [
+        "c:/programdata/anaconda3/lib/site-packages"
+    ],
+    "python.analysis.extraPaths": [
+        "c:/programdata/anaconda3/lib/site-packages"
+    ],
     "workbench.iconTheme": "material-icon-theme",
     "code-runner.runInTerminal": true,
     "editor.formatOnSave": true,
@@ -44,8 +49,6 @@
     "editor.suggest.preview": true,
     "editor.autoClosingBrackets": "always",
     "editor.autoClosingQuotes": "always",
-    "cSpell.languageSettings": [],
-    "terminal.integrated.automationProfile.windows": {},
     "security.workspace.trust.untrustedFiles": "open",
     "r.rterm.windows": "C:\\Program Files\\R\\R-4.2.3\\bin\\R.exe",
     "files.associations": {
@@ -58,7 +61,6 @@
     "r.lsp.debug": true,
     "dart.showTodos": false,
     "dart.flutterCustomEmulators": [],
-    "editor.codeActionsOnSave": {},
     "editor.wordWrap": "on",
     "git.openRepositoryInParentFolders": "never",
     "editor.inlineSuggest.enabled": true,
@@ -70,7 +72,6 @@
         "scminput": false,
         "python": true
     },
-    "python.formatting.provider": "none",
     "cSpell.customDictionaries": {
         "custom-dictionary-user": {
             "name": "custom-dictionary-user",
@@ -153,7 +154,7 @@
     "dart.debugSdkLibraries": true,
     "editor.suggestSelection": "recentlyUsedByPrefix",
     "editor.suggest.localityBonus": true,
-    "editor.wordBasedSuggestionsMode": "allDocuments",
+    "editor.wordBasedSuggestions": "allDocuments",
     "window.newWindowDimensions": "inherit",
     "window.density.editorTabHeight": "compact",
     "window.restoreFullscreen": true,
@@ -248,7 +249,6 @@
     "diffEditor.useInlineViewWhenSpaceIsLimited": false,
     "markdown-preview-enhanced.previewTheme": "atom-light.css",
     "pasteImage.insertPattern": "<img src='${imageFileName}' width='100%'>",
-    "[ahk2]": {},
     "editor.codeActionWidget.includeNearbyQuickFixes": false,
     "[cpp]": {
         "files.encoding": "utf8bom"
@@ -431,8 +431,7 @@
         "editor.formatOnSave": true,
         "editor.defaultFormatter": "James-Yu.latex-workshop"
     },
-    "latex-workshop.latexindent.path": "C:/texlive/2024/bin/windows/latexindent.exe",
-    "latex-workshop.latexindent.args": [
+    "latex-workshop.formatting.latexindent.args": [
         "%TMPFILE%",
         "-c=%DIR%/",
         "-y=defaultIndent: '%INDENT%'"
@@ -445,6 +444,8 @@
     "latex-workshop.intellisense.package.enabled": true,
     // 作成したファイルを、直下の "out" フォルダへ出力
     "latex-workshop.latex.outDir": "out",
+    // TODO: pending a user choice: keep or remove running lualatex on every .tex save
+    // (it builds besides LaTeX Workshop, whose autoBuild.run is "never").
     "emeraldwalk.runonsave": {
         "commands": [
             {
@@ -472,7 +473,6 @@
     },
     "diffEditor.renderSideBySide": true,
     "workbench.editor.enablePreview": false,
-    "github.copilot.editor.enableAutoCompletions": true,
     "prisma.showPrismaDataPlatformNotification": false,
     "workbench.editor.showTabs": "none",
     "editor.glyphMargin": false,
@@ -507,7 +507,8 @@
     "prettier.tabWidth": 4,
     "window.commandCenter": false,
     "window.menuBarVisibility": "compact",
-    "workbench.activityBar.location": "bottom",
+    // TODO: pending a user choice between "hidden" and "bottom".
+    "workbench.activityBar.location": "hidden",
     "typescript.tsserver.experimental.enableProjectDiagnostics": true,
     "eslint.lintTask.enable": true,
     "[javascript]": {
@@ -515,8 +516,6 @@
     },
     "git.ignoreLegacyWarning": true,
     "latex-workshop.linting.chktex.exec.path": "C:\\texlive\\2024\\bin\\windows\\chktex.exe",
-    "latex-workshop.chktex.enabled": true,
-    "latex-workshop.chktex.path": "C:\\texlive\\2024\\bin\\windows\\chktex.exe",
     "latex.linter.enabled": false,
     "latex-workshop.formatting.latex": "latexindent",
     "latex-workshop.formatting.latexindent.path": "C:\\texlive\\2024\\bin\\windows\\latexindent.exe",
@@ -535,36 +534,20 @@
     "liveServer.settings.root": "/",
     "liveServer.settings.host": "localhost",
     "javascript.updateImportsOnFileMove.enabled": "always",
-    "git.path": "",
     "advancedNewFile.convenienceOptions": ["root", "last", "current"],
     "git.enableSmartCommit": true,
     "workbench.editorAssociations": {
         "*.copilotmd": "vscode.markdown.preview.editor",
-        "*.pdf": "latex-workshop-pdf-hook"
+        "*.pdf": "latex-workshop-pdf-hook",
+        "*.h5": "default"
     },
     "discord.removeLowerDetails": true,
     "discord.detailsEditing": "Editing",
     "discord.detailsDebugging": "Debugging",
     "diffEditor.maxFileSize": 0,
-    "python.autoComplete.extraPaths": [
-        "c:/programdata/anaconda3/lib/site-packages"
-    ],
-    "python.analysis.extraPaths": [
-        "c:/programdata/anaconda3/lib/site-packages"
-    ],
-    "workbench.editorAssociations": {
-        "*.h5": "default"
-    },
-    "editor.formatOnSave": true,
-    "editor.formatOnType": true,
-    "security.workspace.trust.untrustedFiles": "open",
-    "terminal.integrated.enableMultiLinePasteWarning": false,
     "jupyter.askForKernelRestart": false,
     "notebook.output.textLineLimit": 1000,
     "editor.accessibilitySupport": "off",
-    "workbench.activityBar.location": "hidden",
-    "window.commandCenter": false,
-    "window.menuBarVisibility": "compact",
     "gitlens.ai.model": "vscode",
     "gitlens.ai.vscode.model": "copilot:gpt-4-turbo",
     "window.customTitleBarVisibility": "windowed",

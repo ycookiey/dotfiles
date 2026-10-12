@@ -5,10 +5,10 @@ sort_dir_first = true       # ディレクトリを先頭
 
 [opener]
 edit = [
-  { run = 'nvim "%*"', block = true },
+  { run = 'nvim %s', block = true },
 ]
 browser = [
-  { run = 'vivaldi "%1"', orphan = true, desc = "Browser", for = "windows" },
+  { run = 'vivaldi %s1', orphan = true, desc = "Browser", for = "windows" },
 ]
 
 [open]
@@ -18,6 +18,3 @@ prepend_rules = [
   # テキスト系のメニューにブラウザを追加
   { mime = "text/*", use = [ "edit", "browser", "reveal" ] },
 ]
-
-[preview]
-image_preview_method = "iterm2"

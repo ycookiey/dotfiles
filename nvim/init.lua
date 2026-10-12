@@ -1,13 +1,21 @@
 -- Luaモジュールキャッシュ（起動高速化、最優先で有効化）
 if vim.loader then vim.loader.enable() end
 
--- シェル設定（Windows - PowerShell）
+-- シェル設定（Windows - PowerShell）: :h shell-pwsh の推奨値
+-- stderr も quickfix / :r ! に入れ、UTF-8 で受け渡し、色の ESC シーケンスを出さない
+-- 注: リダイレクトが掛かるのは makeprg の最後の文だけ。プロセス内の [Console]::Error 出力は捕捉できない
 vim.opt.shell = "pwsh"
-vim.opt.shellcmdflag = "-NoLogo -NoProfile -ExecutionPolicy RemoteSigned -Command"
+vim.opt.shellcmdflag = "-NoLogo -NoProfile -ExecutionPolicy RemoteSigned -Command "
+  .. "[Console]::InputEncoding=[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new();"
+  .. "$PSDefaultParameterValues['Out-File:Encoding']='utf8';"
+  .. "$PSStyle.OutputRendering='PlainText';"
 vim.opt.shellquote = ""
 vim.opt.shellxquote = ""
-vim.opt.shellpipe = "| Out-File -Encoding UTF8 %s"
-vim.opt.shellredir = "| Out-File -Encoding UTF8 %s"
+vim.opt.shellpipe = "> %s 2>&1"
+vim.opt.shellredir = "2>&1 | Out-File -Encoding UTF8 %s"
+vim.opt.shelltemp = false
+-- pwsh が ANSI を出す回避策 (:h shell-pwsh)。子プロセスに継承される
+vim.env.__SuppressAnsiEscapeSequences = "1"
 
 -- 不要なビルトインプラグインを無効化
 vim.g.loaded_netrw = 1
@@ -54,20 +62,30 @@ vim.opt.listchars = {
 }
 
 -- 全角スペースハイライト
-vim.api.nvim_create_autocmd("VimEnter", {
+-- colorscheme の適用 (hi clear) で消えるため、ColorScheme のたびに定義し直す
+local function define_zenkaku_hl()
+  vim.api.nvim_set_hl(0, "ZenkakuSpace", { bg = "#4a3040" })
+end
+define_zenkaku_hl()
+vim.api.nvim_create_autocmd("ColorScheme", { callback = define_zenkaku_hl })
+-- match はウィンドウに属する。BufRead は再読込で重複し、既存バッファの split では起きないため、
+-- 表示・新規ウィンドウ単位でウィンドウごとに 1 回だけ付ける (WinNew 中は新ウィンドウが current)
+vim.api.nvim_create_autocmd({ "BufWinEnter", "WinNew" }, {
   callback = function()
-    vim.api.nvim_set_hl(0, "ZenkakuSpace", { bg = "#4a3040" })
-  end,
-})
-vim.api.nvim_create_autocmd({ "BufNewFile", "BufRead" }, {
-  callback = function()
-    vim.fn.matchadd("ZenkakuSpace", "　")
+    if vim.w.zenkaku_match then return end
+    -- ポップアップ等のフローティングウィンドウは対象外
+    if vim.api.nvim_win_get_config(0).relative ~= "" then return end
+    vim.w.zenkaku_match = vim.fn.matchadd("ZenkakuSpace", "　")
   end,
 })
 
 -- Windows IME を英数に切り替え (jk 操作を維持するため)
-local has_zenhan = vim.fn.has("win32") == 1 and vim.fn.executable("zenhan") == 1
+-- zenhan は `scoop install zenhan` で入れる。有無は起動時ではなく初回呼び出し時に判定してキャッシュ
+local has_zenhan -- nil = 未判定
 local function ime_off()
+  if has_zenhan == nil then
+    has_zenhan = vim.fn.has("win32") == 1 and vim.fn.executable("zenhan") == 1
+  end
   if has_zenhan then
     vim.fn.jobstart({ "zenhan", "0" }, { detach = true })
   end
@@ -78,11 +96,18 @@ vim.api.nvim_create_autocmd("InsertLeave", {
   callback = ime_off,
 })
 
--- Ctrl+S で保存
+-- Ctrl+S で保存して normal に戻る
+local visual_modes = { v = true, V = true, ["\22"] = true, s = true, S = true, ["\19"] = true }
 vim.keymap.set({ "n", "i", "v" }, "<C-s>", function()
   vim.cmd("update")
-  vim.cmd("stopinsert")
-  ime_off()
+  local mode = vim.fn.mode():sub(1, 1)
+  if visual_modes[mode] then
+    vim.api.nvim_feedkeys(vim.keycode("<Esc>"), "n", false)
+  elseif mode == "i" or mode == "R" then
+    vim.cmd("stopinsert") -- IME オフは InsertLeave に任せる
+  else
+    ime_off()
+  end
 end, { desc = "Save file" })
 
 -- Markdownチェックボックスのトグル (Alt+L)

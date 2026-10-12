@@ -1,5 +1,5 @@
--- 注: g:pandoc#filetypes#pandoc_markdown / g:pandoc#filetypes#handled は
--- ftdetect の先行 source タイミング都合で init.lua 側で設定している。
+-- 注: .md を pandoc filetype にさせない g:pandoc#filetypes#pandoc_markdown = 0 は、
+-- ftdetect が lazy.nvim の起動時に先行 source されるため init.lua 側で設定している。
 return {
   "vim-pandoc/vim-pandoc",
   ft = { "pandoc" },
