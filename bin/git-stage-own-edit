@@ -23,7 +23,11 @@ if [ $# -lt 2 ]; then
   exit 2
 fi
 
-PYTHONIOENCODING=utf-8 exec python - "$@" <<'PY'
+# -I: a script read from stdin would otherwise put the current directory on
+# sys.path, so a difflib.py or subprocess.py in the repo being edited would
+# be imported. -I also ignores PYTHON* variables, so -X utf8 sets the I/O
+# encoding. -S: only the standard library is used.
+exec python -I -S -X utf8 - "$@" <<'PY'
 import difflib
 import hashlib
 import os
@@ -49,14 +53,24 @@ def fail(message):
     sys.exit(1)
 
 
-prefix = git("rev-parse", "--show-prefix").decode().strip()
-top = git("rev-parse", "--show-toplevel").decode().strip()
-store = os.path.join(top, git("rev-parse", "--git-path", "stage-own-edit").decode().strip())
+# One rev-parse, run from the caller's directory (top is still None), so a
+# relative --git-path is relative to that directory.
+top, store = git("rev-parse", "--show-toplevel", "--git-path", "stage-own-edit").decode().rstrip("\n").split("\n")
+store = os.path.abspath(store)
+real_top = os.path.realpath(top)
 
 
 def repo_path(file):
-    path = os.path.normpath(os.path.join(prefix, file)).replace(os.sep, "/")
-    if path.startswith("../"):
+    # Relative or absolute, against the real top, so a worktree reached
+    # through a link or a drive path spelled differently still matches.
+    # The last component is not resolved: a tracked symlink is a file here.
+    absolute = os.path.abspath(file)
+    real = os.path.join(os.path.realpath(os.path.dirname(absolute)), os.path.basename(absolute))
+    try:
+        path = os.path.relpath(real, real_top).replace(os.sep, "/")
+    except ValueError:  # another drive
+        fail(f"{file} is outside the repository")
+    if path == "." or path == ".." or path.startswith("../"):
         fail(f"{file} is outside the repository")
     return path
 
@@ -66,7 +80,9 @@ def copy_of(path):
 
 
 def lines_of(data):
-    text = data.decode("utf-8")
+    # surrogateescape carries bytes that are not UTF-8 (cp932 and the like)
+    # through unchanged, and encode() below gives the same bytes back.
+    text = data.decode("utf-8", errors="surrogateescape")
     lines = text.split("\n")
     has_final_newline = lines[-1] == ""
     if has_final_newline:
@@ -74,13 +90,15 @@ def lines_of(data):
     return [line.rstrip("\r") for line in lines], has_final_newline
 
 
-def staged_version(path):
+def index_entry(path):
+    # The mode and blob id in the index; begin needs only this check, not
+    # the blob itself.
     entry = git("ls-files", "-s", "--", path).decode().split()
     if not entry:
         fail(f"{path} is not tracked; stage a new file with git add")
     if entry[2] != "0":
         fail(f"{path} has unresolved conflicts")
-    return entry[0], git("cat-file", "blob", entry[1])
+    return entry[0], entry[1]
 
 
 def stage(file):
@@ -89,11 +107,12 @@ def stage(file):
     if not os.path.exists(copy):
         fail(f"no copy of {path}; run `git stage-own-edit begin {file}` before editing")
     with open(copy, "rb") as handle:
-        before, _ = lines_of(handle.read())
+        before, before_newline = lines_of(handle.read())
     with open(file, "rb") as handle:
         after, after_newline = lines_of(handle.read())
-    mode, blob = staged_version(path)
-    staged, _ = lines_of(blob)
+    mode, blob_id = index_entry(path)
+    blob = git("cat-file", "blob", blob_id)
+    staged, staged_newline = lines_of(blob)
     crlf = b"\r\n" in blob
 
     # Where each line of the copy sits in the index version, if it is there
@@ -123,15 +142,22 @@ def stage(file):
             fail(f"{path}: your edit at lines {i1 + 1}-{i2} touches lines that differ in the index (not yours alone)")
         edits.append((targets[0], targets[-1] + 1, after[j1:j2]))
 
-    if not edits:
+    # The final newline is yours only if you added or removed it since begin;
+    # otherwise the index keeps its own.
+    final_newline = after_newline if before_newline != after_newline else staged_newline
+    if not edits and before_newline == after_newline:
         fail(f"{path}: nothing changed since begin")
 
+    # The edits come in order and do not overlap in the index version, but an
+    # insertion and the edit after it can start at the same line. Applying
+    # them from the last one keeps every earlier position valid and keeps
+    # same-start edits in their order.
     result = list(staged)
-    for start, end, lines in sorted(edits, key=lambda edit: edit[0], reverse=True):
+    for start, end, lines in reversed(edits):
         result[start:end] = lines
     newline = "\r\n" if crlf else "\n"
-    text = newline.join(result) + (newline if after_newline or not result else "")
-    sha = git("hash-object", "-w", "--stdin", data=text.encode("utf-8")).decode().strip()
+    text = newline.join(result) + (newline if result and final_newline else "")
+    sha = git("hash-object", "-w", "--stdin", data=text.encode("utf-8", errors="surrogateescape")).decode().strip()
     git("update-index", "--cacheinfo", f"{mode},{sha},{path}")
     os.remove(copy)
     sys.stdout.buffer.write(git("diff", "--cached", "--stat", "--", path))
@@ -142,7 +168,7 @@ if command == "begin":
     os.makedirs(store, exist_ok=True)
     for file in files:
         path = repo_path(file)
-        staged_version(path)
+        index_entry(path)
         with open(file, "rb") as source, open(copy_of(path), "wb") as target:
             target.write(source.read())
 elif command == "stage":
