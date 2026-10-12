@@ -130,6 +130,15 @@ fn run_in(args: &[String], dir: Option<String>) {
         );
     }
 
+    // Fullscreen renderer: Claude Code turns it off by itself after a few
+    // sessions end within 10 s of starting (e.g. panes closed right after a
+    // session restore), whatever the `tui` setting says. The variable keeps
+    // it on and leaves such sessions uncounted. A value already set (`0` for
+    // the classic renderer) wins; `/tui default` still switches one session.
+    if std::env::var_os("CLAUDE_CODE_NO_FLICKER").is_none() {
+        env.insert("CLAUDE_CODE_NO_FLICKER".into(), "1".into());
+    }
+
     let unset_env: Vec<String> = CLAUDE_PROVIDER_ENV.iter().map(|s| s.to_string()).collect();
 
     // s → safe mode (no --dangerously-skip-permissions)
