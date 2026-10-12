@@ -88,7 +88,7 @@ foreach ($p in $all) {
         $stop = 'busy'
     } elseif ($busyRuns -ge $BusyRunsToStop -and !$reported) {
         Write-Log "busy, left running: $what"
-        $leftRunning += "$($p.Name) pid=$id"
+        $leftRunning += $p.Name
         $reported = $true
     }
 
@@ -108,7 +108,10 @@ $state | ConvertTo-Json -Compress > $StatePath
 
 if ($leftRunning.Count -gt 0) {
     $notify = Get-Command dotcli -ea 0
-    $message = "親のないプロセスが CPU を使い続けている(止めていない): $($leftRunning -join ', ')。詳細 $LogPath"
+    # The popup has room for about three lines: the count and two names.
+    $names = ($leftRunning | select -First 2) -join ', '
+    $more = $leftRunning.Count -gt 2 ? ' ほか' : ''
+    $message = "親のないプロセスが CPU を使い続けている(止めていない): $($leftRunning.Count) 件。$names$more"
     if ($notify) {
         Start-Process $notify.Source -ArgumentList 'notify', '-t', 'orphan-reaper', '-m', "`"$message`"", '-d', 60000 -WindowStyle Hidden
     } else {
