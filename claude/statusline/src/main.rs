@@ -30,6 +30,23 @@ struct Input {
     effort: Option<Effort>,
 }
 
+/// Just the rate_limits of the stdin JSON (other fields are ignored).
+#[derive(Deserialize, Default)]
+struct RateLimitsOnly {
+    rate_limits: Option<RateLimits>,
+}
+
+/// Parses the stdin JSON. When the whole Input does not parse (a field of
+/// an unexpected type, e.g. a null cost.total_cost_usd), the rate_limits
+/// are parsed on their own so they are still shown and cached; the other
+/// fields stay at their defaults.
+fn parse_input(s: &str) -> Input {
+    serde_json::from_str(s).unwrap_or_else(|_| Input {
+        rate_limits: serde_json::from_str::<RateLimitsOnly>(s).ok().and_then(|r| r.rate_limits),
+        ..Input::default()
+    })
+}
+
 #[derive(Deserialize, Default)]
 struct Effort {
     level: Option<String>,
@@ -855,9 +872,10 @@ const RATE_LIMITS_REWRITE_SECONDS: u64 = 300;
 /// $CLAUDE_CONFIG_DIR/.rate-limits.json, read by bin/ycusage.ps1.
 /// The rate_limits are re-serialized from the typed struct, so fields other
 /// than five_hour/seven_day.{used_percentage,resets_at} are dropped, and
-/// stdin whose rate_limits do not fit the struct (which also blanks the rest
-/// of the Input) writes nothing. ycusage reads only those fields and
-/// cached_at.
+/// stdin whose rate_limits themselves do not fit the struct writes nothing.
+/// A type mismatch elsewhere in the stdin does not stop the write
+/// (parse_input falls back to the rate_limits alone). ycusage reads only
+/// those fields and cached_at.
 #[derive(Deserialize, Serialize)]
 struct RateLimitsCache {
     rate_limits: RateLimits,
@@ -908,7 +926,7 @@ fn main() {
 
     let mut input_str = String::new();
     let _ = io::stdin().read_to_string(&mut input_str);
-    let j: Input = serde_json::from_str(&input_str).unwrap_or_default();
+    let j = parse_input(&input_str);
 
     let dir = config_dir();
     let dir = dir.as_deref();
@@ -1476,6 +1494,45 @@ mod tests {
         cache_rate_limits(Some(d), &rl(30.0), now + 20 + RATE_LIMITS_REWRITE_SECONDS);
         assert_eq!(read().cached_at, now + 20 + RATE_LIMITS_REWRITE_SECONDS);
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // A type mismatch in an unrelated field must not lose the rate_limits.
+    const STDIN_NULL_COST: &str = r#"{"model":{"display_name":"Opus 5.5"},"cost":{"total_cost_usd":null},"rate_limits":{"five_hour":{"used_percentage":5,"resets_at":1791699600}}}"#;
+
+    #[test]
+    fn parse_input_keeps_rate_limits_when_other_fields_mismatch() {
+        // precondition: the full Input really fails on this stdin
+        assert!(serde_json::from_str::<Input>(STDIN_NULL_COST).is_err());
+        let j = parse_input(STDIN_NULL_COST);
+        let rl = j.rate_limits.expect("rate_limits kept");
+        let w = rl.five_hour.expect("five_hour kept");
+        assert_eq!(w.used_percentage, Some(5.0));
+        assert_eq!(w.resets_at, Some(serde_json::json!(1791699600)));
+        assert!(rl.seven_day.is_none());
+        // the rest falls back to defaults, as before
+        assert!(j.model.is_none());
+        // a well-formed stdin still parses in full
+        let ok = parse_input(r#"{"model":{"display_name":"Opus 5.5"},"rate_limits":{"five_hour":{"used_percentage":5}}}"#);
+        assert_eq!(ok.model.and_then(|m| m.display_name).as_deref(), Some("Opus 5.5"));
+        assert!(ok.rate_limits.is_some());
+        // unparsable stdin or no rate_limits: nothing
+        assert!(parse_input("not json").rate_limits.is_none());
+        assert!(parse_input(r#"{"cost":{"total_cost_usd":null}}"#).rate_limits.is_none());
+    }
+
+    #[test]
+    fn cache_rate_limits_written_when_other_fields_mismatch() {
+        let dir = std::env::temp_dir()
+            .join(format!("claude-statusline-test-{}-rlcache-mismatch", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(".rate-limits.json");
+        let _ = std::fs::remove_file(&path);
+        let j = parse_input(STDIN_NULL_COST);
+        cache_rate_limits(dir.to_str(), j.rate_limits.as_ref().unwrap(), 1_000_000);
+        let c: RateLimitsCache = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(c.cached_at, 1_000_000);
+        assert_eq!(c.rate_limits.five_hour.and_then(|w| w.used_percentage), Some(5.0));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
