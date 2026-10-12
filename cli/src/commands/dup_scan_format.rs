@@ -1,23 +1,7 @@
 //! Format `dup-scan` JSON output as a compact human-readable report (stdin).
 
+use super::fmt_util::{as_u64, fmt_u64_commas, run_stdin_json};
 use serde_json::Value;
-use std::io::{self, Read};
-
-fn fmt_u64_commas(n: u64) -> String {
-    let s = n.to_string();
-    let mut out = String::new();
-    for (i, c) in s.chars().rev().enumerate() {
-        if i > 0 && i % 3 == 0 {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out.chars().rev().collect()
-}
-
-fn as_u64(v: &Value) -> u64 {
-    v.as_u64().or_else(|| v.as_i64().map(|i| i as u64)).unwrap_or(0)
-}
 
 pub fn format(v: &Value) -> String {
     let mut out = String::new();
@@ -150,17 +134,5 @@ pub fn format(v: &Value) -> String {
 }
 
 pub fn run() {
-    let mut input = String::new();
-    if io::stdin().read_to_string(&mut input).is_err() {
-        eprintln!("error: failed to read stdin");
-        std::process::exit(1);
-    }
-    let v: Value = match serde_json::from_str(&input) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("error: invalid JSON: {e}");
-            std::process::exit(1);
-        }
-    };
-    print!("{}", format(&v));
+    run_stdin_json(format);
 }

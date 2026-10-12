@@ -1,13 +1,17 @@
 mod bash;
 mod nushell;
 mod powershell;
+mod quote;
 
 use crate::definitions::Definitions;
+use crate::paths::definitions_path;
 use std::path::{Path, PathBuf};
 
+/// Generate the alias files under `output_dir` (a dotfiles root) from
+/// `<output_dir>/cli/definitions.toml`, falling back to the embedded copy when absent.
 pub fn run(output_dir: &Path) -> anyhow::Result<()> {
-    let defs = Definitions::load();
     let output_dir = strip_unc(output_dir.canonicalize()?);
+    let defs = Definitions::load(Some(&definitions_path(&output_dir)))?;
 
     let ps1_path = output_dir.join("generated-aliases.ps1");
     let nu_path = output_dir.join("nushell").join("generated-aliases.nu");

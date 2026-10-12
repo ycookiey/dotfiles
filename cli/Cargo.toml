@@ -12,13 +12,13 @@ clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 simd-json = "0.16"
+memchr = "2"
 toml = "0.8"
 dirs = "6"
 anyhow = "1"
 rayon = "1"
 ignore = "0.4"
-ureq = { version = "3", features = ["json"] }
-gix = { version = "0.81", default-features = false, features = ["status", "revision", "sha1"] }
+gix = { version = "0.81", default-features = false, features = ["status", "sha1"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 rusqlite_migration = "1"
 rmcp = { version = "0.16", features = ["server", "macros", "transport-io", "schemars"] }

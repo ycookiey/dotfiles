@@ -1,8 +1,15 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-/// gh repo list + fzf → URL を返す
-pub fn run(args: &[String]) -> Option<String> {
+/// gh repo list + fzf → URL を返す。gh や fzf が動かなければ 1 行のエラーを出して exit 1
+fn run(args: &[String]) -> Option<String> {
+    select(args).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(1);
+    })
+}
+
+fn select(args: &[String]) -> Result<Option<String>, String> {
     let gh = Command::new("gh")
         .args(["repo", "list"])
         .args(args)
@@ -19,38 +26,40 @@ pub fn run(args: &[String]) -> Option<String> {
     let gh_output = match gh {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
         Ok(o) => {
-            eprint!("{}", String::from_utf8_lossy(&o.stderr));
-            return None;
+            let err = String::from_utf8_lossy(&o.stderr).trim_end().to_string();
+            return Err(if err.is_empty() {
+                format!("gh repo list failed: {}", o.status)
+            } else {
+                err
+            });
         }
-        Err(e) => {
-            eprintln!("Failed to run gh: {e}");
-            return None;
-        }
+        Err(e) => return Err(format!("Failed to run gh: {e}")),
     };
 
     if gh_output.trim().is_empty() {
-        return None;
+        return Ok(None);
     }
 
+    let fzf_err = |e: std::io::Error| format!("Failed to run fzf: {e}");
     let mut fzf = Command::new("fzf")
         .args(["-d", "\t", "--with-nth", "1,2"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
-        .expect("Failed to start fzf");
+        .map_err(fzf_err)?;
 
     if let Some(mut stdin) = fzf.stdin.take() {
         let _ = stdin.write_all(gh_output.as_bytes());
     }
 
-    let output = fzf.wait_with_output().expect("fzf wait");
+    let output = fzf.wait_with_output().map_err(fzf_err)?;
     if !output.status.success() {
-        return None;
+        return Ok(None);
     }
 
     let selected = String::from_utf8_lossy(&output.stdout);
     let url = selected.trim().split('\t').last().unwrap_or("").to_string();
-    if url.is_empty() { None } else { Some(url) }
+    Ok(if url.is_empty() { None } else { Some(url) })
 }
 
 /// grf 結果を stdout に出力

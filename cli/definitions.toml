@@ -142,7 +142,7 @@ platform = "windows"
 
 # =============================================
 # D. Complex commands (Rust subcommands)
-#    Phase 2 で Rust 実装予定。enabled = true のものは生成スキップ
+#    Phase 2 で Rust 実装予定。enabled = false のものは生成しない
 # =============================================
 
 [[command]]
@@ -180,12 +180,6 @@ name = "cg"
 subcommand = "claude-glm"
 modifies_shell = true
 enabled = true
-
-[[command]]
-name = "y"
-subcommand = "yazi-cd"
-modifies_shell = true
-enabled = false
 
 [[command]]
 name = "zf"

@@ -1,7 +1,6 @@
 use crate::protocol::{ExecCommand, Message, MessageLevel, ShellAction};
 use rayon::prelude::*;
 use serde::Deserialize;
-use serde_json::Value;
 use std::env;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -81,9 +80,18 @@ fn line_user_content(msg: &LineMessage) -> Option<String> {
     }
 }
 
-fn parse_line(buf: &[u8]) -> Option<LineMeta> {
-    let mut copy = buf.to_vec();
-    simd_json::serde::from_slice(&mut copy).ok()
+/// Parses one jsonl line in place: simd-json overwrites `line` while parsing, so a line
+/// must not be parsed twice.
+fn parse_line(line: &mut [u8]) -> Option<LineMeta> {
+    simd_json::serde::from_slice(line).ok()
+}
+
+/// Only the top-level `cwd` of a jsonl line, or of a scan-cache `info`. Kept apart from
+/// LineMeta so a line whose other fields do not fit LineMeta still yields its cwd.
+#[derive(Deserialize)]
+struct CwdOnly {
+    #[serde(default)]
+    cwd: Option<String>,
 }
 
 pub(crate) const HIGHLIGHT_TOP_N: usize = 5;
@@ -158,28 +166,65 @@ pub fn resume_by_id(session_id: &str, dangerously_skip_permissions: bool) -> She
     action
 }
 
+/// cwd of `<projects>/<dir>/<session_id>.jsonl`. The scan cache (written by the `c r`
+/// picker) already holds the cwd of almost every session, and a session's cwd never
+/// changes, so it is used first; otherwise the head of the session file is read.
 fn find_session_cwd(session_id: &str) -> Option<String> {
     let projects_dir = dirs::home_dir()?.join(".claude").join("projects");
     let target = format!("{session_id}.jsonl");
-    for e in fs::read_dir(&projects_dir).ok()?.flatten() {
-        let p = e.path();
-        if !p.is_dir() {
+    cached_session_cwd(&read_scan_cache_cwds(), &projects_dir, &target)
+        .or_else(|| scan_session_cwd(&projects_dir, &target))
+}
+
+/// cwd of the cached session whose file is `<projects_dir>/<dir>/<file_name>`, if that
+/// file still exists. The same session id can sit in several project dirs (a session
+/// carried into a worktree); then None, so scan_session_cwd picks one in listing order
+/// as before rather than whichever the cache lists first.
+fn cached_session_cwd(
+    entries: &[(PathBuf, String)],
+    projects_dir: &Path,
+    file_name: &str,
+) -> Option<String> {
+    let mut matches = entries.iter().filter(|(path, _)| {
+        path.file_name().is_some_and(|n| n == file_name)
+            && path.parent().and_then(Path::parent) == Some(projects_dir)
+    });
+    let (path, cwd) = matches.next()?;
+    if matches.next().is_some() || !path.is_file() {
+        return None;
+    }
+    Some(cwd.clone())
+}
+
+/// Looks for `<projects_dir>/<dir>/<file_name>` and returns the first top-level cwd in
+/// its head. Found but without a cwd → None (as before: no other dir is tried).
+fn scan_session_cwd(projects_dir: &Path, file_name: &str) -> Option<String> {
+    for e in fs::read_dir(projects_dir).ok()?.flatten() {
+        if !entry_is_dir(&e) {
             continue;
         }
-        let jsonl = p.join(&target);
+        let jsonl = e.path().join(file_name);
         if !jsonl.is_file() {
             continue;
         }
-        let data = fs::read_to_string(&jsonl).ok()?;
-        for line in data.lines().take(20) {
-            let Ok(v) = serde_json::from_str::<Value>(line) else {
-                continue;
-            };
-            if let Some(c) = v.get("cwd").and_then(|x| x.as_str()) {
-                return Some(c.to_string());
-            }
+        return head_cwd(&jsonl);
+    }
+    None
+}
+
+/// First top-level cwd in the head of a session file, of any line type: large sessions
+/// can open with many file-history-snapshot lines (no cwd), so a fixed line count is
+/// not enough. Tries HEAD_BASE_BYTES, then once HEAD_MAX_BYTES.
+fn head_cwd(path: &Path) -> Option<String> {
+    for window in [HEAD_BASE_BYTES, HEAD_MAX_BYTES] {
+        let (head, _) = read_head_and_tail(path, window, 0).ok()?;
+        let found = head
+            .split(|&b| b == b'\n')
+            .filter(|l| !l.is_empty())
+            .find_map(|l| serde_json::from_slice::<CwdOnly>(l).ok()?.cwd);
+        if found.is_some() {
+            return found;
         }
-        return None;
     }
     None
 }
@@ -397,12 +442,30 @@ fn scan_cache_path() -> Option<PathBuf> {
     )
 }
 
-fn mtime_ns(path: &Path) -> Option<u128> {
-    let modified = fs::metadata(path).ok()?.modified().ok()?;
-    modified
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()
-        .map(|d| d.as_nanos())
+/// (path, cwd) of every scan-cache entry, in cache order, reading nothing else of the
+/// entries. Empty when the cache is missing, unreadable or of another version.
+fn read_scan_cache_cwds() -> Vec<(PathBuf, String)> {
+    #[derive(Deserialize)]
+    struct Cache {
+        version: u32,
+        entries: Vec<Entry>,
+    }
+    #[derive(Deserialize)]
+    struct Entry {
+        path: PathBuf,
+        info: CwdOnly,
+    }
+    let Some(p) = scan_cache_path() else { return Vec::new() };
+    let Ok(data) = fs::read(&p) else { return Vec::new() };
+    let Ok(cache) = serde_json::from_slice::<Cache>(&data) else { return Vec::new() };
+    if cache.version != SCAN_CACHE_VERSION {
+        return Vec::new();
+    }
+    cache
+        .entries
+        .into_iter()
+        .filter_map(|e| Some((e.path, e.info.cwd?)))
+        .collect()
 }
 
 fn read_scan_cache() -> std::collections::HashMap<PathBuf, (u128, SessionInfo)> {
@@ -462,28 +525,23 @@ fn scan_sessions() -> ScanResult {
         return ScanResult { sessions: Vec::new(), no_last_ts: 0, unparsable: 0 };
     }
 
-    let paths: Vec<PathBuf> = collect_session_jsonl(&projects_dir);
-
-    // 1. 並列で (path, mtime_ns) を集める
-    let current: Vec<(PathBuf, u128)> = paths
-        .par_iter()
-        .filter_map(|p| Some((p.clone(), mtime_ns(p)?)))
-        .collect();
-    let current_map: HashMap<PathBuf, u128> =
-        current.iter().cloned().collect();
+    // 1. (path, mtime_ns) を一覧から集める (mtime も列挙結果から取り、追加の stat なし)
+    let current: Vec<(PathBuf, u128)> = collect_session_jsonl(&projects_dir);
 
     // 2. cache を読む
-    let cache = read_scan_cache();
+    let mut cache = read_scan_cache();
+    let cached_len = cache.len();
 
-    // 3. hit / miss 振り分け
+    // 3. hit / miss 振り分け (hit は cache から move)
     let mut hits: Vec<SessionInfo> = Vec::new();
     let mut misses: Vec<PathBuf> = Vec::new();
     for (path, mt) in &current {
-        match cache.get(path) {
-            Some((cached_mt, info)) if cached_mt == mt => hits.push(info.clone()),
+        match cache.remove(path) {
+            Some((cached_mt, info)) if cached_mt == *mt => hits.push(info),
             _ => misses.push(path.clone()),
         }
     }
+    let current_map: HashMap<PathBuf, u128> = current.into_iter().collect();
 
     // 4. miss のみ parse
     let mut no_last_ts: usize = 0;
@@ -502,7 +560,7 @@ fn scan_sessions() -> ScanResult {
     sessions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
     // 5. dirty なら書き戻し（新規 parse があった、または cache のエントリ数が現状と違う）
-    let dirty = !misses.is_empty() || cache.len() != current_map.len();
+    let dirty = !misses.is_empty() || cached_len != current_map.len();
     if dirty {
         write_scan_cache(&sessions, &current_map);
     }
@@ -510,17 +568,18 @@ fn scan_sessions() -> ScanResult {
     ScanResult { sessions, no_last_ts, unparsable }
 }
 
-pub(crate) fn collect_session_jsonl(projects_dir: &Path) -> Vec<PathBuf> {
+/// (path, mtime_ns) of every `<projects_dir>/<dir>/*.jsonl`, in listing order. Files
+/// whose mtime cannot be read are left out.
+pub(crate) fn collect_session_jsonl(projects_dir: &Path) -> Vec<(PathBuf, u128)> {
     let mut out = Vec::new();
     let Ok(entries) = fs::read_dir(projects_dir) else {
         return out;
     };
     for e in entries.flatten() {
-        let p = e.path();
-        if !p.is_dir() {
+        if !entry_is_dir(&e) {
             continue;
         }
-        let Ok(files) = fs::read_dir(&p) else {
+        let Ok(files) = fs::read_dir(e.path()) else {
             continue;
         };
         for f in files.flatten() {
@@ -528,11 +587,37 @@ pub(crate) fn collect_session_jsonl(projects_dir: &Path) -> Vec<PathBuf> {
             if fp.extension().is_some_and(|ex| ex == "jsonl")
                 && !fp.to_string_lossy().contains("subagents")
             {
-                out.push(fp);
+                if let Some(mt) = entry_mtime_ns(&f) {
+                    out.push((fp, mt));
+                }
             }
         }
     }
     out
+}
+
+/// Whether a directory entry is a directory, following links like `Path::is_dir`.
+/// On Windows the type comes from the listing itself; only links cost a stat.
+fn entry_is_dir(e: &fs::DirEntry) -> bool {
+    match e.file_type() {
+        Ok(t) if !t.is_symlink() => t.is_dir(),
+        _ => e.path().is_dir(),
+    }
+}
+
+/// mtime (ns since the epoch) of the file an entry names, following links like
+/// `fs::metadata`. On Windows `DirEntry::metadata` comes from the listing (no open), but
+/// describes a link itself, so links fall back to `fs::metadata`.
+fn entry_mtime_ns(e: &fs::DirEntry) -> Option<u128> {
+    let meta = match e.file_type() {
+        Ok(t) if !t.is_symlink() => e.metadata().ok()?,
+        _ => fs::metadata(e.path()).ok()?,
+    };
+    meta.modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_nanos())
 }
 
 /// セッションファイルは大きい場合 80MB に達するので、先頭/末尾だけ部分読みする。
@@ -592,8 +677,9 @@ fn find_last_custom_title(path: &Path) -> Option<String> {
     while let Some(pos) = buf[..end].windows(NEEDLE.len()).rposition(|w| w == NEEDLE) {
         let start = buf[..pos].iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
         let stop = buf[pos..].iter().position(|&b| b == b'\n').map_or(buf.len(), |i| pos + i);
-        // 窓の先頭で切れた行は parse に失敗するので読み飛ばす
-        if let Some(meta) = parse_line(&buf[start..stop]) {
+        // 窓の先頭で切れた行は parse に失敗するので読み飛ばす。parse_line は行を
+        // その場で書き換えるが、以降の探索は start より前だけなので影響しない
+        if let Some(meta) = parse_line(&mut buf[start..stop]) {
             if meta.typ.as_deref() == Some("custom-title") && meta.custom_title.is_some() {
                 return meta.custom_title;
             }
@@ -617,8 +703,12 @@ fn parse_session(path: &Path) -> Result<SessionInfo, bool> {
 }
 
 fn parse_session_window(path: &Path, head_bytes: u64, tail_bytes: u64) -> Result<SessionInfo, bool> {
-    let (head_buf, tail_buf) = read_head_and_tail(path, head_bytes, tail_bytes)?;
-    let head_lines: Vec<&[u8]> = head_buf.split(|&b| b == b'\n').filter(|s| !s.is_empty()).collect();
+    let (mut head_buf, tail_buf) = read_head_and_tail(path, head_bytes, tail_bytes)?;
+    // parse_line overwrites each line it parses. A small file comes back whole in head
+    // with an empty tail, and both loops below walk it, so the reverse scan gets a copy.
+    let mut tail_buf = if tail_buf.is_empty() { head_buf.clone() } else { tail_buf };
+    let mut head_lines: Vec<&mut [u8]> =
+        head_buf.split_mut(|&b| b == b'\n').filter(|s| !s.is_empty()).collect();
     if head_lines.is_empty() {
         return Err(false);
     }
@@ -630,7 +720,7 @@ fn parse_session_window(path: &Path, head_bytes: u64, tail_bytes: u64) -> Result
     // cwd はセッションを通じて不変なので、type を問わず最初に top-level cwd を
     // 持つ行から採る。type=user 限定にすると file-history-snapshot が HEAD を
     // 埋め尽くす大型セッションで cwd を取り逃す。
-    for line in head_lines.iter() {
+    for line in head_lines.iter_mut() {
         let Some(meta) = parse_line(line) else { continue };
         if session_id.is_none() {
             if let Some(sid) = &meta.session_id {
@@ -653,9 +743,9 @@ fn parse_session_window(path: &Path, head_bytes: u64, tail_bytes: u64) -> Result
     let session_id = session_id.ok_or(false)?;
     let cwd = cwd.ok_or(false)?;
 
-    // 小ファイル時は tail が空 → head を末尾走査の対象にする
-    let tail_for_rev: &[u8] = if tail_buf.is_empty() { &head_buf } else { &tail_buf };
-    let lines: Vec<&[u8]> = tail_for_rev.split(|&b| b == b'\n').filter(|s| !s.is_empty()).collect();
+    // 小ファイル時は tail_buf が head の写し → head 全体を末尾走査の対象にする
+    let mut lines: Vec<&mut [u8]> =
+        tail_buf.split_mut(|&b| b == b'\n').filter(|s| !s.is_empty()).collect();
 
     let title = find_last_custom_title(path);
     let mut last_timestamp: Option<String> = None;
@@ -666,7 +756,7 @@ fn parse_session_window(path: &Path, head_bytes: u64, tail_bytes: u64) -> Result
     const MSG_SEP: &str = " / ";
     // ai-title を拾うため、メッセージが揃っても末尾 N 行までは走査を続ける。
     const MIN_SCAN_LINES: usize = 100;
-    for (idx, line) in lines.iter().rev().enumerate() {
+    for (idx, line) in lines.iter_mut().rev().enumerate() {
         let Some(meta) = parse_line(line) else { continue };
         if last_timestamp.is_none() {
             last_timestamp = meta.timestamp;
@@ -829,77 +919,71 @@ pub(crate) fn strip_json_blobs(s: &str) -> String {
 
 /// "2026-04-03T11:05:19.155Z" → " 4/ 3 20:05" (UTC+9)
 fn format_timestamp(ts: &str) -> String {
-    if ts.len() >= 16 {
-        let mm: u32 = ts[5..7].parse().unwrap_or(0);
-        let dd: u32 = ts[8..10].parse().unwrap_or(0);
-        let hh: u32 = ts[11..13].parse().unwrap_or(0);
-        let mn = &ts[14..16];
-
-        let (hh, dd, mm) = {
-            let h = hh + 9;
-            if h >= 24 {
-                let d = dd + 1;
-                let days_in_month = match mm {
-                    2 => 28,
-                    4 | 6 | 9 | 11 => 30,
-                    _ => 31,
-                };
-                if d > days_in_month {
-                    (h - 24, 1, mm + 1)
-                } else {
-                    (h - 24, d, mm)
-                }
-            } else {
-                (h, dd, mm)
-            }
-        };
-
-        return format!("{mm:2}/{dd:2} {hh:2}:{mn}");
+    if ts.len() < 16 {
+        return ts.to_string();
     }
-    ts.to_string()
+    let Some(utc) = parse_epoch_minute(ts) else {
+        return ts.to_string();
+    };
+    let jst = utc + JST_OFFSET;
+    let (_, mm, dd) = civil_from_days(jst.div_euclid(86400));
+    let sec_of_day = jst.rem_euclid(86400);
+    let hh = sec_of_day / 3600;
+    let mn = sec_of_day % 3600 / 60;
+    format!("{mm:2}/{dd:2} {hh:2}:{mn:02}")
+}
+
+const JST_OFFSET: i64 = 9 * 3600;
+
+/// "2026-04-03T11:05..." の先頭 16 文字 (分まで) → epoch秒 (UTC、秒は 0)
+fn parse_epoch_minute(ts: &str) -> Option<i64> {
+    let num = |a: usize, b: usize| -> Option<i64> {
+        let s = ts.get(a..b)?;
+        if !s.bytes().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        s.parse().ok()
+    };
+    let y = num(0, 4)?;
+    let mo = num(5, 7)?;
+    let d = num(8, 10)?;
+    let h = num(11, 13)?;
+    let mi = num(14, 16)?;
+    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 {
+        return None;
+    }
+    Some(days_from_civil(y, mo as u32, d as u32) * 86400 + h * 3600 + mi * 60)
 }
 
 /// "2026-04-03T11:05:19.155Z" → epoch秒 (UTC)
 fn parse_epoch(ts: &str) -> Option<i64> {
-    if ts.len() < 19 {
-        return None;
-    }
-    let y: i64 = ts[0..4].parse().ok()?;
-    let mo: i64 = ts[5..7].parse().ok()?;
-    let d: i64 = ts[8..10].parse().ok()?;
-    let h: i64 = ts[11..13].parse().ok()?;
-    let mi: i64 = ts[14..16].parse().ok()?;
-    let s: i64 = ts[17..19].parse().ok()?;
-
-    // days from epoch (1970-01-01) — simplified, no leap second
-    let mut days: i64 = 0;
-    for yr in 1970..y {
-        days += if is_leap(yr) { 366 } else { 365 };
-    }
-    let month_days = [
-        31,
-        if is_leap(y) { 29 } else { 28 },
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31,
-    ];
-    for m in 0..(mo - 1) as usize {
-        days += month_days[m] as i64;
-    }
-    days += d - 1;
-
-    Some(days * 86400 + h * 3600 + mi * 60 + s)
+    let s: i64 = ts.get(17..19)?.parse().ok()?;
+    Some(parse_epoch_minute(ts)? + s)
 }
 
-fn is_leap(y: i64) -> bool {
-    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+/// 先発グレゴリオ暦の年月日 → 1970-01-01 からの日数 (Howard Hinnant の days_from_civil)
+fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (m as i64 + 9) % 12; // 3月=0 .. 2月=11
+    let doy = (153 * mp + 2) / 5 + d as i64 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146097 + doe - 719468
+}
+
+/// 1970-01-01 からの日数 → 先発グレゴリオ暦の (年, 月, 日) (Howard Hinnant の civil_from_days)
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
+    (y, m, d)
 }
 
 /// セッションのタイムスタンプからグループラベルを返す
@@ -922,12 +1006,11 @@ pub(crate) fn time_group_label(ts: &str, now_epoch: i64) -> &'static str {
     }
 
     // 日付ベースの分類（JST = UTC+9）
-    let jst_offset: i64 = 9 * 3600;
-    let now_jst = now_epoch + jst_offset;
-    let ts_jst = ts_epoch + jst_offset;
+    let now_jst = now_epoch + JST_OFFSET;
+    let ts_jst = ts_epoch + JST_OFFSET;
 
-    let now_day = now_jst / 86400; // JST日数
-    let ts_day = ts_jst / 86400;
+    let now_day = now_jst.div_euclid(86400); // JST日数
+    let ts_day = ts_jst.div_euclid(86400);
     let day_diff = now_day - ts_day;
 
     if day_diff == 0 {
@@ -941,7 +1024,7 @@ pub(crate) fn time_group_label(ts: &str, now_epoch: i64) -> &'static str {
     }
 
     // 曜日: 1970-01-01 = 木曜 → (day + 3) % 7: 0=月
-    let now_weekday = (now_day + 3) % 7; // 0=Mon
+    let now_weekday = (now_day + 3).rem_euclid(7); // 0=Mon
     let this_monday = now_day - now_weekday;
     let last_monday = this_monday - 7;
 
@@ -959,49 +1042,16 @@ pub(crate) fn time_group_label(ts: &str, now_epoch: i64) -> &'static str {
     if now_month == ts_month {
         return "今月";
     }
-    if now_month == ts_month + 1 || (now_month == 1 && ts_month == 12) {
+    if now_month == ts_month + 1 {
         return "先月";
     }
     "それ以前"
 }
 
-/// JST epoch秒 → year*12+month (比較用)
-fn now_jst_month(jst_epoch: i64) -> i32 {
-    // 簡易: epoch日数から年月を逆算
-    let days = jst_epoch / 86400;
-    let mut y = 1970i32;
-    let mut rem = days;
-    loop {
-        let yd = if is_leap(y as i64) { 366 } else { 365 };
-        if rem < yd {
-            break;
-        }
-        rem -= yd;
-        y += 1;
-    }
-    let month_days = [
-        31,
-        if is_leap(y as i64) { 29 } else { 28 },
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31,
-    ];
-    let mut m = 0i32;
-    for md in &month_days {
-        if rem < *md as i64 {
-            break;
-        }
-        rem -= *md as i64;
-        m += 1;
-    }
-    y * 12 + m
+/// JST epoch秒 → year*12+month (比較用。年跨ぎも差 1 で前月になる)
+fn now_jst_month(jst_epoch: i64) -> i64 {
+    let (y, m, _) = civil_from_days(jst_epoch.div_euclid(86400));
+    y * 12 + m as i64
 }
 
 /// restリストにタイムグループセパレータを挿入してlines に追加
@@ -1051,5 +1101,329 @@ pub(crate) fn truncate_message(s: String, max: usize) -> String {
         out.push('…');
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::BufRead;
+
+    struct TempDir(PathBuf);
+    impl TempDir {
+        fn new(name: &str) -> Self {
+            let p = env::temp_dir().join(format!(
+                "dotcli-resume-test-{name}-{}",
+                std::process::id()
+            ));
+            let _ = fs::remove_dir_all(&p);
+            fs::create_dir_all(&p).unwrap();
+            Self(p)
+        }
+    }
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    const SID: &str = "0123abcd-0000-4000-8000-00000000beef";
+
+    fn snapshot_line(i: usize) -> String {
+        format!(
+            r#"{{"type":"file-history-snapshot","messageId":"m{i}","snapshot":{{"pad":"{}"}}}}"#,
+            "x".repeat(1000)
+        )
+    }
+
+    fn user_line(cwd: &str, ts: &str, text: &str) -> String {
+        format!(
+            r#"{{"type":"user","sessionId":"{SID}","cwd":"{cwd}","timestamp":"{ts}","message":{{"role":"user","content":"{text}"}}}}"#
+        )
+    }
+
+    /// `<tmp>/projects/<dir>/<SID>.jsonl` holding `lines`.
+    fn write_session(projects: &Path, dir: &str, lines: &[String]) -> PathBuf {
+        let d = projects.join(dir);
+        fs::create_dir_all(&d).unwrap();
+        let p = d.join(format!("{SID}.jsonl"));
+        fs::write(&p, lines.join("\n") + "\n").unwrap();
+        p
+    }
+
+    /// The pre-change lookup: first `cwd` string among the first 20 lines.
+    fn first_20_lines_cwd(path: &Path) -> Option<String> {
+        let f = File::open(path).ok()?;
+        for line in std::io::BufReader::new(f).lines().take(20) {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&line.ok()?) else {
+                continue;
+            };
+            if let Some(c) = v.get("cwd").and_then(|x| x.as_str()) {
+                return Some(c.to_string());
+            }
+        }
+        None
+    }
+
+    fn target() -> String {
+        format!("{SID}.jsonl")
+    }
+
+    #[test]
+    fn cwd_found_after_many_snapshot_lines() {
+        let t = TempDir::new("snap");
+        let projects = t.0.join("projects");
+        // ~200KB of snapshots: past the first 20 lines and past HEAD_BASE_BYTES.
+        let mut lines: Vec<String> = (0..200).map(snapshot_line).collect();
+        lines.push(user_line("C:/work/big", "2026-01-01T00:00:00.000Z", "hi"));
+        let path = write_session(&projects, "p", &lines);
+        assert!(fs::metadata(&path).unwrap().len() > HEAD_BASE_BYTES);
+        assert_eq!(first_20_lines_cwd(&path), None, "the old lookup missed it");
+        assert_eq!(scan_session_cwd(&projects, &target()).as_deref(), Some("C:/work/big"));
+    }
+
+    #[test]
+    fn cwd_of_a_normal_session_matches_the_old_lookup() {
+        let t = TempDir::new("normal");
+        let projects = t.0.join("projects");
+        // A project dir without this session is skipped.
+        fs::create_dir_all(projects.join("a-other")).unwrap();
+        let lines = vec![
+            snapshot_line(0),
+            r#"{"type":"summary","cwd":null}"#.to_string(),
+            user_line("C:/work/one", "2026-01-01T00:00:00.000Z", "hi"),
+            user_line("C:/work/two", "2026-01-01T00:00:01.000Z", "again"),
+        ];
+        let path = write_session(&projects, "b", &lines);
+        assert_eq!(first_20_lines_cwd(&path).as_deref(), Some("C:/work/one"));
+        assert_eq!(scan_session_cwd(&projects, &target()).as_deref(), Some("C:/work/one"));
+    }
+
+    #[test]
+    fn session_without_cwd_or_missing_gives_none() {
+        let t = TempDir::new("none");
+        let projects = t.0.join("projects");
+        fs::create_dir_all(&projects).unwrap();
+        assert_eq!(scan_session_cwd(&projects, &target()), None);
+        write_session(&projects, "p", &[snapshot_line(0)]);
+        assert_eq!(scan_session_cwd(&projects, &target()), None);
+    }
+
+    #[test]
+    fn cached_cwd_is_used_only_for_an_existing_file_under_projects() {
+        let t = TempDir::new("cache");
+        let projects = t.0.join("projects");
+        let path = write_session(&projects, "p", &[user_line("C:/from/file", "t", "x")]);
+        let other_root = (t.0.join("elsewhere").join("p").join(target()), "C:/wrong".to_string());
+        let cached = (path.clone(), "C:/from/cache".to_string());
+        let gone = (projects.join("gone").join(target()), "C:/deleted".to_string());
+        let find = |entries: &[(PathBuf, String)]| cached_session_cwd(entries, &projects, &target());
+        assert_eq!(find(&[other_root.clone(), cached.clone()]).as_deref(), Some("C:/from/cache"));
+        assert_eq!(find(&[other_root, gone.clone()]), None, "the cached file is gone");
+        assert_eq!(find(&[gone, cached]), None, "an id in two project dirs is left to the scan");
+    }
+
+    fn check_parsed(path: &Path, latest_message: &str) {
+        let Ok(s) = parse_session(path) else { panic!("parse failed") };
+        assert_eq!(s.session_id, SID);
+        assert_eq!(s.cwd, "C:/work/p");
+        assert_eq!(s.timestamp, "2026-01-02T00:00:00.000Z");
+        assert_eq!(s.title.as_deref(), Some("my title"));
+        assert_eq!(s.ai_title.as_deref(), Some("ai named"));
+        assert_eq!(s.latest_message, latest_message);
+        assert_eq!(s.project, "p");
+    }
+
+    fn session_lines(padding: usize) -> Vec<String> {
+        let mut lines = vec![
+            // The escape matters: simd-json rewrites a line in place only where it has to
+            // unescape, so a line parsed twice fails only when it holds one.
+            user_line("C:/work/p", "2026-01-01T00:00:00.000Z", r#"first \"question\" about the parser"#),
+            r#"{"type":"ai-title","aiTitle":"ai named"}"#.to_string(),
+        ];
+        lines.extend((0..padding).map(snapshot_line));
+        lines.push(user_line("C:/work/p", "2026-01-02T00:00:00.000Z", "last question about it"));
+        lines.push(r#"{"type":"custom-title","customTitle":"my title"}"#.to_string());
+        lines
+    }
+
+    #[test]
+    fn small_session_parses_head_and_tail_from_one_buffer() {
+        let t = TempDir::new("small");
+        let path = write_session(&t.0.join("projects"), "p", &session_lines(3));
+        assert!(fs::metadata(&path).unwrap().len() <= HEAD_BASE_BYTES + TAIL_BASE_BYTES);
+        // The reverse scan reaches the first message too: the head lines it walks again
+        // were not overwritten by the head scan.
+        check_parsed(&path, r#"last question about it / first "question" about the parser"#);
+    }
+
+    #[test]
+    fn large_session_parses_separate_head_and_tail() {
+        let t = TempDir::new("large");
+        let path = write_session(&t.0.join("projects"), "p", &session_lines(800));
+        assert!(fs::metadata(&path).unwrap().len() > HEAD_BASE_BYTES + TAIL_BASE_BYTES);
+        check_parsed(&path, "last question about it");
+    }
+
+    /// The pre-change listing: `Path::is_dir` per project dir, `fs::metadata` per file.
+    fn listed_then_stat(projects: &Path) -> Vec<(PathBuf, u128)> {
+        let mut out = Vec::new();
+        for e in fs::read_dir(projects).unwrap().flatten() {
+            let p = e.path();
+            if !p.is_dir() {
+                continue;
+            }
+            for f in fs::read_dir(&p).unwrap().flatten() {
+                let fp = f.path();
+                if fp.extension().is_some_and(|ex| ex == "jsonl")
+                    && !fp.to_string_lossy().contains("subagents")
+                {
+                    let Ok(m) = fs::metadata(&fp) else { continue };
+                    let mt = m.modified().unwrap().duration_since(std::time::UNIX_EPOCH);
+                    out.push((fp, mt.unwrap().as_nanos()));
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn listing_mtimes_match_stat() {
+        let t = TempDir::new("list");
+        let projects = t.0.join("projects");
+        write_session(&projects, "a", &[snapshot_line(0)]);
+        write_session(&projects, "b", &[snapshot_line(1)]);
+        fs::write(projects.join("a").join("notes.txt"), "x").unwrap();
+        fs::write(projects.join("top.jsonl"), "x").unwrap();
+        #[cfg(windows)]
+        {
+            let ok = Command::new("cmd")
+                .args(["/d", "/c", "mklink", "/J"])
+                .arg(projects.join("c-junction"))
+                .arg(projects.join("b"))
+                .stdout(Stdio::null())
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok, "mklink /J failed");
+        }
+        let listed = collect_session_jsonl(&projects);
+        assert_eq!(listed, listed_then_stat(&projects));
+        #[cfg(windows)]
+        assert_eq!(listed.len(), 3, "the junctioned dir is listed too");
+    }
+
+    /// Read-only comparison against the real `~/.claude/projects` and scan cache:
+    /// `cargo test --release -- --ignored real_sessions --nocapture`.
+    #[test]
+    #[ignore]
+    fn real_sessions_match_the_old_lookups() {
+        let projects = dirs::home_dir().unwrap().join(".claude").join("projects");
+        let before = listed_then_stat(&projects);
+        let listed = collect_session_jsonl(&projects);
+        let after = listed_then_stat(&projects);
+        let paths = |v: &[(PathBuf, u128)]| v.iter().map(|(p, _)| p.clone()).collect::<Vec<_>>();
+        assert_eq!(paths(&listed), paths(&before));
+        for (i, (p, mt)) in listed.iter().enumerate() {
+            // A session being written may move between the listings.
+            assert!(*mt == before[i].1 || *mt == after[i].1, "{}", p.display());
+        }
+
+        // Per file: the head lookup and the cache entry agree with the old 20-line lookup.
+        let cache = read_scan_cache_cwds();
+        let (mut same, mut found_only_now, mut cache_same) = (0, 0, 0);
+        for (path, _) in &listed {
+            let old = first_20_lines_cwd(path);
+            let new = head_cwd(path);
+            match &old {
+                Some(o) => {
+                    assert_eq!(new.as_ref(), Some(o), "{}", path.display());
+                    same += 1;
+                }
+                None if new.is_some() => found_only_now += 1,
+                None => {}
+            }
+            if let (Some(o), Some((_, c))) = (&old, cache.iter().find(|(p, _)| p == path)) {
+                assert_eq!(c, o, "cache: {}", path.display());
+                cache_same += 1;
+            }
+        }
+
+        // Per session id: the whole lookup (cache, then scan) matches the old scan, which
+        // took the first project dir in listing order holding the file.
+        let old_find = |name: &str| -> Option<String> {
+            for e in fs::read_dir(&projects).ok()?.flatten() {
+                let p = e.path();
+                if p.is_dir() && p.join(name).is_file() {
+                    return first_20_lines_cwd(&p.join(name));
+                }
+            }
+            None
+        };
+        let mut names: Vec<String> = listed
+            .iter()
+            .map(|(p, _)| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names.dedup();
+        let (mut ids_same, mut ids_from_cache) = (0, 0);
+        for name in &names {
+            let cached = cached_session_cwd(&cache, &projects, name);
+            if cached.is_some() {
+                ids_from_cache += 1;
+            }
+            let new = cached.or_else(|| scan_session_cwd(&projects, name));
+            if let Some(o) = old_find(name) {
+                assert_eq!(new.as_ref(), Some(&o), "{name}");
+                ids_same += 1;
+            }
+        }
+        eprintln!(
+            "files={} same_cwd={same} found_only_now={found_only_now} cache_same={cache_same} \
+             cache_entries={} ids={} ids_same={ids_same} ids_from_cache={ids_from_cache}",
+            listed.len(),
+            cache.len(),
+            names.len()
+        );
+    }
+
+    #[test]
+    fn format_timestamp_converts_to_jst_across_day_month_and_year_ends() {
+        assert_eq!(format_timestamp("2026-04-03T11:05:19.155Z"), " 4/ 3 20:05");
+        assert_eq!(format_timestamp("2028-02-28T16:00:00.000Z"), " 2/29  1:00");
+        assert_eq!(format_timestamp("2026-02-28T16:00:00.000Z"), " 3/ 1  1:00");
+        assert_eq!(format_timestamp("2026-12-31T16:00:00.000Z"), " 1/ 1  1:00");
+        assert_eq!(format_timestamp("2026-04-30T15:00"), " 5/ 1  0:00");
+        assert_eq!(format_timestamp("2026-04-03T11"), "2026-04-03T11");
+        assert_eq!(format_timestamp("not a timestamp!"), "not a timestamp!");
+    }
+
+    #[test]
+    fn civil_days_round_trip() {
+        for days in -800_000..800_000i64 {
+            let (y, m, d) = civil_from_days(days);
+            assert_eq!(days_from_civil(y, m, d), days, "{y}-{m}-{d}");
+        }
+        assert_eq!(days_from_civil(1970, 1, 1), 0);
+        assert_eq!(civil_from_days(0), (1970, 1, 1));
+        assert_eq!(civil_from_days(days_from_civil(2000, 2, 29) + 1), (2000, 3, 1));
+        assert_eq!(civil_from_days(days_from_civil(2100, 2, 28) + 1), (2100, 3, 1));
+    }
+
+    #[test]
+    fn parse_epoch_matches_known_values() {
+        assert_eq!(parse_epoch("1970-01-01T00:00:00.000Z"), Some(0));
+        assert_eq!(parse_epoch("2026-04-03T11:05:19.155Z"), Some(1_775_214_319));
+        assert_eq!(parse_epoch("2026-13-03T11:05:19.155Z"), None);
+        assert_eq!(parse_epoch("2026-04-03T11:05"), None);
+    }
+
+    #[test]
+    fn time_group_label_counts_december_as_last_month_in_january() {
+        let now = parse_epoch("2027-01-10T03:00:00.000Z").unwrap();
+        assert_eq!(time_group_label("2026-12-05T03:00:00.000Z", now), "先月");
+        assert_eq!(time_group_label("2026-11-20T03:00:00.000Z", now), "それ以前");
+        let now = parse_epoch("2027-01-31T03:00:00.000Z").unwrap();
+        assert_eq!(time_group_label("2027-01-05T03:00:00.000Z", now), "今月");
+    }
 }
 

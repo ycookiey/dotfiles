@@ -5,9 +5,11 @@
 
 use rayon::prelude::*;
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use super::scan_common::{self, display_path, Event, Lang, Lexer, ScanArgs, Syntax};
 
 const DEFAULT_MIN_CHARS: usize = 30;
 const DEFAULT_MIN_WORDS: usize = 3;
@@ -23,40 +25,6 @@ const DEFAULT_EXTS: &[&str] = &[
     "html", "vue", "svelte", "astro",
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LangKind {
-    CFamily,
-    Python,
-    PowerShell,
-    Shell,
-    Markup, // html, vue, svelte, astro — strip <!-- --> + extract attribute strings
-    Fallback,
-}
-
-fn lang_for_ext(ext: &str) -> LangKind {
-    match ext {
-        "rs" | "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs"
-        | "go" | "java" | "kt" | "swift"
-        | "c" | "h" | "cpp" | "hpp" | "cc" => LangKind::CFamily,
-        "py" => LangKind::Python,
-        "ps1" | "psm1" => LangKind::PowerShell,
-        "sh" | "bash" => LangKind::Shell,
-        "html" | "vue" | "svelte" | "astro" => LangKind::Markup,
-        _ => LangKind::Fallback,
-    }
-}
-
-fn lang_name(kind: LangKind) -> &'static str {
-    match kind {
-        LangKind::CFamily => "c_family",
-        LangKind::Python => "python",
-        LangKind::PowerShell => "powershell",
-        LangKind::Shell => "shell",
-        LangKind::Markup => "markup",
-        LangKind::Fallback => "fallback",
-    }
-}
-
 #[derive(Debug, Clone)]
 struct StringLit {
     content: String, // whitespace-normalized
@@ -67,142 +35,34 @@ struct FileStrings {
     path: PathBuf,
     strings: Vec<StringLit>,
     ext: String,
-    lang: LangKind,
+    lang: Lang,
 }
 
-struct Args {
-    path: PathBuf,
-    exts: Vec<String>,
-    min_chars: usize,
-    min_words: usize,
-    min_occurrences: usize,
-    top: usize,
-    similarity: Option<String>,
-    threshold: f64,
-    excludes: Vec<String>,
-    no_gitignore: bool,
-}
-
-fn parse_args(args: &[String]) -> Args {
-    let mut path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let mut exts: Vec<String> = DEFAULT_EXTS.iter().map(|s| s.to_string()).collect();
-    let mut min_chars = DEFAULT_MIN_CHARS;
-    let mut min_words = DEFAULT_MIN_WORDS;
-    let mut min_occurrences = DEFAULT_MIN_OCCURRENCES;
-    let mut top = DEFAULT_TOP;
-    let mut similarity: Option<String> = None;
-    let mut threshold = DEFAULT_JACCARD_THRESHOLD;
-    let mut excludes: Vec<String> = Vec::new();
-    let mut no_gitignore = false;
-
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--path" => {
-                if i + 1 < args.len() {
-                    path = PathBuf::from(&args[i + 1]);
-                    i += 1;
-                }
-            }
-            "--ext" => {
-                if i + 1 < args.len() {
-                    exts = args[i + 1].split(',').map(|s| s.trim().to_string()).collect();
-                    i += 1;
-                }
-            }
-            "--min-chars" => {
-                if i + 1 < args.len() {
-                    min_chars = args[i + 1].parse().unwrap_or(DEFAULT_MIN_CHARS);
-                    i += 1;
-                }
-            }
-            "--min-words" => {
-                if i + 1 < args.len() {
-                    min_words = args[i + 1].parse().unwrap_or(DEFAULT_MIN_WORDS);
-                    i += 1;
-                }
-            }
-            "--min-occurrences" => {
-                if i + 1 < args.len() {
-                    min_occurrences = args[i + 1].parse().unwrap_or(DEFAULT_MIN_OCCURRENCES);
-                    i += 1;
-                }
-            }
-            "--top" => {
-                if i + 1 < args.len() {
-                    top = args[i + 1].parse().unwrap_or(DEFAULT_TOP);
-                    i += 1;
-                }
-            }
-            "--similarity" => {
-                if i + 1 < args.len() {
-                    similarity = Some(args[i + 1].clone());
-                    i += 1;
-                }
-            }
-            "--threshold" => {
-                if i + 1 < args.len() {
-                    threshold = args[i + 1].parse().unwrap_or(DEFAULT_JACCARD_THRESHOLD);
-                    i += 1;
-                }
-            }
-            "--exclude" => {
-                if i + 1 < args.len() {
-                    excludes.push(args[i + 1].clone());
-                    i += 1;
-                }
-            }
-            "--no-gitignore" => {
-                no_gitignore = true;
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-
-    Args {
-        path, exts, min_chars, min_words, min_occurrences,
-        top, similarity, threshold, excludes, no_gitignore,
-    }
-}
-
-// ============================================================================
-// File discovery
-// ============================================================================
-
-fn walk_files(
-    root: &Path,
-    exts: &[String],
-    excludes: &[String],
-    no_gitignore: bool,
-) -> Vec<PathBuf> {
-    let ext_set: HashSet<&str> = exts.iter().map(|s| s.as_str()).collect();
-    let mut builder = ignore::WalkBuilder::new(root);
-    builder
-        .git_ignore(!no_gitignore)
-        .git_exclude(!no_gitignore)
-        .git_global(!no_gitignore)
-        .ignore(!no_gitignore)
-        .hidden(true)
-        .parents(!no_gitignore);
-
-    let mut out = Vec::new();
-    for entry in builder.build().flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if !ext_set.contains(ext) {
-            continue;
-        }
-        let path_str = path.to_string_lossy().replace('\\', "/");
-        if excludes.iter().any(|e| path_str.contains(e.as_str())) {
-            continue;
-        }
-        out.push(path.to_path_buf());
-    }
-    out
+// string-dup's options. A plain comment, not a doc comment: the subcommand's about text
+// comes from the Commands variant in main.rs.
+#[derive(clap::Args, Debug)]
+#[command(args_override_self = true)]
+pub(crate) struct StringDupArgs {
+    #[command(flatten)]
+    pub(crate) scan: ScanArgs,
+    /// Shortest string to report, in characters after whitespace is collapsed
+    #[arg(long, value_name = "N", default_value_t = DEFAULT_MIN_CHARS)]
+    pub(crate) min_chars: usize,
+    /// Fewest whitespace-separated words a reported string has
+    #[arg(long, value_name = "N", default_value_t = DEFAULT_MIN_WORDS)]
+    pub(crate) min_words: usize,
+    /// Fewest occurrences a reported string or similar group has
+    #[arg(long, value_name = "N", default_value_t = DEFAULT_MIN_OCCURRENCES)]
+    pub(crate) min_occurrences: usize,
+    /// Number of clusters to output, for exact and for similar clusters each
+    #[arg(long, value_name = "N", default_value_t = DEFAULT_TOP)]
+    pub(crate) top: usize,
+    /// Also group similar, not only identical, strings by this method
+    #[arg(long, value_name = "METHOD", value_parser = ["jaccard"])]
+    pub(crate) similarity: Option<String>,
+    /// Lowest word-set Jaccard similarity that joins two strings under --similarity jaccard
+    #[arg(long, value_name = "X", default_value_t = DEFAULT_JACCARD_THRESHOLD)]
+    pub(crate) threshold: f64,
 }
 
 // ============================================================================
@@ -230,300 +90,25 @@ fn normalize_ws(s: &str) -> String {
     out
 }
 
-fn extract_strings(src: &str, lang: LangKind) -> Vec<StringLit> {
-    match lang {
-        LangKind::CFamily | LangKind::Fallback => {
-            extract_generic(src, &["//"], true, true, lang == LangKind::Fallback)
-        }
-        LangKind::Shell => extract_generic(src, &["#"], false, true, false),
-        LangKind::Python => extract_python(src),
-        LangKind::PowerShell => extract_powershell(src),
-        LangKind::Markup => extract_markup(src),
-    }
-}
-
-fn extract_generic(
-    src: &str,
-    line_comment_prefixes: &[&str],
-    has_block_comment: bool,
-    has_backtick_string: bool,
-    fallback_extra_comments: bool,
-) -> Vec<StringLit> {
-    let mut prefixes_owned: Vec<&str> = line_comment_prefixes.to_vec();
-    if fallback_extra_comments && !prefixes_owned.contains(&"#") {
-        prefixes_owned.push("#");
-    }
-    let bytes = src.as_bytes();
+/// The string literals of `src` (Rust char literals excluded), in source order.
+/// `min_chars` only drops literals that cannot reach it before they are normalized;
+/// callers still apply the exact filter.
+fn extract_strings(src: &str, syntax: Syntax, min_chars: usize) -> Vec<StringLit> {
     let mut out = Vec::new();
-    let mut line: u32 = 1;
-    let mut i = 0;
-
-    while i < bytes.len() {
-        let b = bytes[i];
-
-        if b == b'\n' {
-            line += 1;
-            i += 1;
-            continue;
+    for ev in Lexer::new(src, syntax) {
+        if let Event::Str { char_lit: false, line, content_start, content_end } = ev {
+            push_string(&mut out, &src[content_start..content_end], line, min_chars);
         }
-        if has_block_comment && b == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
-            i += 2;
-            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            i = (i + 2).min(bytes.len());
-            continue;
-        }
-        let mut comment_match = None;
-        for prefix in &prefixes_owned {
-            let pb = prefix.as_bytes();
-            if bytes[i..].starts_with(pb) {
-                comment_match = Some(pb.len());
-                break;
-            }
-        }
-        if let Some(plen) = comment_match {
-            i += plen;
-            while i < bytes.len() && bytes[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-
-        if b == b'"' || b == b'\'' || (has_backtick_string && b == b'`') {
-            let quote = b;
-            let start_line = line;
-            let content_start = i + 1;
-            i += 1;
-            while i < bytes.len() && bytes[i] != quote {
-                if bytes[i] == b'\\' && i + 1 < bytes.len() {
-                    if bytes[i + 1] == b'\n' {
-                        line += 1;
-                    }
-                    i += 2;
-                    continue;
-                }
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            let content_end = i;
-            if i < bytes.len() {
-                i += 1;
-            }
-            push_string(&mut out, &src[content_start..content_end], start_line);
-            continue;
-        }
-
-        i += 1;
     }
     out
 }
 
-fn extract_python(src: &str) -> Vec<StringLit> {
-    let bytes = src.as_bytes();
-    let mut out = Vec::new();
-    let mut line: u32 = 1;
-    let mut i = 0;
-
-    while i < bytes.len() {
-        let b = bytes[i];
-        if b == b'\n' {
-            line += 1;
-            i += 1;
-            continue;
-        }
-        if b == b'#' {
-            while i < bytes.len() && bytes[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-        // Triple-quoted string
-        if (b == b'"' || b == b'\'')
-            && i + 2 < bytes.len()
-            && bytes[i + 1] == b
-            && bytes[i + 2] == b
-        {
-            let quote = b;
-            let start_line = line;
-            let content_start = i + 3;
-            i += 3;
-            while i + 2 < bytes.len()
-                && !(bytes[i] == quote && bytes[i + 1] == quote && bytes[i + 2] == quote)
-            {
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            let content_end = i;
-            i = (i + 3).min(bytes.len());
-            push_string(&mut out, &src[content_start..content_end], start_line);
-            continue;
-        }
-        if b == b'"' || b == b'\'' {
-            let quote = b;
-            let start_line = line;
-            let content_start = i + 1;
-            i += 1;
-            while i < bytes.len() && bytes[i] != quote {
-                if bytes[i] == b'\\' && i + 1 < bytes.len() {
-                    if bytes[i + 1] == b'\n' {
-                        line += 1;
-                    }
-                    i += 2;
-                    continue;
-                }
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            let content_end = i;
-            if i < bytes.len() {
-                i += 1;
-            }
-            push_string(&mut out, &src[content_start..content_end], start_line);
-            continue;
-        }
-        i += 1;
+fn push_string(out: &mut Vec<StringLit>, raw: &str, line: u32, min_chars: usize) {
+    // Normalizing only removes characters, and a str has at least as many bytes as
+    // chars, so a raw literal shorter than min_chars bytes can never pass the filter.
+    if raw.len() < min_chars {
+        return;
     }
-    out
-}
-
-fn extract_powershell(src: &str) -> Vec<StringLit> {
-    let bytes = src.as_bytes();
-    let mut out = Vec::new();
-    let mut line: u32 = 1;
-    let mut i = 0;
-
-    while i < bytes.len() {
-        let b = bytes[i];
-        if b == b'\n' {
-            line += 1;
-            i += 1;
-            continue;
-        }
-        if b == b'<' && i + 1 < bytes.len() && bytes[i + 1] == b'#' {
-            i += 2;
-            while i + 1 < bytes.len() && !(bytes[i] == b'#' && bytes[i + 1] == b'>') {
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            i = (i + 2).min(bytes.len());
-            continue;
-        }
-        if b == b'#' {
-            while i < bytes.len() && bytes[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-        // Here-string: @"..."@ or @'...'@
-        if b == b'@'
-            && i + 1 < bytes.len()
-            && (bytes[i + 1] == b'"' || bytes[i + 1] == b'\'')
-        {
-            let quote = bytes[i + 1];
-            let start_line = line;
-            let content_start = i + 2;
-            i += 2;
-            while i + 1 < bytes.len() && !(bytes[i] == quote && bytes[i + 1] == b'@') {
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            let content_end = i;
-            i = (i + 2).min(bytes.len());
-            push_string(&mut out, &src[content_start..content_end], start_line);
-            continue;
-        }
-        if b == b'"' || b == b'\'' {
-            let quote = b;
-            let start_line = line;
-            let content_start = i + 1;
-            i += 1;
-            while i < bytes.len() && bytes[i] != quote {
-                if bytes[i] == b'`' && i + 1 < bytes.len() {
-                    if bytes[i + 1] == b'\n' {
-                        line += 1;
-                    }
-                    i += 2;
-                    continue;
-                }
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            let content_end = i;
-            if i < bytes.len() {
-                i += 1;
-            }
-            push_string(&mut out, &src[content_start..content_end], start_line);
-            continue;
-        }
-        i += 1;
-    }
-    out
-}
-
-/// Markup: skip `<!-- ... -->`, extract attribute values `attr="..."` or `attr='...'`.
-fn extract_markup(src: &str) -> Vec<StringLit> {
-    let bytes = src.as_bytes();
-    let mut out = Vec::new();
-    let mut line: u32 = 1;
-    let mut i = 0;
-    while i < bytes.len() {
-        let b = bytes[i];
-        if b == b'\n' {
-            line += 1;
-            i += 1;
-            continue;
-        }
-        if bytes[i..].starts_with(b"<!--") {
-            i += 4;
-            while i + 2 < bytes.len() && !bytes[i..].starts_with(b"-->") {
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            i = (i + 3).min(bytes.len());
-            continue;
-        }
-        if b == b'"' || b == b'\'' {
-            let quote = b;
-            let start_line = line;
-            let content_start = i + 1;
-            i += 1;
-            while i < bytes.len() && bytes[i] != quote {
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            let content_end = i;
-            if i < bytes.len() {
-                i += 1;
-            }
-            push_string(&mut out, &src[content_start..content_end], start_line);
-            continue;
-        }
-        i += 1;
-    }
-    out
-}
-
-fn push_string(out: &mut Vec<StringLit>, raw: &str, line: u32) {
     let normalized = normalize_ws(raw);
     if normalized.is_empty() {
         return;
@@ -550,101 +135,160 @@ struct Variant {
 }
 
 fn build_variants(files: &[FileStrings]) -> Vec<Variant> {
-    let mut by_content: HashMap<String, Vec<Occurrence>> = HashMap::new();
+    // Keyed by borrowed content, so only one String per distinct content is allocated.
+    let mut by_content: HashMap<&str, Vec<Occurrence>> = HashMap::new();
     for (fi, f) in files.iter().enumerate() {
         for s in &f.strings {
             by_content
-                .entry(s.content.clone())
+                .entry(s.content.as_str())
                 .or_default()
                 .push(Occurrence { file_idx: fi, line: s.line });
         }
     }
-    by_content
+    let mut variants: Vec<Variant> = by_content
         .into_iter()
         .map(|(content, occurrences)| {
             let char_count = content.chars().count();
             let word_count = content.split_ascii_whitespace().count();
-            Variant { content, char_count, word_count, occurrences }
+            Variant { content: content.to_string(), char_count, word_count, occurrences }
         })
-        .collect()
+        .collect();
+    // Content order, not HashMap order, so variant indexes (and the similar clusters
+    // built from them) are the same on every run.
+    variants.sort_unstable_by(|a, b| a.content.cmp(&b.content));
+    variants
 }
 
 // ============================================================================
 // Jaccard similarity clustering (opt-in)
 // ============================================================================
 
-fn word_set(s: &str) -> Vec<String> {
-    let mut v: Vec<String> = s
-        .split_ascii_whitespace()
-        .map(|w| w.to_string())
+/// The distinct ASCII-whitespace-separated words of each content, as sorted word ids,
+/// and the number of distinct words. Ids follow first appearance, not word order;
+/// only set membership matters to the Jaccard index.
+fn word_id_sets(contents: &[&str]) -> (Vec<Vec<u32>>, usize) {
+    let mut ids: HashMap<&str, u32> = HashMap::new();
+    let sets = contents
+        .iter()
+        .map(|c| {
+            let mut set: Vec<u32> = c
+                .split_ascii_whitespace()
+                .map(|w| {
+                    let next = u32::try_from(ids.len()).expect("more than u32::MAX distinct words");
+                    *ids.entry(w).or_insert(next)
+                })
+                .collect();
+            set.sort_unstable();
+            set.dedup();
+            set
+        })
         .collect();
-    v.sort();
-    v.dedup();
-    v
+    (sets, ids.len())
 }
 
-fn jaccard(a: &[String], b: &[String]) -> f64 {
-    let sa: HashSet<&str> = a.iter().map(|s| s.as_str()).collect();
-    let sb: HashSet<&str> = b.iter().map(|s| s.as_str()).collect();
-    let inter = sa.intersection(&sb).count();
-    let union = sa.union(&sb).count();
+/// Number of ids two sorted, deduplicated id lists share.
+fn intersection_len(a: &[u32], b: &[u32]) -> usize {
+    let (mut i, mut j, mut n) = (0, 0, 0);
+    while i < a.len() && j < b.len() {
+        match a[i].cmp(&b[j]) {
+            std::cmp::Ordering::Less => i += 1,
+            std::cmp::Ordering::Greater => j += 1,
+            std::cmp::Ordering::Equal => {
+                n += 1;
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+    n
+}
+
+/// Jaccard index of two sorted, deduplicated id lists.
+fn jaccard(a: &[u32], b: &[u32]) -> f64 {
+    let inter = intersection_len(a, b);
+    let union = a.len() + b.len() - inter;
     if union == 0 { 0.0 } else { inter as f64 / union as f64 }
 }
 
-/// Union-find for clustering Jaccard-similar variants.
+/// Union-find for clustering Jaccard-similar variants. `find` is iterative with path
+/// halving and `union` links the smaller tree under the larger, so long chains of
+/// unions neither recurse nor build deep trees.
 struct UnionFind {
     parent: Vec<usize>,
+    size: Vec<usize>,
 }
 
 impl UnionFind {
-    fn new(n: usize) -> Self { Self { parent: (0..n).collect() } }
-    fn find(&mut self, x: usize) -> usize {
-        if self.parent[x] == x { return x; }
-        let p = self.find(self.parent[x]);
-        self.parent[x] = p;
-        p
+    fn new(n: usize) -> Self { Self { parent: (0..n).collect(), size: vec![1; n] } }
+    fn find(&mut self, mut x: usize) -> usize {
+        while self.parent[x] != x {
+            let grandparent = self.parent[self.parent[x]];
+            self.parent[x] = grandparent;
+            x = grandparent;
+        }
+        x
     }
     fn union(&mut self, a: usize, b: usize) {
-        let ra = self.find(a);
-        let rb = self.find(b);
-        if ra != rb { self.parent[ra] = rb; }
+        let mut ra = self.find(a);
+        let mut rb = self.find(b);
+        if ra == rb { return; }
+        if self.size[ra] < self.size[rb] { std::mem::swap(&mut ra, &mut rb); }
+        self.parent[rb] = ra;
+        self.size[ra] += self.size[rb];
     }
 }
 
 fn build_similar_clusters(variants: &[Variant], threshold: f64) -> Vec<Vec<usize>> {
     let n = variants.len();
     if n < 2 { return Vec::new(); }
-    let word_sets: Vec<Vec<String>> = variants.iter().map(|v| word_set(&v.content)).collect();
+    let contents: Vec<&str> = variants.iter().map(|v| v.content.as_str()).collect();
+    let (word_sets, word_count) = word_id_sets(&contents);
 
-    // Inverted index: word -> Vec<variant_idx>
-    let mut inverted: HashMap<String, Vec<usize>> = HashMap::new();
+    // Inverted index: word id -> variant indexes, ascending since variants are visited in order.
+    let mut inverted: Vec<Vec<usize>> = vec![Vec::new(); word_count];
     for (idx, ws) in word_sets.iter().enumerate() {
-        for w in ws {
-            inverted.entry(w.clone()).or_default().push(idx);
+        for &w in ws {
+            inverted[w as usize].push(idx);
         }
     }
 
     let mut uf = UnionFind::new(n);
 
     // For each variant, compute candidates (those sharing >= 1 word).
-    // Process in parallel and collect edges to union sequentially.
-    let edges: Vec<(usize, usize)> = (0..n).into_par_iter().flat_map(|i| {
-        let mut local_edges: Vec<(usize, usize)> = Vec::new();
-        let mut seen: HashSet<usize> = HashSet::new();
-        for w in &word_sets[i] {
-            if let Some(list) = inverted.get(w) {
-                for &j in list {
-                    if j > i && seen.insert(j) {
-                        let s = jaccard(&word_sets[i], &word_sets[j]);
-                        if s >= threshold {
+    // Process in parallel and collect edges to union sequentially. `seen[j] == i` marks
+    // j as already scored for i; each worker keeps one such array for all its i.
+    let edges: Vec<(usize, usize)> = (0..n)
+        .into_par_iter()
+        .map_init(
+            || vec![usize::MAX; n],
+            |seen, i| {
+                let mut local_edges: Vec<(usize, usize)> = Vec::new();
+                let a = &word_sets[i];
+                for &w in a {
+                    let list = &inverted[w as usize];
+                    for &j in &list[list.partition_point(|&j| j <= i)..] {
+                        if seen[j] == i {
+                            continue;
+                        }
+                        seen[j] = i;
+                        let b = &word_sets[j];
+                        // J(a, b) <= min(|a|, |b|) / max(|a|, |b|), and float division is
+                        // monotone, so a pair whose size ratio is below the threshold
+                        // cannot reach it.
+                        let (lo, hi) = if a.len() < b.len() { (a.len(), b.len()) } else { (b.len(), a.len()) };
+                        if (lo as f64 / hi as f64) < threshold {
+                            continue;
+                        }
+                        if jaccard(a, b) >= threshold {
                             local_edges.push((i, j));
                         }
                     }
                 }
-            }
-        }
-        local_edges
-    }).collect();
+                local_edges
+            },
+        )
+        .flatten()
+        .collect();
 
     for (a, b) in edges {
         uf.union(a, b);
@@ -656,20 +300,16 @@ fn build_similar_clusters(variants: &[Variant], threshold: f64) -> Vec<Vec<usize
         let r = uf.find(i);
         by_root.entry(r).or_default().push(i);
     }
-    by_root.into_values().filter(|g| g.len() >= 2).collect()
+    // Members are pushed in index order; order the groups by their first member so the
+    // result does not follow HashMap order.
+    let mut groups: Vec<Vec<usize>> = by_root.into_values().filter(|g| g.len() >= 2).collect();
+    groups.sort_unstable_by_key(|g| g[0]);
+    groups
 }
 
 // ============================================================================
 // Output
 // ============================================================================
-
-fn display_path(p: &Path, root: &Path) -> String {
-    if let Ok(rel) = p.strip_prefix(root) {
-        rel.to_string_lossy().replace('\\', "/")
-    } else {
-        p.to_string_lossy().replace('\\', "/")
-    }
-}
 
 fn truncate(s: &str, max_chars: usize) -> String {
     let chars: Vec<char> = s.chars().collect();
@@ -728,54 +368,9 @@ fn similar_cluster_to_json(
     })
 }
 
-fn build_language_breakdown(files: &[FileStrings]) -> Value {
-    let mut by_ext: BTreeMap<String, (LangKind, u32, u64)> = BTreeMap::new();
-    for f in files {
-        let entry = by_ext.entry(f.ext.clone()).or_insert((f.lang, 0, 0));
-        entry.0 = f.lang;
-        entry.1 += 1;
-        entry.2 += f.strings.len() as u64;
-    }
-    let mut arr: Vec<Value> = by_ext
-        .into_iter()
-        .map(|(ext, (lang, fcount, scount))| json!({
-            "ext": ext,
-            "lang": lang_name(lang),
-            "files": fcount,
-            "strings": scount,
-        }))
-        .collect();
-    arr.sort_by(|a, b| {
-        let av = a.get("strings").and_then(|x| x.as_u64()).unwrap_or(0);
-        let bv = b.get("strings").and_then(|x| x.as_u64()).unwrap_or(0);
-        bv.cmp(&av)
-    });
-    Value::Array(arr)
-}
-
-fn build_fallback_warnings(files: &[FileStrings]) -> Value {
-    let mut by_ext: BTreeMap<String, u32> = BTreeMap::new();
-    for f in files {
-        if f.lang == LangKind::Fallback {
-            *by_ext.entry(f.ext.clone()).or_default() += 1;
-        }
-    }
-    Value::Array(
-        by_ext.into_iter()
-            .map(|(ext, count)| json!({"ext": ext, "files": count}))
-            .collect(),
-    )
-}
-
-pub fn run(args: &[String]) {
-    let parsed = parse_args(args);
-
-    let paths = walk_files(
-        &parsed.path,
-        &parsed.exts,
-        &parsed.excludes,
-        parsed.no_gitignore,
-    );
+pub fn run(parsed: StringDupArgs) {
+    let root = parsed.scan.root();
+    let paths = parsed.scan.files(&root, DEFAULT_EXTS);
 
     let files: Vec<FileStrings> = paths
         .par_iter()
@@ -786,8 +381,9 @@ pub fn run(args: &[String]) {
                 .and_then(|e| e.to_str())
                 .unwrap_or("")
                 .to_string();
-            let lang = lang_for_ext(&ext);
-            let mut strings = extract_strings(&src, lang);
+            let syntax = Syntax::for_ext(&ext);
+            let lang = syntax.lang;
+            let mut strings = extract_strings(&src, syntax, parsed.min_chars);
             // filter by min chars / words right at extraction
             strings.retain(|s| {
                 s.content.chars().count() >= parsed.min_chars
@@ -798,8 +394,12 @@ pub fn run(args: &[String]) {
         .collect();
 
     let extracted_strings: usize = files.iter().map(|f| f.strings.len()).sum();
-    let language_breakdown = build_language_breakdown(&files);
-    let fallback_warnings = build_fallback_warnings(&files);
+    let language_breakdown = scan_common::language_breakdown(
+        files.iter().map(|f| (f.ext.as_str(), f.lang, f.strings.len() as u64)),
+        "lang",
+        "strings",
+    );
+    let fallback_warnings = scan_common::fallback_warnings(files.iter().map(|f| (f.ext.as_str(), f.lang)));
 
     let variants = build_variants(&files);
 
@@ -813,6 +413,7 @@ pub fn run(args: &[String]) {
             .len()
             .cmp(&a.occurrences.len())
             .then_with(|| b.char_count.cmp(&a.char_count))
+            .then_with(|| a.content.cmp(&b.content))
     });
     let total_exact = exact.len();
     let shown_exact: Vec<&&Variant> = exact.iter().take(parsed.top).collect();
@@ -828,7 +429,7 @@ pub fn run(args: &[String]) {
         "fallback_lexer_used": fallback_warnings,
         "total_exact_clusters": total_exact,
         "shown_exact_clusters": shown_exact.len(),
-        "exact_clusters": shown_exact.iter().map(|v| exact_cluster_to_json(v, &files, &parsed.path)).collect::<Vec<_>>(),
+        "exact_clusters": shown_exact.iter().map(|v| exact_cluster_to_json(v, &files, &root)).collect::<Vec<_>>(),
     });
 
     // Similar clusters (Jaccard) — opt-in
@@ -843,11 +444,15 @@ pub fn run(args: &[String]) {
                         >= parsed.min_occurrences
             })
             .collect();
-        // Sort: total occurrences desc, then variant count desc
+        // Sort: total occurrences desc, then variant count desc, then first member's content
+        // (groups are disjoint, so first members differ and the order is total).
         groups_filtered.sort_by(|a, b| {
             let total_a: usize = a.iter().map(|&i| variants[i].occurrences.len()).sum();
             let total_b: usize = b.iter().map(|&i| variants[i].occurrences.len()).sum();
-            total_b.cmp(&total_a).then_with(|| b.len().cmp(&a.len()))
+            total_b
+                .cmp(&total_a)
+                .then_with(|| b.len().cmp(&a.len()))
+                .then_with(|| variants[a[0]].content.cmp(&variants[b[0]].content))
         });
         let total_similar = groups_filtered.len();
         let shown_similar: Vec<&Vec<usize>> = groups_filtered.iter().take(parsed.top).collect();
@@ -862,11 +467,172 @@ pub fn run(args: &[String]) {
             Value::Array(
                 shown_similar
                     .iter()
-                    .map(|g| similar_cluster_to_json(g, &variants, &files, &parsed.path))
+                    .map(|g| similar_cluster_to_json(g, &variants, &files, &root))
                     .collect(),
             ),
         );
     }
 
     println!("{}", serde_json::to_string_pretty(&result).unwrap());
+}
+
+#[cfg(test)]
+mod rust_quote_tests {
+    use super::*;
+
+    const FIXTURE: &str = include_str!("testdata/rust_quotes.txt");
+
+    fn contents(src: &str, rust: bool) -> Vec<String> {
+        extract_strings(src, Syntax { lang: Lang::CFamily, rust }, 0).into_iter().map(|s| s.content).collect()
+    }
+
+    #[test]
+    fn rust_quote_string_dup_extracts_only_string_literals() {
+        // Lifetimes and char literals are skipped; the raw string keeps its inner quotes.
+        assert_eq!(contents(FIXTURE, true), vec!["a \"q\" b".to_string(), "lit".to_string()]);
+    }
+
+    #[test]
+    fn rust_quote_string_dup_raw_string_line() {
+        let got: Vec<(String, u32)> =
+            extract_strings("r#\"x \"y\"\nz\"#\n\"c\"", Syntax { lang: Lang::CFamily, rust: true }, 0)
+                .into_iter()
+                .map(|s| (s.content, s.line))
+                .collect();
+        assert_eq!(got, vec![("x \"y\" z".to_string(), 1), ("c".to_string(), 3)]);
+    }
+
+    #[test]
+    fn rust_quote_rules_do_not_apply_to_ts() {
+        assert_eq!(
+            contents("x = 'it\\'s'; f<'y>; z = \"w\"", false),
+            vec!["it\\'s".to_string(), "y>; z = \"w\"".to_string()]
+        );
+    }
+}
+
+#[cfg(test)]
+mod similarity_tests {
+    use super::*;
+    use std::collections::{BTreeMap, HashSet};
+
+    /// The String/HashSet Jaccard index the id-based one replaced.
+    fn jaccard_by_words(a: &str, b: &str) -> f64 {
+        let sa: HashSet<&str> = a.split_ascii_whitespace().collect();
+        let sb: HashSet<&str> = b.split_ascii_whitespace().collect();
+        let inter = sa.intersection(&sb).count();
+        let union = sa.union(&sb).count();
+        if union == 0 { 0.0 } else { inter as f64 / union as f64 }
+    }
+
+    /// Deterministic contents drawn from a small vocabulary, so pairs share words often
+    /// and repeat words within one content.
+    fn corpus(count: usize, seed: u64) -> Vec<String> {
+        const VOCAB: &[&str] = &[
+            "flex", "items-center", "gap-2", "p-4", "text-sm", "font-bold", "rounded",
+            "bg-white", "dark:bg-black", "w-full", "h-8", "border", "mt-1", "ü", "日本",
+        ];
+        let mut state = seed;
+        let mut next = move |m: usize| {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((state >> 33) as usize) % m
+        };
+        (0..count)
+            .map(|_| {
+                let words = next(9);
+                (0..words).map(|_| VOCAB[next(VOCAB.len())]).collect::<Vec<_>>().join(" ")
+            })
+            .collect()
+    }
+
+    fn variants_of(contents: &[String]) -> Vec<Variant> {
+        let mut uniq: Vec<String> = contents.to_vec();
+        uniq.sort();
+        uniq.dedup();
+        uniq.into_iter()
+            .map(|content| Variant {
+                char_count: content.chars().count(),
+                word_count: content.split_ascii_whitespace().count(),
+                content,
+                occurrences: vec![Occurrence { file_idx: 0, line: 1 }],
+            })
+            .collect()
+    }
+
+    #[test]
+    fn jaccard_matches_word_set_jaccard() {
+        let contents = corpus(300, 7);
+        let refs: Vec<&str> = contents.iter().map(|s| s.as_str()).collect();
+        let (sets, _) = word_id_sets(&refs);
+        for i in 0..refs.len() {
+            for j in 0..refs.len() {
+                assert_eq!(
+                    jaccard(&sets[i], &sets[j]).to_bits(),
+                    jaccard_by_words(refs[i], refs[j]).to_bits(),
+                    "{:?} vs {:?}",
+                    refs[i],
+                    refs[j]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn similar_clusters_match_all_pairs_scan() {
+        let variants = variants_of(&corpus(400, 11));
+        for threshold in [0.0, 0.2, 0.34, 0.5, 2.0 / 3.0, 0.7, 0.75, 1.0] {
+            let mut uf = UnionFind::new(variants.len());
+            for i in 0..variants.len() {
+                for j in i + 1..variants.len() {
+                    let (a, b) = (&variants[i].content, &variants[j].content);
+                    let shares_word = a.split_ascii_whitespace().any(|w| b.split_ascii_whitespace().any(|x| x == w));
+                    if shares_word && jaccard_by_words(a, b) >= threshold {
+                        uf.union(i, j);
+                    }
+                }
+            }
+            let mut by_root: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+            for i in 0..variants.len() {
+                by_root.entry(uf.find(i)).or_default().push(i);
+            }
+            let mut want: Vec<Vec<usize>> = by_root.into_values().filter(|g| g.len() >= 2).collect();
+            want.sort_unstable_by_key(|g| g[0]);
+            assert_eq!(build_similar_clusters(&variants, threshold), want, "threshold {threshold}");
+        }
+    }
+
+    #[test]
+    fn union_find_handles_long_chains() {
+        const N: usize = 100_000;
+        let mut uf = UnionFind::new(N);
+        for i in 0..N - 1 {
+            uf.union(i, i + 1);
+        }
+        for i in (0..N - 1).rev() {
+            uf.union(i + 1, i);
+        }
+        let root = uf.find(0);
+        assert!((0..N).all(|i| uf.find(i) == root));
+
+        // A parent chain built directly, as a union without size balancing would leave it.
+        let mut chain = UnionFind::new(N);
+        for i in 0..N - 1 {
+            chain.parent[i] = i + 1;
+        }
+        assert_eq!(chain.find(0), N - 1);
+        assert!((0..N).all(|i| chain.find(i) == N - 1));
+    }
+
+    #[test]
+    fn short_raw_literals_are_dropped_before_normalizing() {
+        let src = "a = \"ab  cd\"; b = \"\u{3000}xy\u{3000}\"; c = \"abcdef\"";
+        let got: Vec<String> =
+            extract_strings(src, Syntax::for_ext("ts"), 6).into_iter().map(|s| s.content).collect();
+        // "ab  cd" has 6 bytes and is kept here; run() drops it after normalizing (5 chars).
+        // "\u{3000}xy\u{3000}" has 8 bytes and is kept; its normalized "xy" is short too.
+        assert_eq!(got, vec!["ab cd".to_string(), "xy".to_string(), "abcdef".to_string()]);
+        let none: Vec<String> =
+            extract_strings(src, Syntax::for_ext("ts"), 9).into_iter().map(|s| s.content).collect();
+        assert!(none.is_empty());
+    }
 }

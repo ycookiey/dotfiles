@@ -1,3 +1,4 @@
+use super::quote::{bash_squote, ps_dquote_path_with_env, ps_squote_inner};
 use crate::definitions::{Definitions, LauncherType, Platform};
 use std::fmt::Write;
 use std::path::Path;
@@ -82,35 +83,9 @@ pub fn generate(defs: &Definitions, dotfiles_dir: &Path) -> String {
                 }
                 LauncherType::Exe => {
                     let raw_path = l.path.as_ref().unwrap();
-                    let has_env_var = raw_path.contains("{PROGRAM_FILES}")
-                        || raw_path.contains("{USERPROFILE}");
-                    let path_part = if has_env_var {
-                        // PS double-quoted to expand $env: variables
-                        let p = raw_path
-                            .replace("{PROGRAM_FILES}", "$env:ProgramFiles")
-                            .replace("{USERPROFILE}", "$env:USERPROFILE");
-                        format!("\"{}\"", p.replace('"', "`\""))
-                    } else {
-                        format!("'{}'", ps_squote_inner(raw_path))
-                    };
-                    let arglist = if l.args.is_empty() {
-                        String::new()
-                    } else {
-                        let pwsh_args: Vec<String> = l
-                            .args
-                            .iter()
-                            .map(|a| format!("'{}'", ps_squote_inner(a)))
-                            .collect();
-                        format!(" -ArgumentList {}", pwsh_args.join(","))
-                    };
-                    let ps_cmd = format!("Start-Process -FilePath {}{}", path_part, arglist);
-                    writeln!(
-                        out,
-                        "{name}() {{ pwsh -NoProfile -Command {cmd}; }}",
-                        name = l.name,
-                        cmd = bash_squote(&ps_cmd),
-                    )
-                    .unwrap();
+                    let body = cmd_start_launcher(raw_path, &l.args)
+                        .unwrap_or_else(|| pwsh_start_process_launcher(raw_path, &l.args));
+                    writeln!(out, "{name}() {{ {body}; }}", name = l.name).unwrap();
                 }
             }
         }
@@ -124,7 +99,7 @@ pub fn generate(defs: &Definitions, dotfiles_dir: &Path) -> String {
             if c.modifies_shell {
                 writeln!(
                     out,
-                    "{name}() {{ local _o; _o=$(dotcli {sub} \"$@\"); _dotcli_apply <<<\"$_o\"; }}",
+                    "{name}() {{ local _dotcli_out; _dotcli_out=$(dotcli {sub} \"$@\"); _dotcli_apply \"$_dotcli_out\" \"$?\"; }}",
                     name = c.name,
                     sub = c.subcommand,
                 )
@@ -144,43 +119,309 @@ pub fn generate(defs: &Definitions, dotfiles_dir: &Path) -> String {
     out
 }
 
-fn bash_squote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
+/// Exe launcher body that starts the program through `cmd.exe /c start`, which costs far
+/// less than starting pwsh. `start ""` keeps the first quoted argument from being taken
+/// as the window title.
+///
+/// Launcher args are command-line text, as with `Start-Process -ArgumentList` (one string
+/// may hold several arguments, e.g. `--process-start-args "--launch-hidden"`). They are
+/// split with the Windows argv rules and passed as separate words: MSYS re-quotes each
+/// word containing a space, so the program sees the same argv as from Start-Process.
+///
+/// Returns None when a path or argument contains something that would not reach the
+/// program unchanged on this route: cmd metacharacters (`& | < > ^ % !`, parentheses and
+/// cmd's delimiters `, ; =`), a quote left inside an argument (MSYS escapes it as `\"`,
+/// which cmd does not understand), `/` (MSYS path conversion rewrites such arguments) or
+/// control characters. The caller then falls back to `pwsh_start_process_launcher`.
+/// TODO: escape these for cmd instead of falling back, if a launcher ever needs them.
+/// `$PROGRAMFILES` / `$USERPROFILE` are expanded at run time and not checked; they hold
+/// no such characters on a normal Windows install.
+fn cmd_start_launcher(raw_path: &str, args: &[String]) -> Option<String> {
+    let literal_path = raw_path
+        .replace("{PROGRAM_FILES}", "")
+        .replace("{USERPROFILE}", "");
+    if raw_path.is_empty() || !cmd_start_safe(&literal_path) {
+        return None;
+    }
+    let mut words = vec![bash_path_with_env(raw_path)];
+    for a in args {
+        for w in split_windows_args(a) {
+            if w.is_empty() || !cmd_start_safe(&w) {
+                return None;
+            }
+            words.push(bash_squote(&w));
+        }
+    }
+    // `//d //c`: MSYS turns a leading `//` into `/` and leaves the switch alone.
+    Some(format!("cmd.exe //d //c start \"\" {}", words.join(" ")))
 }
 
-fn ps_squote_inner(s: &str) -> String {
-    s.replace('\'', "''")
+fn cmd_start_safe(s: &str) -> bool {
+    !s.chars().any(|c| {
+        c.is_control()
+            || matches!(
+                c,
+                '&' | '|' | '<' | '>' | '^' | '%' | '!' | '"' | '(' | ')' | ',' | ';' | '=' | '/'
+            )
+    })
 }
 
-const APPLY_HELPER: &str = r#"_dotcli_apply() {
-    local json
-    json=$(cat)
-    [ -z "$json" ] && return 0
+/// `{PROGRAM_FILES}` / `{USERPROFILE}` become `"$PROGRAMFILES"` / `"$USERPROFILE"`
+/// (Git Bash imports both from the Windows environment), the rest is single-quoted.
+fn bash_path_with_env(raw_path: &str) -> String {
+    let mut out = String::new();
+    let mut rest = raw_path;
+    loop {
+        let next = [
+            ("{PROGRAM_FILES}", "\"$PROGRAMFILES\""),
+            ("{USERPROFILE}", "\"$USERPROFILE\""),
+        ]
+        .iter()
+        .filter_map(|&(ph, var)| rest.find(ph).map(|i| (i, ph, var)))
+        .min_by_key(|&(i, _, _)| i);
+        match next {
+            Some((i, ph, var)) => {
+                if i > 0 {
+                    out.push_str(&bash_squote(&rest[..i]));
+                }
+                out.push_str(var);
+                rest = &rest[i + ph.len()..];
+            }
+            None => {
+                if !rest.is_empty() {
+                    out.push_str(&bash_squote(rest));
+                }
+                return out;
+            }
+        }
+    }
+}
+
+/// Splits command-line text into arguments the way CommandLineToArgvW / the MSVC CRT do
+/// for everything after the program name: `2n` backslashes before `"` give `n` and toggle
+/// quoting, `2n+1` give `n` and a literal `"`, `""` inside quotes is a literal `"`.
+fn split_windows_args(s: &str) -> Vec<String> {
+    let chars: Vec<char> = s.chars().collect();
+    let mut args = Vec::new();
+    let mut cur = String::new();
+    let mut started = false;
+    let mut in_quotes = false;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\\' {
+            let mut n = 0;
+            while i < chars.len() && chars[i] == '\\' {
+                n += 1;
+                i += 1;
+            }
+            started = true;
+            if i < chars.len() && chars[i] == '"' {
+                cur.extend(std::iter::repeat_n('\\', n / 2));
+                if n % 2 == 1 {
+                    cur.push('"');
+                    i += 1;
+                }
+            } else {
+                cur.extend(std::iter::repeat_n('\\', n));
+            }
+            continue;
+        }
+        if c == '"' {
+            started = true;
+            if in_quotes && chars.get(i + 1) == Some(&'"') {
+                cur.push('"');
+                i += 2;
+                continue;
+            }
+            in_quotes = !in_quotes;
+            i += 1;
+            continue;
+        }
+        if (c == ' ' || c == '\t') && !in_quotes {
+            if started {
+                args.push(std::mem::take(&mut cur));
+                started = false;
+            }
+            i += 1;
+            continue;
+        }
+        cur.push(c);
+        started = true;
+        i += 1;
+    }
+    if started {
+        args.push(cur);
+    }
+    args
+}
+
+/// Fallback Exe launcher body: `Start-Process` in a pwsh without profile.
+fn pwsh_start_process_launcher(raw_path: &str, args: &[String]) -> String {
+    let has_env_var = raw_path.contains("{PROGRAM_FILES}") || raw_path.contains("{USERPROFILE}");
+    let path_part = if has_env_var {
+        // PS double-quoted to expand $env: variables
+        ps_dquote_path_with_env(raw_path)
+    } else {
+        format!("'{}'", ps_squote_inner(raw_path))
+    };
+    let arglist = if args.is_empty() {
+        String::new()
+    } else {
+        let pwsh_args: Vec<String> = args
+            .iter()
+            .map(|a| format!("'{}'", ps_squote_inner(a)))
+            .collect();
+        format!(" -ArgumentList {}", pwsh_args.join(","))
+    };
+    let ps_cmd = format!("Start-Process -FilePath {}{}", path_part, arglist);
+    format!("pwsh -NoProfile -Command {}", bash_squote(&ps_cmd))
+}
+
+/// Shell side of `protocol::ShellAction`. One jq call turns the JSON into shell code that
+/// `eval` runs, so every value from the JSON must reach that code through `q` (`@sh`).
+/// jq's output must contain no raw newline: Windows jq writes LF as CRLF on stdout, which
+/// would leave `\r` in values (`-b` avoids that only on jq >= 1.7).
+const APPLY_HELPER: &str = r##"_dotcli_msg() {
+    case "$1" in
+        warn) printf '\033[33m%s\033[0m\n' "$2" ;;
+        error) printf '\033[31m%s\033[0m\n' "$2" ;;
+        *) printf '\033[32m%s\033[0m\n' "$2" ;;
+    esac
+}
+
+# Runs the action's program as a child, as pwsh and nushell do, so the shell outlives it.
+# Bash's command lookup skips PATHEXT, so resolve .cmd/.bat first.
+_dotcli_exec() {
+    local _dotcli_prog
+    _dotcli_prog=$(type -P -- "$1" || type -P -- "$1.cmd" || type -P -- "$1.bat") || _dotcli_prog=$1
+    # Tag pane for WezTerm Alt+Z redraw detection (app=claude).
+    [ "$1" = claude ] && printf '\033]1337;SetUserVar=app=Y2xhdWRl\007'
+    shift
+    "$_dotcli_prog" "$@"
+}
+
+# Usage: _dotcli_apply JSON [RC]
+# Applies the JSON a dotcli subcommand printed. Returns the action's exit_code, the
+# program's status when it runs one, or else RC (the dotcli exit status).
+_dotcli_apply() {
+    [ -z "$1" ] && return "${2:-0}"
     if ! command -v jq >/dev/null 2>&1; then
         printf 'dotcli: jq is required for shell-modifying commands\n' >&2
         return 1
     fi
-    local key val cd_path lvl txt prog
-    while IFS= read -r key; do [ -n "$key" ] && unset "$key"; done < <(printf '%s' "$json" | jq -r '.unset_env[]? // empty')
-    while IFS=$'\t' read -r key val; do [ -n "$key" ] && export "$key=$val"; done < <(printf '%s' "$json" | jq -r '.set_env // {} | to_entries[] | "\(.key)\t\(.value)"')
-    cd_path=$(printf '%s' "$json" | jq -r '.cd // empty')
-    [ -n "$cd_path" ] && cd "$cd_path"
-    while IFS=$'\t' read -r lvl txt; do
-        case "$lvl" in
-            warn) printf '\033[33m%s\033[0m\n' "$txt" ;;
-            error) printf '\033[31m%s\033[0m\n' "$txt" ;;
-            *) printf '\033[32m%s\033[0m\n' "$txt" ;;
-        esac
-    done < <(printf '%s' "$json" | jq -r '.messages[]? | "\(.level)\t\(.text)"')
-    prog=$(printf '%s' "$json" | jq -r '.exec.program // empty')
-    if [ -n "$prog" ]; then
-        if [ "$prog" = "claude" ]; then
-            printf '\033]1337;SetUserVar=app=Y2xhdWRl\007'
-        fi
-        local exec_args=()
-        local arg
-        while IFS= read -r arg; do exec_args+=("$arg"); done < <(printf '%s' "$json" | jq -r '.exec.args[]? // empty')
-        exec "$prog" "${exec_args[@]}"
-    fi
+    local _dotcli_code
+    _dotcli_code=$(jq -j --arg q "'" '
+        def q: @sh | gsub("\n"; "\($q)$\($q)\\n\($q)\($q)");
+        def name: test("^[A-Za-z_][A-Za-z0-9_]*$");
+        def bad_name: "_dotcli_msg error \("dotcli: invalid variable name: \(.)" | q)";
+        [
+            (.unset_env[]? | if name then "unset -v -- \(q)" else bad_name end),
+            (.set_env // {} | to_entries[]
+                | if .key | name then "export -- \("\(.key)=\(.value)" | q)" else .key | bad_name end),
+            (.cd // empty | "cd -- \(q)"),
+            (.messages[]? | "_dotcli_msg \(.level | q) \(.text | q)"),
+            (.exec // empty | "_dotcli_exec \([.program] + (.args // []) | map(q) | join(" ")); return"),
+            (.exit_code // 0 | numbers | select(. != 0) | "return \(floor)"),
+            "return \"${2:-0}\""
+        ] | join("; ")' <<<"$1") || return 1
+    eval "$_dotcli_code"
 }
-"#;
+"##;
+
+#[cfg(test)]
+mod tests {
+    use super::{cmd_start_launcher, generate, split_windows_args};
+    use crate::definitions::Definitions;
+    use std::path::Path;
+
+    fn args(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn env_var_path_with_spaces_and_args() {
+        assert_eq!(
+            cmd_start_launcher(
+                r"{PROGRAM_FILES}\NVIDIA Corporation\NVIDIA Broadcast\NVIDIA Broadcast.exe",
+                &args(&[r#"--process-start-args "--launch-hidden""#]),
+            )
+            .unwrap(),
+            r#"cmd.exe //d //c start "" "$PROGRAMFILES"'\NVIDIA Corporation\NVIDIA Broadcast\NVIDIA Broadcast.exe' '--process-start-args' '--launch-hidden'"#
+        );
+        assert_eq!(
+            cmd_start_launcher(r"{USERPROFILE}\scoop\a.exe", &[]).unwrap(),
+            r#"cmd.exe //d //c start "" "$USERPROFILE"'\scoop\a.exe'"#
+        );
+    }
+
+    #[test]
+    fn bare_name_and_literal_path() {
+        assert_eq!(
+            cmd_start_launcher("vivaldi", &[]).unwrap(),
+            r#"cmd.exe //d //c start "" 'vivaldi'"#
+        );
+        assert_eq!(
+            cmd_start_launcher(r"C:\x y\it's.exe", &args(&["--a b"])).unwrap(),
+            r#"cmd.exe //d //c start "" 'C:\x y\it'\''s.exe' '--a' 'b'"#
+        );
+    }
+
+    #[test]
+    fn unsafe_values_fall_back() {
+        for (path, a) in [
+            (r"C:\a&b.exe", vec![]),
+            (r"C:\a%b%.exe", vec![]),
+            ("app", vec!["/minimized"]),
+            ("app", vec!["a^b"]),
+            ("app", vec![r#"say \"hi\""#]),
+            ("app", vec![r#""""#]),
+            ("app", vec!["--x=1"]),
+            ("", vec![]),
+        ] {
+            assert!(
+                cmd_start_launcher(path, &args(&a)).is_none(),
+                "{path:?} {a:?} should fall back"
+            );
+        }
+    }
+
+    #[test]
+    fn windows_arg_split() {
+        assert_eq!(split_windows_args(r#"a "b c" d"#), ["a", "b c", "d"]);
+        assert_eq!(split_windows_args(r#"--p "--h""#), ["--p", "--h"]);
+        assert_eq!(split_windows_args(r#"a\\"b c" d"#), [r"a\b c", "d"]);
+        assert_eq!(split_windows_args(r#"a\"b"#), [r#"a"b"#]);
+        assert_eq!(split_windows_args(r"a\b\\ c"), [r"a\b\\", "c"]);
+        assert_eq!(split_windows_args(r#""a""b""#), [r#"a"b"#]);
+        assert_eq!(split_windows_args(r#""" x"#), ["", "x"]);
+        assert!(split_windows_args("  ").is_empty());
+    }
+
+    #[test]
+    fn exe_launcher_falls_back_to_start_process() {
+        let defs: Definitions = toml::from_str(
+            r#"
+[[launcher]]
+name = "fast"
+type = "exe"
+path = '{PROGRAM_FILES}\A B\a.exe'
+args = ["--minimized"]
+
+[[launcher]]
+name = "slow"
+type = "exe"
+path = 'C:\a.exe'
+args = ["/min"]
+"#,
+        )
+        .unwrap();
+        let out = generate(&defs, Path::new("C:/dot"));
+        assert!(out.contains(
+            r#"fast() { cmd.exe //d //c start "" "$PROGRAMFILES"'\A B\a.exe' '--minimized'; }"#
+        ));
+        assert!(out.contains(
+            r#"slow() { pwsh -NoProfile -Command 'Start-Process -FilePath '\''C:\a.exe'\'' -ArgumentList '\''/min'\'''; }"#
+        ));
+    }
+}

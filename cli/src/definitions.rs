@@ -1,4 +1,6 @@
+use anyhow::Context;
 use serde::Deserialize;
+use std::path::Path;
 
 #[derive(Deserialize)]
 pub struct Definitions {
@@ -73,10 +75,31 @@ pub enum Platform {
     Macos,
 }
 
+/// definitions.toml as it was when this binary was built.
+const EMBEDDED: &str = include_str!("../definitions.toml");
+
 impl Definitions {
-    pub fn load() -> Self {
-        let toml_str = std::fs::read_to_string("definitions.toml")
-            .unwrap_or_else(|_| include_str!("../definitions.toml").to_string());
-        toml::from_str(&toml_str).expect("Failed to parse definitions.toml")
+    /// Load definitions from `path`. Falls back to the copy embedded at build time,
+    /// with a warning on stderr, only when `path` does not exist; `None` uses the
+    /// embedded copy directly.
+    pub fn load(path: Option<&Path>) -> anyhow::Result<Self> {
+        const EMBEDDED_NAME: &str = "embedded definitions.toml";
+        let (toml_str, source) = match path {
+            Some(p) => match std::fs::read_to_string(p) {
+                Ok(s) => (s, p.display().to_string()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    eprintln!(
+                        "warning: {} not found; using the definitions.toml embedded at build time",
+                        p.display()
+                    );
+                    (EMBEDDED.to_string(), EMBEDDED_NAME.to_string())
+                }
+                Err(e) => {
+                    return Err(anyhow::Error::new(e).context(format!("read {}", p.display())));
+                }
+            },
+            None => (EMBEDDED.to_string(), EMBEDDED_NAME.to_string()),
+        };
+        toml::from_str(&toml_str).with_context(|| format!("parse {source}"))
     }
 }

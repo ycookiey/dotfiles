@@ -53,10 +53,7 @@ pub fn run() {
                 .filter(|s| !s.is_empty())
                 .collect::<Vec<_>>()
         }
-        Err(e) => {
-            eprintln!("Failed to run flutter emulators: {e}");
-            return;
-        }
+        Err(e) => fail(&format!("Failed to run flutter emulators: {e}")),
     };
 
     if emu_list.is_empty() {
@@ -70,7 +67,9 @@ pub fn run() {
         Some(e) => format!("Emulator [{e}]> "),
         None => "Emulator> ".into(),
     };
-    let Some(emu) = fzf_select(&emu_list, &prompt_emu, prev_emu) else {
+    let Some(emu) = fzf_select(&emu_list, &prompt_emu, prev_emu)
+        .unwrap_or_else(|e| fail(&format!("Failed to run fzf: {e}")))
+    else {
         return;
     };
 
@@ -81,7 +80,9 @@ pub fn run() {
         Some(f) => format!("Flavor [{f}]> "),
         None => "Flavor> ".into(),
     };
-    let Some(flavor) = fzf_select(&flavor_list, &prompt_flavor, prev_flavor) else {
+    let Some(flavor) = fzf_select(&flavor_list, &prompt_flavor, prev_flavor)
+        .unwrap_or_else(|e| fail(&format!("Failed to run fzf: {e}")))
+    else {
         return;
     };
 
@@ -114,7 +115,18 @@ pub fn run() {
         .status();
 }
 
-fn fzf_select(items: &[String], prompt: &str, default: Option<&str>) -> Option<String> {
+/// Prints `msg` as one line on stderr and exits with 1.
+fn fail(msg: &str) -> ! {
+    eprintln!("{msg}");
+    std::process::exit(1);
+}
+
+/// The item picked in fzf, or None when fzf was cancelled.
+fn fzf_select(
+    items: &[String],
+    prompt: &str,
+    default: Option<&str>,
+) -> std::io::Result<Option<String>> {
     const PREV_SUFFIX: &str = " (prev)";
 
     // Move previous selection to top and mark it
@@ -133,19 +145,20 @@ fn fzf_select(items: &[String], prompt: &str, default: Option<&str>) -> Option<S
         .args([&format!("--prompt={prompt}"), "--no-sort", "--pointer=▶"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .spawn()
-        .expect("Failed to start fzf");
+        .spawn()?;
 
     if let Some(mut stdin) = fzf.stdin.take() {
         let _ = stdin.write_all(ordered.join("\n").as_bytes());
     }
 
-    let output = fzf.wait_with_output().expect("fzf wait");
+    let output = fzf.wait_with_output()?;
     if output.status.success() {
         let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        Some(raw.strip_suffix(PREV_SUFFIX).unwrap_or(&raw).to_string())
+        Ok(Some(
+            raw.strip_suffix(PREV_SUFFIX).unwrap_or(&raw).to_string(),
+        ))
     } else {
-        None
+        Ok(None)
     }
 }
 

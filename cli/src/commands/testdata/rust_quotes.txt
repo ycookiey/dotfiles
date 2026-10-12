@@ -1,0 +1,2 @@
+fn f<'a>(x: &'a str) -> &'static str { let c = 'x'; let e = '\n'; let r = r#"a "q" b"#; "lit" }
+fn g() { let v = [1, 2, 3]; }

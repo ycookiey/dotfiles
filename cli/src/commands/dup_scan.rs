@@ -5,10 +5,11 @@
 
 use rayon::prelude::*;
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+
+use super::scan_common::{self, display_path, CodeKind, Event, Lang, Lexer, ScanArgs, Syntax};
 
 const DEFAULT_MIN_TOKENS: usize = 30;
 const DEFAULT_MIN_LINES: usize = 3;
@@ -33,7 +34,21 @@ enum TokenKind {
     Num,
     Str,
     Punct(u8),
-    PunctHash(u32),
+    /// Index into MULTI_PUNCT.
+    PunctIdx(u8),
+}
+
+impl TokenKind {
+    /// A distinct nonzero integer per kind, the input to the window hash.
+    fn code(self) -> u64 {
+        match self {
+            TokenKind::Id => 1,
+            TokenKind::Num => 2,
+            TokenKind::Str => 3,
+            TokenKind::Punct(b) => 4 + b as u64,
+            TokenKind::PunctIdx(i) => 260 + i as u64,
+        }
+    }
 }
 
 struct FileTokens {
@@ -41,7 +56,7 @@ struct FileTokens {
     tokens: Vec<Token>,
     src: String,
     ext: String,
-    lexer: &'static str,
+    lang: Lang,
 }
 
 #[derive(Debug, Clone)]
@@ -58,578 +73,60 @@ struct Cluster {
     gap_tokens: usize,   // substitution-gap tokens
     line_count: usize,
     occurrences: Vec<Occurrence>,
-    preview: String,
 }
 
-struct Args {
-    path: PathBuf,
-    exts: Vec<String>,
-    min_tokens: usize,
-    min_lines: usize,
-    top: usize,
-    gap: usize,
-    excludes: Vec<String>,
-    no_gitignore: bool,
-}
-
-fn parse_args(args: &[String]) -> Args {
-    let mut path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let mut exts: Vec<String> = DEFAULT_EXTS.iter().map(|s| s.to_string()).collect();
-    let mut min_tokens = DEFAULT_MIN_TOKENS;
-    let mut min_lines = DEFAULT_MIN_LINES;
-    let mut top = DEFAULT_TOP;
-    let mut gap: usize = 0;
-    let mut excludes: Vec<String> = Vec::new();
-    let mut no_gitignore = false;
-
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--path" => {
-                if i + 1 < args.len() {
-                    path = PathBuf::from(&args[i + 1]);
-                    i += 1;
-                }
-            }
-            "--ext" => {
-                if i + 1 < args.len() {
-                    exts = args[i + 1].split(',').map(|s| s.trim().to_string()).collect();
-                    i += 1;
-                }
-            }
-            "--min-tokens" => {
-                if i + 1 < args.len() {
-                    min_tokens = args[i + 1].parse().unwrap_or(DEFAULT_MIN_TOKENS);
-                    i += 1;
-                }
-            }
-            "--min-lines" => {
-                if i + 1 < args.len() {
-                    min_lines = args[i + 1].parse().unwrap_or(DEFAULT_MIN_LINES);
-                    i += 1;
-                }
-            }
-            "--top" => {
-                if i + 1 < args.len() {
-                    top = args[i + 1].parse().unwrap_or(DEFAULT_TOP);
-                    i += 1;
-                }
-            }
-            "--gap" => {
-                if i + 1 < args.len() {
-                    gap = args[i + 1].parse().unwrap_or(0);
-                    i += 1;
-                }
-            }
-            "--exclude" => {
-                if i + 1 < args.len() {
-                    excludes.push(args[i + 1].clone());
-                    i += 1;
-                }
-            }
-            "--no-gitignore" => {
-                no_gitignore = true;
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-
-    Args { path, exts, min_tokens, min_lines, top, gap, excludes, no_gitignore }
+// dup-scan's options. A plain comment, not a doc comment: the subcommand's about text comes
+// from the Commands variant in main.rs.
+#[derive(clap::Args, Debug)]
+#[command(args_override_self = true)]
+pub(crate) struct DupScanArgs {
+    #[command(flatten)]
+    pub(crate) scan: ScanArgs,
+    /// Shortest duplicate to report, in tokens
+    #[arg(long, value_name = "N", default_value_t = DEFAULT_MIN_TOKENS)]
+    pub(crate) min_tokens: usize,
+    /// Shortest duplicate to report, in source lines
+    #[arg(long, value_name = "N", default_value_t = DEFAULT_MIN_LINES)]
+    pub(crate) min_lines: usize,
+    /// Number of clusters to output
+    #[arg(long, value_name = "N", default_value_t = DEFAULT_TOP)]
+    pub(crate) top: usize,
+    /// Most single tokens that may differ between occurrences inside one match (0 = exact matches only)
+    #[arg(long, value_name = "N", default_value_t = 0)]
+    pub(crate) gap: usize,
 }
 
 // ============================================================================
-// File discovery (respects .gitignore via `ignore` crate)
+// Tokenizing (scan_common::Lexer)
 // ============================================================================
 
-pub(crate) fn walk_files(
-    root: &Path,
-    exts: &[String],
-    excludes: &[String],
-    no_gitignore: bool,
-) -> Vec<PathBuf> {
-    let ext_set: HashSet<&str> = exts.iter().map(|s| s.as_str()).collect();
-    let mut builder = ignore::WalkBuilder::new(root);
-    builder
-        .git_ignore(!no_gitignore)
-        .git_exclude(!no_gitignore)
-        .git_global(!no_gitignore)
-        .ignore(!no_gitignore)
-        .hidden(true)
-        .parents(!no_gitignore);
-
-    let mut out = Vec::new();
-    for entry in builder.build().flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if !ext_set.contains(ext) {
-            continue;
-        }
-        let path_str = path.to_string_lossy().replace('\\', "/");
-        if excludes.iter().any(|e| path_str.contains(e.as_str())) {
-            continue;
-        }
-        out.push(path.to_path_buf());
+/// The syntax dup-scan lexes `ext` with. Markup files (html, vue, svelte, astro) keep the
+/// Fallback rules, which also skip the `//` / `/* */` comments of their script blocks.
+fn syntax_for_ext(ext: &str) -> Syntax {
+    let mut syntax = Syntax::for_ext(ext);
+    if syntax.lang == Lang::Markup {
+        syntax.lang = Lang::Fallback;
     }
-    out
+    syntax
 }
 
-// ============================================================================
-// Language dispatch
-// ============================================================================
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Lexer {
-    CFamily,    // rs, ts, tsx, js, jsx, mjs, cjs, go, java, kt, swift, c, cpp, h, hpp, cc
-    Python,     // py
-    PowerShell, // ps1, psm1
-    Shell,      // sh, bash
-    Fallback,   // unknown extension — best-effort generic
-}
-
-impl Lexer {
-    fn name(&self) -> &'static str {
-        match self {
-            Lexer::CFamily => "c_family",
-            Lexer::Python => "python",
-            Lexer::PowerShell => "powershell",
-            Lexer::Shell => "shell",
-            Lexer::Fallback => "fallback",
-        }
-    }
-}
-
-fn lexer_for_ext(ext: &str) -> Lexer {
-    match ext {
-        "rs" | "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs"
-        | "go" | "java" | "kt" | "swift"
-        | "c" | "h" | "cpp" | "hpp" | "cc" => Lexer::CFamily,
-        "py" => Lexer::Python,
-        "ps1" | "psm1" => Lexer::PowerShell,
-        "sh" | "bash" => Lexer::Shell,
-        _ => Lexer::Fallback,
-    }
-}
-
+/// Token kinds and lines of `src`. A Rust lifetime / label is `'` + Id, a Rust char
+/// literal a Str like any string.
 fn tokenize(src: &str, ext: &str) -> Vec<Token> {
-    match lexer_for_ext(ext) {
-        Lexer::CFamily => tokenize_generic(src, &["//"], true, true),
-        Lexer::Python => tokenize_python(src),
-        Lexer::PowerShell => tokenize_powershell(src),
-        Lexer::Shell => tokenize_generic(src, &["#"], false, true),
-        Lexer::Fallback => tokenize_generic(src, &["//", "#"], true, true),
-    }
-}
-
-// ============================================================================
-// Generic tokenizer (C-family, shell)
-// ============================================================================
-
-const TWO_CHAR_PUNCT: &[&[u8]] = &[
-    b"==", b"!=", b"<=", b">=", b"&&", b"||", b"<<", b">>",
-    b"->", b"=>", b"::", b"++", b"--", b"+=", b"-=", b"*=", b"/=", b"%=",
-    b"&=", b"|=", b"^=", b"??", b"?.", b"..",
-];
-const THREE_CHAR_PUNCT: &[&[u8]] = &[
-    b"...", b"..=", b"<<=", b">>=", b"===", b"!==", b"&&=", b"||=",
-];
-
-fn hash_punct_bytes(b: &[u8]) -> u32 {
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    b.hash(&mut h);
-    h.finish() as u32
-}
-
-/// Generic tokenizer with configurable line-comment prefixes, block-comment support,
-/// and standard string-quote handling.
-fn tokenize_generic(
-    src: &str,
-    line_comment_prefixes: &[&str],
-    has_block_comment: bool,
-    has_backtick_string: bool,
-) -> Vec<Token> {
-    let bytes = src.as_bytes();
-    let mut tokens = Vec::new();
-    let mut line: u32 = 1;
-    let mut i = 0;
-
-    while i < bytes.len() {
-        let b = bytes[i];
-
-        if b == b'\n' {
-            line += 1;
-            i += 1;
-            continue;
-        }
-        if b.is_ascii_whitespace() {
-            i += 1;
-            continue;
-        }
-
-        // Block comment /* ... */
-        if has_block_comment && b == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
-            i += 2;
-            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
+    Lexer::new(src, syntax_for_ext(ext))
+        .map(|ev| match ev {
+            Event::Code { kind, line, .. } => {
+                let kind = match kind {
+                    CodeKind::Id => TokenKind::Id,
+                    CodeKind::Num => TokenKind::Num,
+                    CodeKind::Punct(b) => TokenKind::Punct(b),
+                    CodeKind::MultiPunct(i) => TokenKind::PunctIdx(i),
+                };
+                Token { kind, line }
             }
-            i = (i + 2).min(bytes.len());
-            continue;
-        }
-
-        // Line comment
-        let mut comment_match = None;
-        for prefix in line_comment_prefixes {
-            let pb = prefix.as_bytes();
-            if bytes[i..].starts_with(pb) {
-                comment_match = Some(pb.len());
-                break;
-            }
-        }
-        if let Some(plen) = comment_match {
-            i += plen;
-            while i < bytes.len() && bytes[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-
-        // String literals: ", '
-        if b == b'"' || b == b'\'' || (has_backtick_string && b == b'`') {
-            let quote = b;
-            tokens.push(Token { kind: TokenKind::Str, line });
-            i += 1;
-            while i < bytes.len() && bytes[i] != quote {
-                if bytes[i] == b'\\' && i + 1 < bytes.len() {
-                    if bytes[i + 1] == b'\n' {
-                        line += 1;
-                    }
-                    i += 2;
-                    continue;
-                }
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            if i < bytes.len() {
-                i += 1;
-            }
-            continue;
-        }
-
-        if b.is_ascii_digit() {
-            tokens.push(Token { kind: TokenKind::Num, line });
-            i += 1;
-            while i < bytes.len() {
-                let c = bytes[i];
-                let is_numeric_char = c.is_ascii_digit()
-                    || c == b'.'
-                    || c == b'_'
-                    || c.is_ascii_hexdigit()
-                    || c == b'x'
-                    || c == b'X';
-                if is_numeric_char {
-                    i += 1;
-                } else if (c == b'+' || c == b'-')
-                    && i > 0
-                    && (bytes[i - 1] == b'e' || bytes[i - 1] == b'E')
-                {
-                    i += 1;
-                } else {
-                    break;
-                }
-            }
-            continue;
-        }
-
-        if b.is_ascii_alphabetic() || b == b'_' || b == b'$' {
-            tokens.push(Token { kind: TokenKind::Id, line });
-            i += 1;
-            while i < bytes.len() {
-                let c = bytes[i];
-                if c.is_ascii_alphanumeric() || c == b'_' {
-                    i += 1;
-                } else {
-                    break;
-                }
-            }
-            continue;
-        }
-
-        if i + 2 < bytes.len() {
-            let three = &bytes[i..i + 3];
-            if THREE_CHAR_PUNCT.contains(&three) {
-                tokens.push(Token { kind: TokenKind::PunctHash(hash_punct_bytes(three)), line });
-                i += 3;
-                continue;
-            }
-        }
-        if i + 1 < bytes.len() {
-            let two = &bytes[i..i + 2];
-            if TWO_CHAR_PUNCT.contains(&two) {
-                tokens.push(Token { kind: TokenKind::PunctHash(hash_punct_bytes(two)), line });
-                i += 2;
-                continue;
-            }
-        }
-
-        tokens.push(Token { kind: TokenKind::Punct(b), line });
-        i += 1;
-    }
-
-    tokens
-}
-
-// ============================================================================
-// Python tokenizer (handles triple-quoted strings)
-// ============================================================================
-
-fn tokenize_python(src: &str) -> Vec<Token> {
-    let bytes = src.as_bytes();
-    let mut tokens = Vec::new();
-    let mut line: u32 = 1;
-    let mut i = 0;
-
-    while i < bytes.len() {
-        let b = bytes[i];
-
-        if b == b'\n' {
-            line += 1;
-            i += 1;
-            continue;
-        }
-        if b.is_ascii_whitespace() {
-            i += 1;
-            continue;
-        }
-
-        if b == b'#' {
-            while i < bytes.len() && bytes[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-
-        // Triple-quoted string: """...""" or '''...'''
-        if (b == b'"' || b == b'\'')
-            && i + 2 < bytes.len()
-            && bytes[i + 1] == b
-            && bytes[i + 2] == b
-        {
-            let quote = b;
-            tokens.push(Token { kind: TokenKind::Str, line });
-            i += 3;
-            while i + 2 < bytes.len()
-                && !(bytes[i] == quote && bytes[i + 1] == quote && bytes[i + 2] == quote)
-            {
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            i = (i + 3).min(bytes.len());
-            continue;
-        }
-
-        if b == b'"' || b == b'\'' {
-            let quote = b;
-            tokens.push(Token { kind: TokenKind::Str, line });
-            i += 1;
-            while i < bytes.len() && bytes[i] != quote {
-                if bytes[i] == b'\\' && i + 1 < bytes.len() {
-                    if bytes[i + 1] == b'\n' {
-                        line += 1;
-                    }
-                    i += 2;
-                    continue;
-                }
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            if i < bytes.len() {
-                i += 1;
-            }
-            continue;
-        }
-
-        if b.is_ascii_digit() {
-            tokens.push(Token { kind: TokenKind::Num, line });
-            i += 1;
-            while i < bytes.len() {
-                let c = bytes[i];
-                if c.is_ascii_digit() || c == b'.' || c == b'_' || c == b'j' || c == b'J' {
-                    i += 1;
-                } else {
-                    break;
-                }
-            }
-            continue;
-        }
-
-        if b.is_ascii_alphabetic() || b == b'_' {
-            tokens.push(Token { kind: TokenKind::Id, line });
-            i += 1;
-            while i < bytes.len() {
-                let c = bytes[i];
-                if c.is_ascii_alphanumeric() || c == b'_' {
-                    i += 1;
-                } else {
-                    break;
-                }
-            }
-            continue;
-        }
-
-        if i + 1 < bytes.len() {
-            let two = &bytes[i..i + 2];
-            if TWO_CHAR_PUNCT.contains(&two) {
-                tokens.push(Token { kind: TokenKind::PunctHash(hash_punct_bytes(two)), line });
-                i += 2;
-                continue;
-            }
-        }
-        tokens.push(Token { kind: TokenKind::Punct(b), line });
-        i += 1;
-    }
-
-    tokens
-}
-
-// ============================================================================
-// PowerShell tokenizer (handles `<# ... #>` block comment, here-strings)
-// ============================================================================
-
-fn tokenize_powershell(src: &str) -> Vec<Token> {
-    let bytes = src.as_bytes();
-    let mut tokens = Vec::new();
-    let mut line: u32 = 1;
-    let mut i = 0;
-
-    while i < bytes.len() {
-        let b = bytes[i];
-
-        if b == b'\n' {
-            line += 1;
-            i += 1;
-            continue;
-        }
-        if b.is_ascii_whitespace() {
-            i += 1;
-            continue;
-        }
-
-        // Block comment <# ... #>
-        if b == b'<' && i + 1 < bytes.len() && bytes[i + 1] == b'#' {
-            i += 2;
-            while i + 1 < bytes.len() && !(bytes[i] == b'#' && bytes[i + 1] == b'>') {
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            i = (i + 2).min(bytes.len());
-            continue;
-        }
-
-        if b == b'#' {
-            while i < bytes.len() && bytes[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-
-        // Here-string: @" ... "@  or  @' ... '@
-        if b == b'@'
-            && i + 1 < bytes.len()
-            && (bytes[i + 1] == b'"' || bytes[i + 1] == b'\'')
-        {
-            let quote = bytes[i + 1];
-            tokens.push(Token { kind: TokenKind::Str, line });
-            i += 2;
-            while i + 1 < bytes.len() && !(bytes[i] == quote && bytes[i + 1] == b'@') {
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            i = (i + 2).min(bytes.len());
-            continue;
-        }
-
-        if b == b'"' || b == b'\'' {
-            let quote = b;
-            tokens.push(Token { kind: TokenKind::Str, line });
-            i += 1;
-            while i < bytes.len() && bytes[i] != quote {
-                if bytes[i] == b'`' && i + 1 < bytes.len() {
-                    // PowerShell escape via backtick
-                    if bytes[i + 1] == b'\n' {
-                        line += 1;
-                    }
-                    i += 2;
-                    continue;
-                }
-                if bytes[i] == b'\n' {
-                    line += 1;
-                }
-                i += 1;
-            }
-            if i < bytes.len() {
-                i += 1;
-            }
-            continue;
-        }
-
-        if b.is_ascii_digit() {
-            tokens.push(Token { kind: TokenKind::Num, line });
-            i += 1;
-            while i < bytes.len() {
-                let c = bytes[i];
-                if c.is_ascii_digit() || c == b'.' || c == b'_' {
-                    i += 1;
-                } else {
-                    break;
-                }
-            }
-            continue;
-        }
-
-        // Identifier (incl. $variable)
-        if b.is_ascii_alphabetic() || b == b'_' || b == b'$' || b == b'@' {
-            tokens.push(Token { kind: TokenKind::Id, line });
-            i += 1;
-            while i < bytes.len() {
-                let c = bytes[i];
-                if c.is_ascii_alphanumeric() || c == b'_' || c == b':' && i + 1 < bytes.len() && bytes[i + 1] == b':' {
-                    i += 1;
-                } else {
-                    break;
-                }
-            }
-            continue;
-        }
-
-        if i + 1 < bytes.len() {
-            let two = &bytes[i..i + 2];
-            if TWO_CHAR_PUNCT.contains(&two) {
-                tokens.push(Token { kind: TokenKind::PunctHash(hash_punct_bytes(two)), line });
-                i += 2;
-                continue;
-            }
-        }
-        tokens.push(Token { kind: TokenKind::Punct(b), line });
-        i += 1;
-    }
-
-    tokens
+            Event::Str { line, .. } => Token { kind: TokenKind::Str, line },
+        })
+        .collect()
 }
 
 // ============================================================================
@@ -638,12 +135,60 @@ fn tokenize_powershell(src: &str) -> Vec<Token> {
 
 type Pos = (usize, usize); // (file_idx, token_start_idx)
 
-fn window_hash(file: &FileTokens, start: usize, w: usize) -> u64 {
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    for t in &file.tokens[start..start + w] {
-        t.kind.hash(&mut h);
+/// Odd multiplier of the polynomial window hash.
+const ROLL_BASE: u64 = 0x9E37_79B9_7F4A_7C15;
+
+/// Calls `f(start, hash)` for every window of `w` tokens, in start order. The hash is the
+/// polynomial sum of the token codes mod 2^64, rolled one token at a time, so all windows
+/// cost O(tokens) instead of O(tokens * w). Equal windows get equal hashes; unequal windows
+/// may collide, which callers resolve by comparing the tokens (split_equal_windows).
+fn for_each_window_hash(tokens: &[Token], w: usize, mut f: impl FnMut(usize, u64)) {
+    let n = tokens.len();
+    if n < w {
+        return;
     }
-    h.finish()
+    if w == 0 {
+        (0..=n).for_each(|s| f(s, 0));
+        return;
+    }
+    // ROLL_BASE^(w-1): the weight of the token leaving the window.
+    let top = (1..w).fold(1u64, |p, _| p.wrapping_mul(ROLL_BASE));
+    let mut h = tokens[..w]
+        .iter()
+        .fold(0u64, |h, t| h.wrapping_mul(ROLL_BASE).wrapping_add(t.kind.code()));
+    f(0, h);
+    for s in 1..=(n - w) {
+        h = h
+            .wrapping_sub(tokens[s - 1].kind.code().wrapping_mul(top))
+            .wrapping_mul(ROLL_BASE)
+            .wrapping_add(tokens[s + w - 1].kind.code());
+        f(s, h);
+    }
+}
+
+/// True when the `w` tokens at `a` and at `b` have the same kinds.
+fn same_window(files: &[FileTokens], a: Pos, b: Pos, w: usize) -> bool {
+    let ta = &files[a.0].tokens[a.1..a.1 + w];
+    let tb = &files[b.0].tokens[b.1..b.1 + w];
+    ta.iter().zip(tb).all(|(x, y)| x.kind == y.kind)
+}
+
+/// Splits a run of windows with one hash into the classes of equal windows that have at
+/// least 2 members. Each class keeps the run's (file, start) order. A run normally is one
+/// class; a hash collision yields several instead of mixing different code in one group.
+fn split_equal_windows(files: &[FileTokens], run: &[(u64, u32, u32)], w: usize) -> Vec<Vec<Pos>> {
+    let mut rest: Vec<Pos> = run.iter().map(|&(_, fi, s)| (fi as usize, s as usize)).collect();
+    let mut classes = Vec::new();
+    while rest.len() >= 2 {
+        let head = rest[0];
+        let (same, other): (Vec<Pos>, Vec<Pos>) =
+            rest.iter().partition(|&&p| same_window(files, head, p, w));
+        if same.len() >= 2 {
+            classes.push(same);
+        }
+        rest = other;
+    }
+    classes
 }
 
 fn is_left_maximal(files: &[FileTokens], occurrences: &[Pos]) -> bool {
@@ -658,24 +203,6 @@ fn is_left_maximal(files: &[FileTokens], occurrences: &[Pos]) -> bool {
         }
     }
     false
-}
-
-fn verify_window(files: &[FileTokens], occurrences: &[Pos], w: usize) -> Vec<Pos> {
-    let first = occurrences[0];
-    let ref_kinds: Vec<TokenKind> = files[first.0].tokens[first.1..first.1 + w]
-        .iter()
-        .map(|t| t.kind)
-        .collect();
-    occurrences
-        .iter()
-        .copied()
-        .filter(|&(fi, s)| {
-            files[fi].tokens[s..s + w]
-                .iter()
-                .zip(&ref_kinds)
-                .all(|(t, k)| t.kind == *k)
-        })
-        .collect()
 }
 
 /// Extend the matched region right. Returns (total_len, gap_count).
@@ -737,18 +264,26 @@ fn extend_right(
     (w, gaps)
 }
 
+/// The first MAX_PREVIEW_LINES lines of start_line..=end_line (1-based), then a count of the
+/// rest. end_line is clamped to the file's line count. Reads only up to end_line instead of
+/// splitting the whole file.
 fn build_preview(file: &FileTokens, start_line: u32, end_line: u32) -> String {
-    let lines: Vec<&str> = file.src.lines().collect();
+    const MAX_PREVIEW_LINES: usize = 6;
     let s = (start_line as usize).saturating_sub(1);
-    let e = (end_line as usize).min(lines.len());
+    let e = end_line as usize;
     if s >= e {
         return String::new();
     }
-    const MAX_PREVIEW_LINES: usize = 6;
-    let actual_e = (s + MAX_PREVIEW_LINES).min(e);
-    let mut preview = lines[s..actual_e].join("\n");
-    if e > actual_e {
-        preview.push_str(&format!("\n... ({} more lines)", e - actual_e));
+    let mut lines = file.src.lines().skip(s);
+    let shown: Vec<&str> = lines.by_ref().take(MAX_PREVIEW_LINES.min(e - s)).collect();
+    if shown.is_empty() {
+        return String::new();
+    }
+    let mut preview = shown.join("\n");
+    // Lines left up to end_line, stopping at the end of the file.
+    let more = lines.take(e - s - shown.len()).count();
+    if more > 0 {
+        preview.push_str(&format!("\n... ({} more lines)", more));
     }
     preview
 }
@@ -759,45 +294,33 @@ fn build_clusters(
     min_lines: usize,
     max_gap: usize,
 ) -> Vec<Cluster> {
-    // Per-file window hashing in parallel, then merge.
-    let per_file: Vec<HashMap<u64, Vec<usize>>> = files
+    // Every window as (hash, file, start), hashed per file in parallel. Sorting the tuples
+    // puts equal hashes in one run, each run in (file, start) order; extend_right and
+    // is_left_maximal take the first occurrence as reference, so that order is fixed.
+    let mut windows: Vec<(u64, u32, u32)> = files
         .par_iter()
-        .map(|f| {
-            let mut local: HashMap<u64, Vec<usize>> = HashMap::new();
-            if f.tokens.len() >= min_tokens {
-                for start in 0..=(f.tokens.len() - min_tokens) {
-                    let key = window_hash(f, start, min_tokens);
-                    local.entry(key).or_default().push(start);
-                }
-            }
+        .enumerate()
+        .flat_map_iter(|(fi, f)| {
+            let fi = u32::try_from(fi).expect("dup-scan: more than u32::MAX files");
+            let mut local = Vec::with_capacity((f.tokens.len() + 1).saturating_sub(min_tokens));
+            for_each_window_hash(&f.tokens, min_tokens, |s, h| {
+                let s = u32::try_from(s).expect("dup-scan: more than u32::MAX tokens in a file");
+                local.push((h, fi, s));
+            });
             local
         })
         .collect();
+    windows.par_sort_unstable();
 
-    let mut groups: HashMap<u64, Vec<Pos>> = HashMap::new();
-    for (fi, fg) in per_file.iter().enumerate() {
-        for (k, starts) in fg {
-            let entry = groups.entry(*k).or_default();
-            for &s in starts {
-                entry.push((fi, s));
-            }
-        }
-    }
+    // Runs of one window are unique code; skip them before any allocation.
+    let runs: Vec<&[(u64, u32, u32)]> =
+        windows.chunk_by(|a, b| a.0 == b.0).filter(|run| run.len() >= 2).collect();
 
-    // Process groups in parallel.
-    let group_vec: Vec<Vec<Pos>> = groups
-        .into_iter()
-        .filter_map(|(_, v)| if v.len() >= 2 { Some(v) } else { None })
-        .collect();
-
-    let mut clusters: Vec<Cluster> = group_vec
+    let mut clusters: Vec<Cluster> = runs
         .par_iter()
-        .filter_map(|occs| {
-            if !is_left_maximal(files, occs) {
-                return None;
-            }
-            let valid = verify_window(files, occs, min_tokens);
-            if valid.len() < 2 {
+        .flat_map_iter(|run| split_equal_windows(files, run, min_tokens))
+        .filter_map(|valid| {
+            if !is_left_maximal(files, &valid) {
                 return None;
             }
             let (ext_len, gaps) = extend_right(files, &valid, min_tokens, max_gap);
@@ -839,17 +362,12 @@ fn build_clusters(
                 return None;
             }
 
-            let first_occ = &occurrences[0];
-            let preview =
-                build_preview(&files[first_occ.file_idx], first_occ.start_line, first_occ.end_line);
-
             Some(Cluster {
                 token_count: ext_len,
                 match_tokens,
                 gap_tokens: gaps,
                 line_count,
                 occurrences,
-                preview,
             })
         })
         .collect();
@@ -857,31 +375,90 @@ fn build_clusters(
     // Sort by "saved tokens" = match_tokens × (occurrences - 1): the total token volume
     // removable by consolidating this duplicate. Surfaces both "short but high-frequency"
     // (e.g. ['hp','atk',...]) and "long but low-frequency" (large data defs) on the same
-    // footing, while short+rare noise sinks. Tie-break: longer match, then fewer gaps.
+    // footing, while short+rare noise sinks. Tie-break: longer match, then fewer gaps,
+    // then the clusters' contents (cluster_content_order), so equal clusters keep the same
+    // order and the same --top cut across runs instead of following HashMap order.
     clusters.sort_by(|a, b| {
         let sa = a.match_tokens.saturating_mul(a.occurrences.len().saturating_sub(1));
         let sb = b.match_tokens.saturating_mul(b.occurrences.len().saturating_sub(1));
         sb.cmp(&sa)
             .then_with(|| b.match_tokens.cmp(&a.match_tokens))
             .then_with(|| a.gap_tokens.cmp(&b.gap_tokens))
+            .then_with(|| cluster_content_order(files, a, b))
     });
-    clusters
+    drop_subsumed(clusters)
+}
+
+/// Drops each cluster whose occurrences all lie inside the occurrences of one cluster kept
+/// before it in rank order, i.e. a cluster that reports no file region the kept one does not
+/// already report. Every window group that is left-maximal becomes its own cluster, so a
+/// --gap match also yields the exact matches that start right after each gap, and periodic
+/// code yields sub-ranges of the same region. Containment is checked against a single kept
+/// cluster, never the union of several, so a cluster with an occurrence elsewhere (3
+/// occurrences where only 2 match longer) stays. Expects `clusters` sorted by rank and each
+/// cluster's occurrences sorted by (file_idx, start_line) and disjoint per file.
+fn drop_subsumed(clusters: Vec<Cluster>) -> Vec<Cluster> {
+    let mut kept: Vec<Cluster> = Vec::with_capacity(clusters.len());
+    // file_idx -> (start_line, end_line, index into kept) of every kept occurrence.
+    let mut spans_by_file: HashMap<usize, Vec<(u32, u32, usize)>> = HashMap::new();
+    for c in clusters {
+        let first = &c.occurrences[0];
+        let subsumed = spans_by_file.get(&first.file_idx).is_some_and(|spans| {
+            spans.iter().any(|&(start, end, k)| {
+                start <= first.start_line && first.end_line <= end && occurrences_within(&c, &kept[k])
+            })
+        });
+        if subsumed {
+            continue;
+        }
+        let k = kept.len();
+        for o in &c.occurrences {
+            spans_by_file.entry(o.file_idx).or_default().push((o.start_line, o.end_line, k));
+        }
+        kept.push(c);
+    }
+    kept
+}
+
+/// True when every occurrence of `inner` lies inside some occurrence of `outer`. Several
+/// occurrences of `inner` may share one occurrence of `outer`.
+fn occurrences_within(inner: &Cluster, outer: &Cluster) -> bool {
+    inner.occurrences.iter().all(|o| {
+        // outer's occurrences are sorted and disjoint per file, so only the last one starting
+        // at or before o can contain it.
+        let idx = outer
+            .occurrences
+            .partition_point(|a| (a.file_idx, a.start_line) <= (o.file_idx, o.start_line));
+        idx > 0 && {
+            let a = &outer.occurrences[idx - 1];
+            a.file_idx == o.file_idx && o.end_line <= a.end_line
+        }
+    })
+}
+
+/// Orders clusters by where they occur: the first occurrence's (path, start_line), then
+/// the occurrence count, then the remaining occurrences and the token count. Paths are
+/// compared rather than file indexes so the order does not depend on the walk order.
+fn cluster_content_order(files: &[FileTokens], a: &Cluster, b: &Cluster) -> std::cmp::Ordering {
+    let occ_key = |o: &Occurrence| (files[o.file_idx].path.as_path(), o.start_line, o.end_line);
+    let first = |c: &Cluster| c.occurrences.first().map(|o| (files[o.file_idx].path.as_path(), o.start_line));
+    first(a)
+        .cmp(&first(b))
+        .then_with(|| a.occurrences.len().cmp(&b.occurrences.len()))
+        .then_with(|| a.occurrences.iter().map(occ_key).cmp(b.occurrences.iter().map(occ_key)))
+        .then_with(|| a.token_count.cmp(&b.token_count))
 }
 
 // ============================================================================
 // Output
 // ============================================================================
 
-fn display_path(p: &Path, root: &Path) -> String {
-    if let Ok(rel) = p.strip_prefix(root) {
-        rel.to_string_lossy().replace('\\', "/")
-    } else {
-        p.to_string_lossy().replace('\\', "/")
-    }
-}
-
+/// Builds the preview here rather than in build_clusters, so only the clusters shown under
+/// --top read their source lines.
 fn cluster_to_json(c: &Cluster, files: &[FileTokens], root: &Path) -> Value {
     let match_type = if c.gap_tokens == 0 { "exact" } else { "type3" };
+    let first = &c.occurrences[0];
+    let preview = build_preview(&files[first.file_idx], first.start_line, first.end_line);
     json!({
         "match_type": match_type,
         "token_count": c.token_count,
@@ -895,63 +472,13 @@ fn cluster_to_json(c: &Cluster, files: &[FileTokens], root: &Path) -> Value {
             "start_line": o.start_line,
             "end_line": o.end_line,
         })).collect::<Vec<_>>(),
-        "preview": c.preview,
+        "preview": preview,
     })
 }
 
-#[derive(Default)]
-struct LangStat {
-    files: u32,
-    tokens: u64,
-    lexer: &'static str,
-}
-
-fn build_language_breakdown(files: &[FileTokens]) -> Value {
-    let mut by_ext: BTreeMap<String, LangStat> = BTreeMap::new();
-    for f in files {
-        let s = by_ext.entry(f.ext.clone()).or_default();
-        s.files += 1;
-        s.tokens += f.tokens.len() as u64;
-        s.lexer = f.lexer;
-    }
-    let mut arr: Vec<Value> = by_ext
-        .into_iter()
-        .map(|(ext, s)| {
-            json!({
-                "ext": ext,
-                "lexer": s.lexer,
-                "files": s.files,
-                "tokens": s.tokens,
-            })
-        })
-        .collect();
-    // Sort by tokens desc
-    arr.sort_by(|a, b| {
-        let at = a.get("tokens").and_then(|x| x.as_u64()).unwrap_or(0);
-        let bt = b.get("tokens").and_then(|x| x.as_u64()).unwrap_or(0);
-        bt.cmp(&at)
-    });
-    Value::Array(arr)
-}
-
-fn build_fallback_warnings(files: &[FileTokens]) -> Value {
-    let mut by_ext: BTreeMap<String, u32> = BTreeMap::new();
-    for f in files {
-        if f.lexer == Lexer::Fallback.name() {
-            *by_ext.entry(f.ext.clone()).or_default() += 1;
-        }
-    }
-    let arr: Vec<Value> = by_ext
-        .into_iter()
-        .map(|(ext, count)| json!({"ext": ext, "files": count}))
-        .collect();
-    Value::Array(arr)
-}
-
-pub fn run(args: &[String]) {
-    let parsed = parse_args(args);
-
-    let paths = walk_files(&parsed.path, &parsed.exts, &parsed.excludes, parsed.no_gitignore);
+pub fn run(parsed: DupScanArgs) {
+    let root = parsed.scan.root();
+    let paths = parsed.scan.files(&root, DEFAULT_EXTS);
 
     // Parallel read+tokenize.
     let files: Vec<FileTokens> = paths
@@ -963,15 +490,19 @@ pub fn run(args: &[String]) {
                 .and_then(|e| e.to_str())
                 .unwrap_or("")
                 .to_string();
-            let lexer = lexer_for_ext(&ext).name();
+            let lang = syntax_for_ext(&ext).lang;
             let tokens = tokenize(&src, &ext);
-            Some(FileTokens { path: p.clone(), tokens, src, ext, lexer })
+            Some(FileTokens { path: p.clone(), tokens, src, ext, lang })
         })
         .collect();
 
     let total_tokens: usize = files.iter().map(|f| f.tokens.len()).sum();
-    let language_breakdown = build_language_breakdown(&files);
-    let fallback_warnings = build_fallback_warnings(&files);
+    let language_breakdown = scan_common::language_breakdown(
+        files.iter().map(|f| (f.ext.as_str(), f.lang, f.tokens.len() as u64)),
+        "lexer",
+        "tokens",
+    );
+    let fallback_warnings = scan_common::fallback_warnings(files.iter().map(|f| (f.ext.as_str(), f.lang)));
 
     let clusters = build_clusters(&files, parsed.min_tokens, parsed.min_lines, parsed.gap);
     let total_clusters = clusters.len();
@@ -989,8 +520,283 @@ pub fn run(args: &[String]) {
         "total_clusters": total_clusters,
         "type3_clusters": type3_count,
         "shown_clusters": shown.len(),
-        "clusters": shown.iter().map(|c| cluster_to_json(c, &files, &parsed.path)).collect::<Vec<_>>(),
+        "clusters": shown.iter().map(|c| cluster_to_json(c, &files, &root)).collect::<Vec<_>>(),
     });
 
     println!("{}", serde_json::to_string_pretty(&result).unwrap());
+}
+
+#[cfg(test)]
+mod rust_quote_tests {
+    use super::*;
+
+    // Kept in a .txt file so `string-dup --ext rs` over cli/src does not report it.
+    const FIXTURE: &str = include_str!("testdata/rust_quotes.txt");
+
+    fn kinds(src: &str, ext: &str) -> Vec<TokenKind> {
+        tokenize(src, ext).into_iter().map(|t| t.kind).collect()
+    }
+
+    #[test]
+    fn rust_quote_dup_scan_tokens() {
+        use TokenKind::{Id, Num, Punct, Str};
+        let arrow = TokenKind::PunctIdx(scan_common::multi_punct(b"->").unwrap());
+        let lifetime = [Punct(b'\''), Id];
+        let mut expected = vec![Id, Id, Punct(b'<')];
+        expected.extend(lifetime);
+        expected.extend([Punct(b'>'), Punct(b'('), Id, Punct(b':'), Punct(b'&')]);
+        expected.extend(lifetime);
+        expected.extend([Id, Punct(b')'), arrow, Punct(b'&')]);
+        expected.extend(lifetime);
+        expected.extend([Id, Punct(b'{')]);
+        expected.extend([Id, Id, Punct(b'='), Str, Punct(b';')]); // let c = 'x';
+        expected.extend([Id, Id, Punct(b'='), Str, Punct(b';')]); // let e = '\n';
+        expected.extend([Id, Id, Punct(b'='), Str, Punct(b';')]); // let r = r#"…"#;
+        expected.extend([Str, Punct(b'}')]);
+        let first_line = FIXTURE.lines().next().unwrap();
+        assert_eq!(kinds(first_line, "rs"), expected);
+
+        let second_line = FIXTURE.lines().nth(1).unwrap();
+        assert_eq!(
+            kinds(second_line, "rs"),
+            vec![
+                Id, Id, Punct(b'('), Punct(b')'), Punct(b'{'), Id, Id, Punct(b'='),
+                Punct(b'['), Num, Punct(b','), Num, Punct(b','), Num, Punct(b']'),
+                Punct(b';'), Punct(b'}'),
+            ]
+        );
+    }
+
+    #[test]
+    fn rust_quote_raw_string_keeps_line_numbers() {
+        let toks = tokenize("r#\"a\nb\"#\nx", "rs");
+        let got: Vec<(TokenKind, u32)> = toks.iter().map(|t| (t.kind, t.line)).collect();
+        assert_eq!(got, vec![(TokenKind::Str, 1), (TokenKind::Id, 3)]);
+    }
+
+    #[test]
+    fn rust_quote_rules_do_not_apply_to_ts() {
+        use TokenKind::{Id, Punct, Str};
+        // In TS `'` always opens a string, even when it looks like a lifetime.
+        assert_eq!(
+            kinds("s = 'a b'; f<'x>", "ts"),
+            vec![Id, Punct(b'='), Str, Punct(b';'), Id, Punct(b'<'), Str]
+        );
+        assert_eq!(kinds("r#\"x\"#", "ts"), vec![Id, Punct(b'#'), Str, Punct(b'#')]);
+    }
+}
+
+#[cfg(test)]
+mod subsumption_tests {
+    use super::*;
+
+    /// One JS statement whose punctuation follows the bits of `i`, so a body built from
+    /// consecutive `i` has no repeating token-kind run (Id and Num collapse, so a body of
+    /// same-shaped lines would match itself).
+    fn line(i: u32, rhs: &str) -> String {
+        let mut s = String::from("  v");
+        for bit in 0..5 {
+            s.push_str(if (i >> bit) & 1 == 1 { ".x" } else { "(x)" });
+        }
+        format!("{s} = {rhs};\n")
+    }
+
+    /// A 27-line function: header, statements 1..=25, closing brace. `rhs` gives each
+    /// statement's right-hand side.
+    fn function(rhs: impl Fn(u32) -> String) -> String {
+        let mut src = String::from("function f() {\n");
+        for i in 1..=25 {
+            src.push_str(&line(i, &rhs(i)));
+        }
+        src.push_str("}\n");
+        src
+    }
+
+    fn file(name: &str, src: String) -> FileTokens {
+        let tokens = tokenize(&src, "js");
+        FileTokens { path: PathBuf::from(name), tokens, src, ext: "js".into(), lang: Lang::CFamily }
+    }
+
+    /// A cluster's occurrences as "file_idx:start-end", space separated. Tests spell clusters
+    /// as such strings so their tables do not show up in `dup-scan` over this file.
+    fn occs(c: &Cluster) -> String {
+        let spans: Vec<String> = c
+            .occurrences
+            .iter()
+            .map(|o| format!("{}:{}-{}", o.file_idx, o.start_line, o.end_line))
+            .collect();
+        spans.join(" ")
+    }
+
+    /// Builds a cluster from the `occs` notation.
+    fn cluster(spec: &str) -> Cluster {
+        let occurrences = spec
+            .split(' ')
+            .map(|span| {
+                let (file, lines) = span.split_once(':').unwrap();
+                let (start, end) = lines.split_once('-').unwrap();
+                Occurrence {
+                    file_idx: file.parse().unwrap(),
+                    start_line: start.parse().unwrap(),
+                    end_line: end.parse().unwrap(),
+                }
+            })
+            .collect();
+        Cluster { token_count: 0, match_tokens: 0, gap_tokens: 0, line_count: 0, occurrences }
+    }
+
+    #[test]
+    fn one_token_difference_reports_each_region_once() {
+        // Files 0 and 1 differ in one token at the middle statement (line 14).
+        let p = function(|i| i.to_string());
+        let q = function(|i| if i == 13 { "\"s\"".to_string() } else { i.to_string() });
+        let files = vec![file("p.js", p), file("q.js", q)];
+        let clusters_for = |gap| {
+            let mut got: Vec<_> = build_clusters(&files, 20, 1, gap).iter().map(occs).collect();
+            got.sort();
+            got
+        };
+        // Exact matches on either side of the difference; neither contains the other.
+        assert_eq!(clusters_for(0), ["0:1-14 1:1-14", "0:14-27 1:14-27"]);
+        // The gap match spans the function and absorbs the exact match after the gap.
+        assert_eq!(clusters_for(2), ["0:1-27 1:1-27"]);
+    }
+
+    #[test]
+    fn cluster_with_an_occurrence_outside_the_longer_match_stays() {
+        // Files 0 and 1 hold the whole function; file 2 holds only its last statements.
+        let whole = function(|i| i.to_string());
+        let mut tail = String::new();
+        for i in 18..=25 {
+            tail.push_str(&line(i, &i.to_string()));
+        }
+        tail.push_str("}\n");
+        let files = vec![file("a.js", whole.clone()), file("b.js", whole), file("c.js", tail)];
+        // The 3-occurrence cluster ranks after the whole-function one and its occurrences in
+        // files 0 and 1 lie inside it, so only the one in file 2 keeps it.
+        let got: Vec<_> = build_clusters(&files, 20, 1, 0).iter().map(occs).collect();
+        assert_eq!(got, ["0:1-27 1:1-27", "0:19-27 1:19-27 2:1-9"]);
+    }
+
+    #[test]
+    fn drop_subsumed_checks_each_occurrence_against_one_kept_cluster() {
+        let input = [
+            // Inside the next cluster but ranked before it, so never checked against it: stays.
+            "0:5-9 1:5-9",
+            "0:1-27 1:1-27",
+            // Two occurrences inside one occurrence of the cluster above: dropped.
+            "0:2-13 0:15-26 1:2-26",
+            // An occurrence in a file the whole-range cluster does not cover: stays.
+            "0:2-10 1:2-10 2:5-13",
+            // Runs past the whole-range cluster's end: stays.
+            "0:20-30 1:20-27",
+            // Inside the union of the two clusters above but not inside either one: stays.
+            "1:5-25 2:6-12",
+            // Inside the 3-occurrence cluster kept above: dropped.
+            "1:3-9 2:5-13",
+        ];
+        let kept = drop_subsumed(input.iter().map(|s| cluster(s)).collect());
+        let got: Vec<_> = kept.iter().map(occs).collect();
+        let want: Vec<_> = [0, 1, 3, 4, 5].iter().map(|&i| input[i]).collect();
+        assert_eq!(got, want);
+    }
+}
+
+#[cfg(test)]
+mod window_hash_tests {
+    use super::*;
+
+    fn file(src: &str) -> FileTokens {
+        let tokens = tokenize(src, "js");
+        FileTokens { path: PathBuf::new(), tokens, src: src.into(), ext: "js".into(), lang: Lang::CFamily }
+    }
+
+    #[test]
+    fn rolled_hash_matches_hash_from_scratch() {
+        let f = file("a.b(c, 1) === d->e ... 'x' + f[g] <<= h ?? i;");
+        for w in 0..=f.tokens.len() + 1 {
+            let mut got = Vec::new();
+            for_each_window_hash(&f.tokens, w, |s, h| got.push((s, h)));
+            let want: Vec<(usize, u64)> = (0..(f.tokens.len() + 1).saturating_sub(w))
+                .map(|s| {
+                    let h = f.tokens[s..s + w]
+                        .iter()
+                        .fold(0u64, |h, t| h.wrapping_mul(ROLL_BASE).wrapping_add(t.kind.code()));
+                    (s, h)
+                })
+                .collect();
+            assert_eq!(got, want, "w={w}");
+        }
+    }
+
+    #[test]
+    fn split_equal_windows_separates_colliding_windows() {
+        // Windows of 3 tokens: "a + b" (Id Punct Id) at 0, 4 and 8 of file 0 and 0 of file 1;
+        // "1 - 2" (Num Punct Num) at 12 and 16 of file 0; "c * d" once at 20.
+        let files = vec![file("a + b;a + b;a + b;1 - 2;1 - 2;c * d;"), file("x + y;")];
+        // As if all windows shared one hash, in (file, start) order.
+        let run = [(7, 0, 0), (7, 0, 4), (7, 0, 8), (7, 0, 12), (7, 0, 16), (7, 0, 20), (7, 1, 0)];
+        assert_eq!(
+            split_equal_windows(&files, &run, 3),
+            vec![vec![(0, 0), (0, 4), (0, 8), (1, 0)], vec![(0, 12), (0, 16)]]
+        );
+    }
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::*;
+
+    /// The preview as built by splitting the whole file into lines.
+    fn reference(src: &str, start_line: u32, end_line: u32) -> String {
+        let lines: Vec<&str> = src.lines().collect();
+        let s = (start_line as usize).saturating_sub(1);
+        let e = (end_line as usize).min(lines.len());
+        if s >= e {
+            return String::new();
+        }
+        let actual_e = (s + 6).min(e);
+        let mut preview = lines[s..actual_e].join("\n");
+        if e > actual_e {
+            preview.push_str(&format!("\n... ({} more lines)", e - actual_e));
+        }
+        preview
+    }
+
+    #[test]
+    fn matches_whole_file_split_for_every_range() {
+        let numbered = |n: usize, eol: &str, last_eol: bool| {
+            let mut s: String = (1..=n).map(|i| format!("line {i}{eol}")).collect();
+            if !last_eol {
+                s.truncate(s.len() - eol.len());
+            }
+            s
+        };
+        let sources = [
+            String::new(),
+            "\n".to_string(),
+            numbered(3, "\n", true),
+            numbered(12, "\n", false),
+            numbered(12, "\r\n", true),
+            "a\n\nb\r\n\r\nc".to_string(),
+        ];
+        for src in sources {
+            let file = FileTokens {
+                path: PathBuf::new(),
+                tokens: Vec::new(),
+                src: src.clone(),
+                ext: String::new(),
+                lang: Lang::Fallback,
+            };
+            for start in 0..16u32 {
+                for end in 0..16u32 {
+                    assert_eq!(
+                        build_preview(&file, start, end),
+                        reference(&src, start, end),
+                        "src={src:?} start={start} end={end}"
+                    );
+                }
+            }
+        }
+    }
 }

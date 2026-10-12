@@ -1,5 +1,6 @@
 //! Format `token-audit static` / `token-audit session` JSON as bar charts (stdin).
 
+use super::fmt_util::fmt_u64_commas;
 use serde_json::Value;
 use std::io::{self, Read};
 
@@ -20,35 +21,43 @@ fn bar(value: f64, max: f64, width: usize) -> String {
     format!("[{}{}]", "█".repeat(filled), "░".repeat(empty))
 }
 
-fn fmt_u64_commas(n: u64) -> String {
-    let s = n.to_string();
-    let mut out = String::new();
-    for (i, c) in s.chars().rev().enumerate() {
-        if i > 0 && i % 3 == 0 {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out.chars().rev().collect()
-}
-
 fn fmt_f64_pct(n: f64) -> String {
     format!("{:.1}%", n)
 }
 
 fn display_path(p: &str) -> String {
-    if let Ok(home) = std::env::var("HOME") {
-        if p.starts_with(&home) {
-            return format!("~{}", p.trim_start_matches(&home));
+    display_path_with(
+        p,
+        std::env::var("HOME").ok().as_deref(),
+        std::env::var("USERPROFILE").ok().as_deref(),
+    )
+}
+
+/// `p` with a leading home directory replaced by `~`. HOME is matched as
+/// written (case-sensitive, either separator), USERPROFILE case-insensitively
+/// after turning `\` into `/`. The home must end at a path separator in `p`,
+/// so `C:/Users/ab` does not shorten `C:/Users/abc/x`.
+fn display_path_with(p: &str, home: Option<&str>, userprofile: Option<&str>) -> String {
+    let is_sep = |c: char| c == '/' || c == '\\';
+    if let Some(home) = home.map(|h| h.trim_end_matches(is_sep)).filter(|h| !h.is_empty()) {
+        if let Some(rest) = p.strip_prefix(home) {
+            if rest.is_empty() || rest.starts_with(is_sep) {
+                return format!("~{}", rest);
+            }
         }
     }
-    if let Ok(home) = std::env::var("USERPROFILE") {
+    if let Some(home) = userprofile {
         let home_norm = home.replace('\\', "/");
+        let home_norm = home_norm.trim_end_matches('/');
         let p_norm = p.replace('\\', "/");
-        if p_norm.len() >= home_norm.len()
-            && p_norm[..home_norm.len()].eq_ignore_ascii_case(&home_norm)
-        {
-            return format!("~{}", &p_norm[home_norm.len()..]);
+        if !home_norm.is_empty() {
+            if let (Some(head), Some(rest)) =
+                (p_norm.get(..home_norm.len()), p_norm.get(home_norm.len()..))
+            {
+                if head.eq_ignore_ascii_case(home_norm) && (rest.is_empty() || rest.starts_with('/')) {
+                    return format!("~{}", rest);
+                }
+            }
         }
     }
     p.to_string()
@@ -62,25 +71,48 @@ fn as_f64(v: &Value) -> f64 {
     v.as_f64().or_else(|| v.as_i64().map(|i| i as f64)).unwrap_or(0.0)
 }
 
+/// `o[key]` read by `as_i64` (a missing key is 0).
+fn int(o: &Value, key: &str) -> i64 {
+    o.get(key).map_or(0, as_i64)
+}
+
+/// `o[key]` read by `as_f64` (a missing key is 0).
+fn num(o: &Value, key: &str) -> f64 {
+    o.get(key).map_or(0.0, as_f64)
+}
+
+/// Bar scale of an integer column: the largest `int(o, key)`, at least 1.
+fn max_int(arr: &[Value], key: &str) -> f64 {
+    arr.iter().map(|o| int(o, key)).max().unwrap_or(0).max(1) as f64
+}
+
+/// Bar scale of a numeric column: the largest `num(o, key)`, at least 1.
+fn max_num(arr: &[Value], key: &str) -> f64 {
+    arr.iter().map(|o| num(o, key)).fold(0.0_f64, f64::max).max(1.0)
+}
+
+/// A startup_costs item's first context size; older reports named it
+/// first_input_tokens.
+fn startup_ctx(o: &Value) -> f64 {
+    o.get("first_total_ctx")
+        .or_else(|| o.get("first_input_tokens"))
+        .map_or(0.0, as_f64)
+}
+
 pub fn format_static(v: &Value) -> String {
     let mut out = String::new();
 
     out.push_str("CLAUDE.md\n");
     if let Some(arr) = v.get("claude_md").and_then(|x| x.as_array()) {
-        let max_tok = arr
-            .iter()
-            .map(|o| as_i64(o.get("est_tokens").unwrap_or(&Value::Null)))
-            .max()
-            .unwrap_or(0)
-            .max(1) as f64;
+        let max_tok = max_int(arr, "est_tokens");
 
         for o in arr {
             let path = o
                 .get("path")
                 .and_then(|x| x.as_str())
                 .unwrap_or("?");
-            let bytes = as_i64(o.get("bytes").unwrap_or(&Value::Null));
-            let tok = as_i64(o.get("est_tokens").unwrap_or(&Value::Null));
+            let bytes = int(o, "bytes");
+            let tok = int(o, "est_tokens");
             let tok_f = tok as f64;
             let warn = if tok > THRESH_CLAUDE_MD_TOK { " ⚠" } else { "" };
             let dp = display_path(path);
@@ -95,10 +127,7 @@ pub fn format_static(v: &Value) -> String {
         }
     }
 
-    let skills_total = as_i64(
-        v.get("skills_total_est_tokens")
-            .unwrap_or(&Value::Null),
-    );
+    let skills_total = int(v, "skills_total_est_tokens");
     let sk_warn = if skills_total > THRESH_SKILLS_TOTAL {
         " ⚠"
     } else {
@@ -111,17 +140,12 @@ pub fn format_static(v: &Value) -> String {
     ));
 
     if let Some(arr) = v.get("skills").and_then(|x| x.as_array()) {
-        let max_tok = arr
-            .iter()
-            .map(|o| as_i64(o.get("est_tokens").unwrap_or(&Value::Null)))
-            .max()
-            .unwrap_or(0)
-            .max(1) as f64;
+        let max_tok = max_int(arr, "est_tokens");
 
         let mut items: Vec<_> = arr.iter().collect();
         items.sort_by(|a, b| {
-            let ta = as_i64(a.get("est_tokens").unwrap_or(&Value::Null));
-            let tb = as_i64(b.get("est_tokens").unwrap_or(&Value::Null));
+            let ta = int(a, "est_tokens");
+            let tb = int(b, "est_tokens");
             tb.cmp(&ta)
         });
 
@@ -130,7 +154,7 @@ pub fn format_static(v: &Value) -> String {
                 .get("name")
                 .and_then(|x| x.as_str())
                 .unwrap_or("?");
-            let tok = as_i64(o.get("est_tokens").unwrap_or(&Value::Null));
+            let tok = int(o, "est_tokens");
             let tok_f = tok as f64;
             out.push_str(&format!(
                 "  {:<24} {:>6} tok  {}\n",
@@ -141,7 +165,7 @@ pub fn format_static(v: &Value) -> String {
         }
     }
 
-    let plugin_count = as_i64(v.get("plugin_count").unwrap_or(&Value::Null));
+    let plugin_count = int(v, "plugin_count");
     let pc_warn = if plugin_count > THRESH_PLUGIN_COUNT {
         " ⚠"
     } else {
@@ -198,25 +222,21 @@ pub fn format_session(v: &Value) -> String {
         } else {
             out.push_str("By Tool (Δctx)\n");
         }
-        let max_cc = arr
-            .iter()
-            .map(|o| as_f64(o.get("cache_create").unwrap_or(&Value::Null)))
-            .fold(0.0_f64, f64::max)
-            .max(1.0);
+        let max_cc = max_num(arr, "cache_create");
 
         for o in arr {
             let tool = o
                 .get("tool")
                 .and_then(|x| x.as_str())
                 .unwrap_or("?");
-            let cc = as_f64(o.get("cache_create").unwrap_or(&Value::Null));
-            let pct = as_f64(o.get("pct").unwrap_or(&Value::Null));
+            let cc = num(o, "cache_create");
+            let pct = num(o, "pct");
             let warn = if cc > THRESH_CACHE_CREATE { " ⚠" } else { "" };
             let cc_u = cc.round() as u64;
 
             if has_extra {
-                let total_output = as_f64(o.get("total_output").unwrap_or(&Value::Null));
-                let efficiency = as_f64(o.get("efficiency").unwrap_or(&Value::Null));
+                let total_output = num(o, "total_output");
+                let efficiency = num(o, "efficiency");
                 out.push_str(&format!(
                     "  {:<12} {:>10} Δ   {:>6}  out:{:>9}  eff:{:>4.1}  {}{}\n",
                     tool,
@@ -243,18 +263,14 @@ pub fn format_session(v: &Value) -> String {
     if let Some(arr) = v.get("toolsearch_breakdown").and_then(|x| x.as_array()) {
         if !arr.is_empty() {
             out.push_str("\nToolSearch breakdown\n");
-            let max_cc = arr
-                .iter()
-                .map(|o| as_f64(o.get("cache_create").unwrap_or(&Value::Null)))
-                .fold(0.0_f64, f64::max)
-                .max(1.0);
+            let max_cc = max_num(arr, "cache_create");
             for o in arr.iter().take(15) {
                 let query = o
                     .get("query")
                     .and_then(|x| x.as_str())
                     .unwrap_or("?");
-                let cc = as_f64(o.get("cache_create").unwrap_or(&Value::Null));
-                let count = as_i64(o.get("count").unwrap_or(&Value::Null));
+                let cc = num(o, "cache_create");
+                let count = int(o, "count");
                 let cc_u = cc.round() as u64;
                 out.push_str(&format!(
                     "  {:<50} {:>2}×  {:>10} tok  {}\n",
@@ -271,19 +287,15 @@ pub fn format_session(v: &Value) -> String {
         if !arr.is_empty() {
             out.push_str("\nTop Reads\n");
         }
-        let max_tok = arr
-            .iter()
-            .map(|o| as_f64(o.get("total_cache_create").unwrap_or(&Value::Null)))
-            .fold(0.0_f64, f64::max)
-            .max(1.0);
+        let max_tok = max_num(arr, "total_cache_create");
 
         for o in arr {
             let file = o
                 .get("file")
                 .and_then(|x| x.as_str())
                 .unwrap_or("?");
-            let count = as_i64(o.get("count").unwrap_or(&Value::Null));
-            let total = as_f64(o.get("total_cache_create").unwrap_or(&Value::Null));
+            let count = int(o, "count");
+            let total = num(o, "total_cache_create");
             let warn = if total > THRESH_CACHE_CREATE { " ⚠" } else { "" };
             let total_u = total.round() as u64;
             out.push_str(&format!(
@@ -300,11 +312,7 @@ pub fn format_session(v: &Value) -> String {
     if let Some(arr) = v.get("large_operations").and_then(|x| x.as_array()) {
         if !arr.is_empty() {
             out.push_str("\nLarge operations (cache_create > 5000)\n");
-            let max_cc = arr
-                .iter()
-                .map(|o| as_f64(o.get("cache_create").unwrap_or(&Value::Null)))
-                .fold(0.0_f64, f64::max)
-                .max(1.0);
+            let max_cc = max_num(arr, "cache_create");
             for o in arr.iter().take(20) {
                 let tool = o
                     .get("tool")
@@ -314,7 +322,7 @@ pub fn format_session(v: &Value) -> String {
                     .get("file")
                     .and_then(|x| x.as_str())
                     .unwrap_or("");
-                let cc = as_f64(o.get("cache_create").unwrap_or(&Value::Null));
+                let cc = num(o, "cache_create");
                 let cc_u = cc.round() as u64;
                 let tail = if file.is_empty() {
                     String::new()
@@ -335,11 +343,7 @@ pub fn format_session(v: &Value) -> String {
     if let Some(arr) = v.get("large_responses").and_then(|x| x.as_array()) {
         if !arr.is_empty() {
             out.push_str("\nLarge responses (output > 10000)\n");
-            let max_output = arr
-                .iter()
-                .map(|o| as_f64(o.get("output").unwrap_or(&Value::Null)))
-                .fold(0.0_f64, f64::max)
-                .max(1.0);
+            let max_output = max_num(arr, "output");
             for o in arr.iter().take(20) {
                 let tool = o
                     .get("tool")
@@ -349,12 +353,12 @@ pub fn format_session(v: &Value) -> String {
                     .get("file")
                     .and_then(|x| x.as_str())
                     .unwrap_or("");
-                let output = as_f64(o.get("output").unwrap_or(&Value::Null));
-                let cc = as_f64(o.get("cache_create").unwrap_or(&Value::Null));
-                let efficiency = as_f64(o.get("efficiency").unwrap_or(&Value::Null));
+                let output = num(o, "output");
+                let cc = num(o, "cache_create");
+                let efficiency = num(o, "efficiency");
                 let output_u = output.round() as u64;
                 let cc_u = cc.round() as u64;
-                let idx = as_i64(o.get("request_idx").unwrap_or(&Value::Null));
+                let idx = int(o, "request_idx");
                 let eff_str = format!("{:>7.1}", efficiency);
                 let tail = if file.is_empty() {
                     String::new()
@@ -379,18 +383,14 @@ pub fn format_session(v: &Value) -> String {
     if let Some(arr) = v.get("duplicate_reads").and_then(|x| x.as_array()) {
         if !arr.is_empty() {
             out.push_str("\nDuplicate reads\n");
-            let max_total = arr
-                .iter()
-                .map(|o| as_f64(o.get("total_cache_create").unwrap_or(&Value::Null)))
-                .fold(0.0_f64, f64::max)
-                .max(1.0);
+            let max_total = max_num(arr, "total_cache_create");
             for o in arr.iter().take(20) {
                 let file = o
                     .get("file")
                     .and_then(|x| x.as_str())
                     .unwrap_or("?");
-                let count = as_i64(o.get("count").unwrap_or(&Value::Null));
-                let total = as_f64(o.get("total_cache_create").unwrap_or(&Value::Null));
+                let count = int(o, "count");
+                let total = num(o, "total_cache_create");
                 let total_u = total.round() as u64;
                 out.push_str(&format!(
                     "  {:<40} {:>3}×  {:>10} tok  {}\n",
@@ -406,14 +406,10 @@ pub fn format_session(v: &Value) -> String {
     if let Some(arr) = v.get("context_growth").and_then(|x| x.as_array()) {
         if !arr.is_empty() {
             out.push_str("\nContext growth (sampled)\n");
-            let max_ctx = arr
-                .iter()
-                .map(|o| as_f64(o.get("total_ctx").unwrap_or(&Value::Null)))
-                .fold(0.0_f64, f64::max)
-                .max(1.0);
+            let max_ctx = max_num(arr, "total_ctx");
             for o in arr {
-                let idx = as_i64(o.get("request_idx").unwrap_or(&Value::Null));
-                let ctx = as_f64(o.get("total_ctx").unwrap_or(&Value::Null));
+                let idx = int(o, "request_idx");
+                let ctx = num(o, "total_ctx");
                 let ctx_u = ctx.round() as u64;
                 out.push_str(&format!(
                     "  req {:>6}  {:>10} tok  {}\n",
@@ -429,11 +425,11 @@ pub fn format_session(v: &Value) -> String {
         if !arr.is_empty() {
             out.push_str("\nCompactions\n");
             for o in arr {
-                let idx = as_i64(o.get("request_idx").unwrap_or(&Value::Null));
-                let before = as_f64(o.get("before").unwrap_or(&Value::Null));
-                let after = as_f64(o.get("after").unwrap_or(&Value::Null));
-                let ratio = as_f64(o.get("ratio").unwrap_or(&Value::Null));
-                let cc = as_f64(o.get("compaction_cache_create").unwrap_or(&Value::Null));
+                let idx = int(o, "request_idx");
+                let before = num(o, "before");
+                let after = num(o, "after");
+                let ratio = num(o, "ratio");
+                let cc = num(o, "compaction_cache_create");
                 out.push_str(&format!(
                     "  req {:>6}  {} → {}  (ratio {:.2})  cache_create {}\n",
                     idx,
@@ -449,26 +445,13 @@ pub fn format_session(v: &Value) -> String {
     if let Some(arr) = v.get("startup_costs").and_then(|x| x.as_array()) {
         if !arr.is_empty() {
             out.push_str("\nStartup costs (first_total_ctx)\n");
-            let max_f = arr
-                .iter()
-                .map(|o| {
-                    o.get("first_total_ctx")
-                        .or_else(|| o.get("first_input_tokens"))
-                        .map(as_f64)
-                        .unwrap_or(0.0)
-                })
-                .fold(0.0_f64, f64::max)
-                .max(1.0);
+            let max_f = arr.iter().map(startup_ctx).fold(0.0_f64, f64::max).max(1.0);
             for o in arr {
                 let sid = o
                     .get("session")
                     .and_then(|x| x.as_str())
                     .unwrap_or("?");
-                let ft = o
-                    .get("first_total_ctx")
-                    .or_else(|| o.get("first_input_tokens"))
-                    .map(as_f64)
-                    .unwrap_or(0.0);
+                let ft = startup_ctx(o);
                 let ft_u = ft.round() as u64;
                 out.push_str(&format!(
                     "  {:<40} {:>10} tok  {}\n",
@@ -483,17 +466,13 @@ pub fn format_session(v: &Value) -> String {
     if let Some(arr) = v.get("per_session_max_ctx").and_then(|x| x.as_array()) {
         if !arr.is_empty() {
             out.push_str("\nPer-session max context\n");
-            let max_m = arr
-                .iter()
-                .map(|o| as_f64(o.get("max_ctx").unwrap_or(&Value::Null)))
-                .fold(0.0_f64, f64::max)
-                .max(1.0);
+            let max_m = max_num(arr, "max_ctx");
             for o in arr {
                 let sid = o
                     .get("session")
                     .and_then(|x| x.as_str())
                     .unwrap_or("?");
-                let mx = as_f64(o.get("max_ctx").unwrap_or(&Value::Null));
+                let mx = num(o, "max_ctx");
                 let mx_u = mx.round() as u64;
                 out.push_str(&format!(
                     "  {:<40} {:>10} tok  {}\n",
@@ -541,4 +520,43 @@ pub fn run() {
 
     eprintln!("unrecognized token-audit JSON shape");
     std::process::exit(1);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::display_path_with;
+
+    #[test]
+    fn userprofile_prefix_becomes_tilde() {
+        let up = Some("C:\\Users\\abc");
+        assert_eq!(display_path_with("C:/Users/abc/.claude/CLAUDE.md", None, up), "~/.claude/CLAUDE.md");
+        assert_eq!(display_path_with("c:\\users\\ABC\\x", None, up), "~/x");
+        assert_eq!(display_path_with("C:/Users/abc", None, up), "~");
+        assert_eq!(display_path_with("C:/Users/abc/x", None, Some("C:\\Users\\abc\\")), "~/x");
+        assert_eq!(display_path_with("D:/other/x", None, up), "D:/other/x");
+    }
+
+    #[test]
+    fn home_must_end_at_a_separator() {
+        assert_eq!(display_path_with("C:/Users/abc2/x", None, Some("C:\\Users\\abc")), "C:/Users/abc2/x");
+        assert_eq!(display_path_with("/home/abc2/x", Some("/home/abc"), None), "/home/abc2/x");
+    }
+
+    #[test]
+    fn home_prefix_is_removed_once() {
+        assert_eq!(display_path_with("/h/h/x", Some("/h"), None), "~/h/x");
+        assert_eq!(display_path_with("/home/abc", Some("/home/abc"), None), "~");
+        assert_eq!(display_path_with("C:\\Users\\abc\\x", Some("C:\\Users\\abc"), None), "~\\x");
+        // An empty HOME matches nothing.
+        assert_eq!(display_path_with("/x", Some(""), None), "/x");
+    }
+
+    #[test]
+    fn home_length_inside_a_multibyte_char_does_not_panic() {
+        // "C:/Users/xあ": byte 12 (= len of the home) falls inside あ.
+        let p = "C:/Users/xあいう/f";
+        assert_eq!(display_path_with(p, Some("C:/Users/abc"), Some("C:\\Users\\abc")), p);
+        // Byte 8 is the first byte of あ, a boundary, but the rest is no subpath.
+        assert_eq!(display_path_with("C:/Usersあ/f", None, Some("C:/Users")), "C:/Usersあ/f");
+    }
 }

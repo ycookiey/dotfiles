@@ -1,3 +1,4 @@
+use crate::paths::dotfiles_root;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -54,21 +55,6 @@ const CRATES: &[Crate] = &[
     },
 ];
 
-fn dotfiles_dir() -> Option<std::path::PathBuf> {
-    // Try compile-time DOTFILES_DIR first
-    let compiled = env!("DOTFILES_DIR");
-    let dotfiles = Path::new(&compiled);
-    if dotfiles.exists() {
-        return Some(dotfiles.to_path_buf());
-    }
-    // Fallback: find dotfiles from current exe
-    std::env::current_exe().ok().and_then(|exe| {
-        exe.ancestors()
-            .find(|dir| dir.join("definitions.toml").exists())
-            .map(|p| p.to_path_buf())
-    })
-}
-
 /// `cargo install` と同じ置き先 ($CARGO_HOME/bin、未設定なら ~/.cargo/bin)。
 /// 実行中の exe の場所から導くと、target/release の dotcli から dotb したとき
 /// コピー元と置き先が同じファイルになるので使わない。
@@ -86,18 +72,26 @@ fn newest_mtime(dir: &Path) -> Option<SystemTime> {
             return;
         };
         for entry in entries.flatten() {
+            // DirEntry::file_type/metadata reuse the data the directory listing
+            // already returned (FindNextFileW on Windows), so they cost no extra
+            // syscall per entry. They do not follow links, so a symlink or
+            // junction falls back to the path-based calls that follow it.
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
             let path = entry.path();
-            if path.is_dir() {
+            let (is_dir, meta) = if file_type.is_symlink() {
+                (path.is_dir(), path.metadata())
+            } else {
+                (file_type.is_dir(), entry.metadata())
+            };
+            if is_dir {
                 if path.file_name().map(|n| n == "target").unwrap_or(false) {
                     continue; // skip build artifacts
                 }
                 walk(&path, newest);
-            } else {
-                if let Ok(meta) = path.metadata() {
-                    if let Ok(mtime) = meta.modified() {
-                        *newest = Some(newest.map_or(mtime, |n: SystemTime| n.max(mtime)));
-                    }
-                }
+            } else if let Ok(mtime) = meta.and_then(|m| m.modified()) {
+                *newest = Some(newest.map_or(mtime, |n: SystemTime| n.max(mtime)));
             }
         }
     }
@@ -121,13 +115,20 @@ fn get_outdated_info(
         .ok()?
         .as_secs();
 
-    // Get commits after binary build time
-    let after = format!("{}-01-01", 1970 + (bin_timestamp / 31536000));
+    // Get commits after binary build time. `--since=@<epoch>` takes the exact
+    // timestamp (inclusive; the `commit_ts > bin_timestamp` check below keeps
+    // the comparison strict).
+    // TODO: this still spawns `git log -1` and `git diff` once per listed
+    // commit. Collapse it to one git call per crate: either one
+    // `git log --since=@<epoch> --format=... --name-only` parsed in place, or a
+    // tree-hash stamp written by `dotcli build` and compared on check. The
+    // choice is pending (misses commits pulled in with an older committer
+    // date vs. a stamp file to keep in sync).
+    let since = format!("--since=@{bin_timestamp}");
     let log_output = match Command::new("git")
         .args([
             "log",
-            "--after",
-            &after,
+            &since,
             "--format=%H %s",
             "--",
             crate_info.path,
@@ -199,8 +200,65 @@ fn get_outdated_info(
     })
 }
 
+fn missing_binary_info(crate_info: &Crate, dotfiles: &Path) -> OutdatedInfo {
+    let last_commit = Command::new("git")
+        .args(["log", "-1", "--format=%h %s", "--", crate_info.path])
+        .current_dir(dotfiles)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    let (hash, msg) = last_commit.split_once(' ').unwrap_or((&last_commit, ""));
+    let label = if hash.is_empty() {
+        "(not built)".to_string()
+    } else {
+        format!("{hash} (not built)")
+    };
+
+    let status = Command::new("git")
+        .args(["status", "--porcelain", "-z", "--", crate_info.path])
+        .current_dir(dotfiles)
+        .output()
+        .map(|o| o.stdout)
+        .unwrap_or_default();
+    let prefix = format!("{}/", crate_info.path);
+    let mut files: Vec<String> = parse_porcelain_z(&String::from_utf8_lossy(&status))
+        .into_iter()
+        .filter(|f| !f.ends_with("Cargo.lock"))
+        .map(|f| f.strip_prefix(&prefix).map(str::to_string).unwrap_or(f))
+        .collect();
+    if files.is_empty() {
+        files.push("(clean)".to_string());
+    }
+
+    OutdatedInfo {
+        crate_path: crate_info.path,
+        commits: vec![(label, msg.to_string())],
+        changed_files: files,
+    }
+}
+
+/// Paths from `git status --porcelain -z` output. Each entry is `XY <path>`;
+/// a rename or copy (`R`/`C` in X or Y) is followed by an extra NUL-terminated
+/// field holding the original path, which is skipped. Paths are relative to
+/// the repository root and never quoted under `-z`.
+fn parse_porcelain_z(out: &str) -> Vec<String> {
+    let mut files = Vec::new();
+    let mut fields = out.split('\0');
+    while let Some(entry) = fields.next() {
+        if entry.len() < 4 {
+            continue;
+        }
+        let (xy, path) = entry.split_at(3);
+        if xy.contains(['R', 'C']) {
+            fields.next();
+        }
+        files.push(path.to_string());
+    }
+    files
+}
+
 pub fn check() {
-    let Some(dotfiles) = dotfiles_dir() else {
+    let Some(dotfiles) = dotfiles_root() else {
         return;
     };
     let Some(cargo_bin) = cargo_bin_dir() else {
@@ -224,47 +282,8 @@ pub fn check() {
                 }
             }
         } else if bin_mtime.is_none() {
-            // Binary missing
-            let log_output = match Command::new("git")
-                .args(["log", "-1", "--format=%h %s", "--", crate_info.path])
-                .current_dir(&dotfiles)
-                .output()
-            {
-                Ok(output) => String::from_utf8_lossy(&output.stdout).to_string(),
-                _ => String::new(),
-            };
-            if let Some(space_idx) = log_output.find(' ') {
-                let hash = &log_output[..space_idx];
-                let msg = &log_output[space_idx + 1..];
-                let status_output = match Command::new("git")
-                    .args(["status", "--short", crate_info.path])
-                    .current_dir(&dotfiles)
-                    .output()
-                {
-                    Ok(output) => String::from_utf8_lossy(&output.stdout).to_string(),
-                    _ => String::new(),
-                };
-                let prefix = format!("{}/", crate_info.path);
-                let files: Vec<String> = status_output
-                    .lines()
-                    .filter(|f| !f.contains("Cargo.lock"))
-                    .map(|f| {
-                        f.strip_prefix(&prefix)
-                            .unwrap_or(f)
-                            .split_whitespace()
-                            .next()
-                            .unwrap_or(f)
-                            .to_string()
-                    })
-                    .collect();
-                if !files.is_empty() {
-                    outdated_infos.push(OutdatedInfo {
-                        crate_path: crate_info.path,
-                        commits: vec![(format!("{} (not built)", hash), msg.to_string())],
-                        changed_files: files,
-                    });
-                }
-            }
+            // Binary missing: always report it, whether or not the tree is clean.
+            outdated_infos.push(missing_binary_info(crate_info, &dotfiles));
         }
     }
 
@@ -286,7 +305,7 @@ pub fn check() {
 }
 
 pub fn run() {
-    let dotfiles = dotfiles_dir().unwrap_or_else(|| {
+    let dotfiles = dotfiles_root().unwrap_or_else(|| {
         eprintln!("Error: dotfiles directory not found");
         std::process::exit(1);
     });
@@ -314,10 +333,11 @@ pub fn run() {
 
 // On Windows, a running exe can't be overwritten (cargo install's final move
 // fails with os error 5), but it can be renamed. So: build in the project's
-// target dir, then swap the new exe in with install_exe.
-// Applies to all crates: dotcli is always running during dotb, and
-// claude-statusline may be running for an open Claude Code status line.
-fn build_project(cargo: &str, dotfiles: &Path, cargo_bin: &Path, crate_info: &Crate) -> bool {
+// target dir, then swap the new exe in with install_exe. Applies to all crates:
+// dotcli is always running during dotb (and as long-lived MCP servers), and Claude
+// Code starts claude-statusline afresh each time it redraws the status line, so a
+// copy may be running while it is being replaced.
+fn build_project(cargo: &Path, dotfiles: &Path, cargo_bin: &Path, crate_info: &Crate) -> bool {
     let project_dir = dotfiles.join(crate_info.path);
     if !project_dir.join("Cargo.toml").exists() {
         eprintln!("  skip {} (not found)", crate_info.path);
@@ -401,52 +421,218 @@ fn install_exe(src: &Path, bin_dir: &Path, bin_name: &str) -> Result<(), String>
         return Err(format!("swap in: {e}"));
     }
 
-    remove_stale_old(bin_dir, bin_name);
+    remove_old_exes(bin_dir, bin_name);
     Ok(())
 }
 
-/// `<bin_name>.<ms>.old` と旧方式の固定名 `<bin_name>.old` / `<bin_name>.exe.old` を削除する。
-/// 実行中のものは削除に失敗するので、そのまま次回の dotb へ持ち越す。
-fn remove_stale_old(bin_dir: &Path, bin_name: &str) {
-    let Ok(entries) = std::fs::read_dir(bin_dir) else {
+/// Names `install_exe` and earlier builds moved a live exe to: `<bin_name>.<ms>.old`,
+/// `<bin_name>.exe.<id>.old`, and the fixed `<bin_name>.old` / `<bin_name>.exe.old`.
+fn is_old_exe_name(name: &str, bin_name: &str) -> bool {
+    name.strip_prefix(bin_name)
+        .and_then(|rest| rest.strip_prefix('.'))
+        .is_some_and(|rest| rest == "old" || rest.ends_with(".old"))
+}
+
+fn remove_old_exes(dir: &Path, bin_name: &str) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
-    let prefix = format!("{bin_name}.");
     for e in entries.flatten() {
-        let name = e.file_name().to_string_lossy().into_owned();
-        let Some(mid) = name.strip_prefix(&prefix).and_then(|r| r.strip_suffix("old")) else {
-            continue;
-        };
-        // mid は "" / "exe." (旧方式) か "<数字>."
-        let is_old = mid.is_empty()
-            || mid == "exe."
-            || mid
-                .strip_suffix('.')
-                .is_some_and(|ts| !ts.is_empty() && ts.chars().all(|c| c.is_ascii_digit()));
-        if is_old {
+        let is_file = e.file_type().is_ok_and(|t| t.is_file());
+        if is_file && is_old_exe_name(&e.file_name().to_string_lossy(), bin_name) {
+            // Fails while a process still runs it; a later build retries.
             let _ = std::fs::remove_file(e.path());
         }
     }
 }
 
-fn which_cargo() -> String {
-    // Try cargo in PATH
-    if Command::new("cargo")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-    {
-        return "cargo".into();
-    }
-    // Fallback: ~/.cargo/bin/cargo
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
+/// Finds cargo by looking at files only (spawning `cargo --version` goes through the
+/// rustup proxy and is slow): PATH first, then `$CARGO_HOME/bin`, then `~/.cargo/bin`.
+fn which_cargo() -> PathBuf {
+    let exe = format!("cargo{}", std::env::consts::EXE_SUFFIX);
+    let path_dirs = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
         .unwrap_or_default();
-    let fallback = format!("{home}/.cargo/bin/cargo");
-    if Path::new(&fallback).exists() {
-        return fallback;
+    let fallbacks = [
+        std::env::var_os("CARGO_HOME").map(|h| PathBuf::from(h).join("bin")),
+        dirs::home_dir().map(|h| h.join(".cargo").join("bin")),
+    ];
+    path_dirs
+        .into_iter()
+        .filter(|d| !d.as_os_str().is_empty())
+        .chain(fallbacks.into_iter().flatten())
+        .map(|d| d.join(&exe))
+        .find(|p| p.is_file())
+        .unwrap_or_else(|| {
+            eprintln!("Error: cargo not found");
+            std::process::exit(1);
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{install_exe, parse_porcelain_z};
+    use std::path::{Path, PathBuf};
+    use std::process::{Child, Command, Stdio};
+
+    struct TempDir(PathBuf);
+    impl TempDir {
+        fn new(name: &str) -> Self {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let p = std::env::temp_dir().join(format!(
+                "dotcli-build-{name}-{}-{nanos}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&p).unwrap();
+            TempDir(p)
+        }
     }
-    eprintln!("Error: cargo not found");
-    std::process::exit(1);
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Keeps a copy of ping running from `exe`, like a long-lived dotcli holding its image.
+    struct Running(Child);
+    impl Running {
+        fn start(exe: &Path) -> Self {
+            let child = Command::new(exe)
+                .args(["-n", "60", "127.0.0.1"])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            Running(child)
+        }
+    }
+    impl Drop for Running {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    fn ping_exe() -> PathBuf {
+        let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+        Path::new(&root).join("System32").join("PING.EXE")
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn install_exe_replaces_running_exe_while_an_old_copy_also_runs() {
+        let tmp = TempDir::new("install");
+        let dir = &tmp.0;
+        let src = dir.join("new-build.bin");
+        std::fs::write(&src, b"new build").unwrap();
+        for name in ["tool.exe", "tool.old"] {
+            std::fs::copy(ping_exe(), dir.join(name)).unwrap();
+        }
+        for name in [
+            "tool.exe.old",
+            "tool.exe.1-2.old",
+            "tool.1.old",
+            "toolbox.old",
+            "other.exe.old",
+            "tool.txt",
+        ] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+        let _live = Running::start(&dir.join("tool.exe"));
+        let _older = Running::start(&dir.join("tool.old"));
+        std::thread::sleep(std::time::Duration::from_millis(300));
+
+        install_exe(&src, dir, "tool").unwrap();
+
+        assert_eq!(std::fs::read(dir.join("tool.exe")).unwrap(), b"new build");
+        // Leftovers of this bin that nothing runs are removed; held ones stay.
+        assert!(!dir.join("tool.exe.old").exists());
+        assert!(!dir.join("tool.exe.1-2.old").exists());
+        assert!(!dir.join("tool.1.old").exists());
+        assert!(!dir.join("tool.exe.new").exists());
+        assert!(dir.join("tool.old").exists());
+        // The live exe went to `tool.<ms>.old` and stays there while it runs.
+        let renamed: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| {
+                n.strip_prefix("tool.")
+                    .and_then(|r| r.strip_suffix(".old"))
+                    .is_some_and(|ms| !ms.is_empty() && ms.bytes().all(|b| b.is_ascii_digit()))
+            })
+            .collect();
+        assert_eq!(renamed.len(), 1, "the running exe was renamed once: {renamed:?}");
+        // Other names are left alone.
+        for name in ["toolbox.old", "other.exe.old", "tool.txt"] {
+            assert!(dir.join(name).exists(), "{name} must stay");
+        }
+    }
+
+    #[test]
+    fn old_exe_names_match_only_this_bin() {
+        use super::is_old_exe_name;
+        for name in [
+            "dotcli.old",
+            "dotcli.exe.old",
+            "dotcli.exe.17-4.old",
+            "dotcli.1760000000000.old",
+        ] {
+            assert!(is_old_exe_name(name, "dotcli"), "{name}");
+        }
+        for name in [
+            "dotcli.exe",
+            "dotcli.exe.new",
+            "dotcli.exe.old.1",
+            "dotcliold",
+            "dotcli-x.old",
+            "dotclix.exe.old",
+            "claude-statusline.exe.old",
+            "dotcli.oldx",
+        ] {
+            assert!(!is_old_exe_name(name, "dotcli"), "{name}");
+        }
+    }
+
+    #[test]
+    fn install_exe_puts_exe_in_place_when_none_exists() {
+        let tmp = TempDir::new("fresh");
+        let src = tmp.0.join("b.bin");
+        std::fs::write(&src, b"b").unwrap();
+        install_exe(&src, &tmp.0, "tool").unwrap();
+        assert_eq!(std::fs::read(tmp.0.join("tool.exe")).unwrap(), b"b");
+    }
+
+    #[test]
+    fn install_exe_refuses_to_copy_a_file_onto_itself() {
+        let tmp = TempDir::new("same");
+        let dst = tmp.0.join("tool.exe");
+        std::fs::write(&dst, b"live").unwrap();
+        assert!(install_exe(&dst, &tmp.0, "tool").is_err());
+        assert_eq!(std::fs::read(&dst).unwrap(), b"live");
+        assert!(!tmp.0.join("tool.exe.new").exists());
+    }
+
+    #[test]
+    fn porcelain_z_takes_paths_not_status_codes() {
+        let out = " M cli/src/a.rs\0?? cli/new dir/\0A  cli/b.rs\0";
+        assert_eq!(
+            parse_porcelain_z(out),
+            ["cli/src/a.rs", "cli/new dir/", "cli/b.rs"]
+        );
+    }
+
+    #[test]
+    fn porcelain_z_skips_rename_source() {
+        let out = "R  cli/new.rs\0cli/old.rs\0 M cli/c.rs\0";
+        assert_eq!(parse_porcelain_z(out), ["cli/new.rs", "cli/c.rs"]);
+    }
+
+    #[test]
+    fn porcelain_z_empty() {
+        assert!(parse_porcelain_z("").is_empty());
+    }
 }

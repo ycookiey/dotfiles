@@ -1,3 +1,4 @@
+use super::claude_launch::claude_args as launch_args;
 use crate::protocol::{CLAUDE_PROVIDER_ENV, ExecCommand, ShellAction};
 use std::collections::HashMap;
 
@@ -11,22 +12,7 @@ pub fn run(args: &[String]) {
         "global.anthropic.claude-opus-4-7[1m]".into(),
     );
 
-    let mut claude_args: Vec<String> = Vec::new();
-    let rest: Vec<String>;
-    let safe_mode = args.first().map(|s| s.as_str()) == Some("s");
-    if matches!(args.first().map(|s| s.as_str()), Some("r" | "rs")) {
-        if args[0] != "rs" {
-            claude_args.push("--dangerously-skip-permissions".into());
-        }
-        claude_args.push("/resume".into());
-        rest = args[1..].to_vec();
-    } else if safe_mode {
-        rest = args[1..].to_vec();
-    } else {
-        claude_args.push("--dangerously-skip-permissions".into());
-        rest = args.to_vec();
-    }
-    claude_args.extend(rest);
+    let claude_args = launch_args(args);
 
     let unset_env = CLAUDE_PROVIDER_ENV.iter().map(|s| s.to_string()).collect();
 

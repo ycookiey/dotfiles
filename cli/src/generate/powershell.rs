@@ -1,3 +1,4 @@
+use super::quote::{ps_dquote_inner, ps_dquote_path_with_env, ps_squote_inner};
 use crate::definitions::{Definitions, LauncherType, Platform};
 use std::fmt::Write;
 use std::path::Path;
@@ -72,30 +73,25 @@ pub fn generate(defs: &Definitions, dotfiles_dir: &Path) -> String {
                         out,
                         "function {name} {{ Start-App \"{app}\" }}",
                         name = l.name,
-                        app = l.app_name.as_ref().unwrap(),
+                        app = ps_dquote_inner(l.app_name.as_ref().unwrap()),
                     )
                     .unwrap();
                 }
                 LauncherType::Exe => {
-                    let path = l
-                        .path
-                        .as_ref()
-                        .unwrap()
-                        .replace("{PROGRAM_FILES}", "$env:ProgramFiles")
-                        .replace("{USERPROFILE}", "$env:USERPROFILE");
+                    let path = ps_dquote_path_with_env(l.path.as_ref().unwrap());
                     if l.args.is_empty() {
-                        writeln!(out, "function {name} {{ start \"{path}\" }}", name = l.name,)
+                        writeln!(out, "function {name} {{ start {path} }}", name = l.name,)
                             .unwrap();
                     } else {
                         let args_str = l
                             .args
                             .iter()
-                            .map(|a| format!("'{a}'"))
+                            .map(|a| format!("'{}'", ps_squote_inner(a)))
                             .collect::<Vec<_>>()
                             .join(",");
                         writeln!(
                             out,
-                            "function {name} {{ start \"{path}\" -Arg {args} }}",
+                            "function {name} {{ start {path} -Arg {args} }}",
                             name = l.name,
                             args = args_str,
                         )
@@ -136,27 +132,150 @@ pub fn generate(defs: &Definitions, dotfiles_dir: &Path) -> String {
 }
 
 const APPLY_HELPER: &str = r#"function _dotcli_apply {
-    param([Parameter(ValueFromPipeline)][string]$Json)
-    $a = $Json | ConvertFrom-Json
-    if ($a.unset_env) {
-        $a.unset_env | % { Remove-Item "env:$_" -ea 0 }
-    }
-    if ($a.set_env) {
-        $a.set_env.PSObject.Properties | % { Set-Item "env:$($_.Name)" $_.Value }
-    }
-    if ($a.cd) { Set-Location $a.cd }
-    if ($a.messages) {
-        $a.messages | % {
-            $c = switch ($_.level) { 'warn' { 'Yellow' } 'error' { 'Red' } default { 'Green' } }
-            wh $_.text -ForegroundColor $c
+    # stdout of a dotcli subcommand: plain lines (e.g. `proxy log`), then optionally one
+    # ShellAction JSON line. Collect every line in process {}; without it only the last
+    # pipeline item would be bound. If the last non-blank line parses as a JSON object,
+    # pass the lines before it through and apply it; otherwise pass every line through.
+    param([Parameter(ValueFromPipeline)][AllowEmptyString()][string]$Line)
+    begin { $lines = [System.Collections.Generic.List[string]]::new() }
+    process { $lines.Add($Line) }
+    end {
+        $i = $lines.Count - 1
+        while ($i -ge 0 -and [string]::IsNullOrWhiteSpace($lines[$i])) { $i-- }
+        $a = $null
+        if ($i -ge 0 -and $lines[$i].TrimStart().StartsWith('{')) {
+            try { $a = $lines[$i] | ConvertFrom-Json -ErrorAction Stop } catch { $a = $null }
         }
-    }
-    if ($a.exec) {
-        if ($a.exec.program -eq 'claude') {
-            # Tag pane for WezTerm Alt+Z redraw detection (app=claude). PS 5.1 doesn't support `e.
-            [Console]::Write([string][char]27 + ']1337;SetUserVar=app=Y2xhdWRl' + [string][char]7)
+        if ($null -eq $a) { $lines; return }
+        if ($i -gt 0) { $lines.GetRange(0, $i) }
+        if ($a.unset_env) {
+            $a.unset_env | % { Remove-Item "env:$_" -ea 0 }
         }
-        & $a.exec.program @($a.exec.args)
+        if ($a.set_env) {
+            $a.set_env.PSObject.Properties | % { Set-Item "env:$($_.Name)" $_.Value }
+        }
+        if ($a.cd) { Set-Location -LiteralPath $a.cd }
+        if ($a.messages) {
+            $a.messages | % {
+                $c = switch ($_.level) { 'warn' { 'Yellow' } 'error' { 'Red' } default { 'Green' } }
+                Write-Host $_.text -ForegroundColor $c
+            }
+        }
+        if ($a.exec) {
+            if ($a.exec.program -eq 'claude') {
+                # Tag pane for WezTerm Alt+Z redraw detection (app=claude). PS 5.1 doesn't support `e.
+                [Console]::Write([string][char]27 + ']1337;SetUserVar=app=Y2xhdWRl' + [string][char]7)
+            }
+            & $a.exec.program @($a.exec.args)
+        }
     }
 }
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::{APPLY_HELPER, generate};
+    use crate::definitions::Definitions;
+    use std::path::Path;
+    use std::process::{Command, Stdio};
+
+    #[test]
+    fn launcher_paths_args_and_app_names_are_quoted() {
+        let defs: Definitions = toml::from_str(
+            r#"
+[[launcher]]
+name = "q"
+type = "exe"
+path = "{PROGRAM_FILES}\\it's $x\\a.exe"
+args = ["it's", "say \"hi\""]
+
+[[launcher]]
+name = "bare"
+type = "exe"
+path = "vivaldi"
+
+[[launcher]]
+name = "app"
+type = "start_app"
+app_name = "Bob's \"App\""
+"#,
+        )
+        .unwrap();
+        let out = generate(&defs, Path::new("C:/dot"));
+        assert!(
+            out.contains(
+                r#"function q { start "$env:ProgramFiles\it's `$x\a.exe" -Arg 'it''s','say "hi"' }"#
+            ),
+            "{out}"
+        );
+        assert!(
+            out.contains(r#"function bare { start "vivaldi" }"#),
+            "{out}"
+        );
+        assert!(
+            out.contains(r#"function app { Start-App "Bob's `"App`"" }"#),
+            "{out}"
+        );
+    }
+
+    fn pwsh_available() -> bool {
+        Command::new("pwsh")
+            .args(["-NoProfile", "-NonInteractive", "-Command", "exit 0"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    /// Runs the helper alone (no profile, no aliases.ps1) against multi-line stdout,
+    /// non-JSON output and a `cd` into a directory whose name has wildcard characters.
+    #[test]
+    fn apply_helper_handles_multiline_output_and_literal_cd() {
+        if !pwsh_available() {
+            return;
+        }
+        let tmp = std::env::temp_dir().join(format!(
+            "dotcli-apply-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let target = tmp.join("a[1]");
+        std::fs::create_dir_all(&target).unwrap();
+        let cd_json = serde_json::json!({ "cd": target.to_string_lossy() }).to_string();
+        let script = format!(
+            "{APPLY_HELPER}\n\
+             @('noise','{{\"messages\":[{{\"text\":\"applied\",\"level\":\"info\"}}]}}') | _dotcli_apply\n\
+             @('plain1','{{not json') | _dotcli_apply\n\
+             '{cd}' | _dotcli_apply\n\
+             'pwd=' + (Get-Location).Path\n",
+            cd = cd_json.replace('\'', "''"),
+        );
+        let path = tmp.join("t.ps1");
+        // BOM so Windows PowerShell 5.1 would also read it as UTF-8
+        std::fs::write(&path, format!("\u{feff}{script}")).unwrap();
+        let out = Command::new("pwsh")
+            .args(["-NoProfile", "-NonInteractive", "-File"])
+            .arg(&path)
+            .output()
+            .expect("failed to spawn pwsh");
+        let _ = std::fs::remove_dir_all(&tmp);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "pwsh failed: {stderr}");
+        let lines: Vec<&str> = stdout.lines().map(str::trim_end).collect();
+        assert_eq!(
+            lines,
+            vec![
+                "noise",
+                "applied",
+                "plain1",
+                "{not json",
+                &format!("pwd={}", target.display()),
+            ],
+            "stderr: {stderr}"
+        );
+    }
+}
