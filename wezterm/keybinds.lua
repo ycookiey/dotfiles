@@ -140,6 +140,10 @@ end
 --   "none"                   その方向に部分的にしか接しない隣しかない。分割の木を作り替えないよう何もしない
 -- ペインはタブを隙間なく埋めるので、左上の角は left == 0 かつ top == 0、右下の角は
 -- 右端と下端がそれぞれ全ペインの最大値に届くことで判定できる
+-- TODO: 辺を丸ごと共有する隣が無いときの動作はユーザの選択待ち。
+--   A (今の動作): 角のペインだけタブを動かし、それ以外は何もしない
+--   B: 角かどうかに関わらず MoveTabRelative(delta) でタブを動かす
+--   C: A に加え、何もしないときに window:toast_notification で理由を短く知らせる
 local function swap_plan(infos, cur, delta)
   local candidates = delta < 0
     and { { "left", "--left", "width" }, { "up", "--top", "height" } }
