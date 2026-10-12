@@ -65,11 +65,18 @@ if (!(isadmin)) {
     if (gcm bw -ea 0) {
         wh ""
         wh "==> Bitwarden secrets 仕上げ取得 (未取得分のみ)..." -ForegroundColor Cyan
+        # bw-secrets.ps1 は認証失敗を exit 1 で返す (& 呼び出しでは throw しない)。throw と exit code の両方を見る
+        $bwError = $null
+        $global:LASTEXITCODE = 0
         try {
             & "$ScriptDir\install\bw-secrets.ps1"
+            if ($global:LASTEXITCODE) { $bwError = "exit $global:LASTEXITCODE" }
         } catch {
-            wh "Bitwarden secrets 取得でエラー: $_" -Fo Red
-            "$(Get-Date) - Error: bw-secrets.ps1 failed: $_" >> $LogFile
+            $bwError = "$_"
+        }
+        if ($bwError) {
+            wh "Bitwarden secrets 取得でエラー: $bwError" -Fo Red
+            "$(Get-Date) - Error: bw-secrets.ps1 failed: $bwError" >> $LogFile
             if (!$exitCode) { $exitCode = 1 }
         }
     }

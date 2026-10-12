@@ -74,3 +74,6 @@ foreach ($s in $needed) {
         "$(Get-Date) - Warning: Bitwarden item '$($s.Name)': $key" >> $LogFile
     }
 }
+# 失敗は認証失敗の exit 1 だけ。未検出のアイテム (上の警告) や途中の native コマンド (bw get / icacls / ssh-keygen) の
+# $LASTEXITCODE を呼び出し元 (setup.ps1) に残さない
+exit 0
