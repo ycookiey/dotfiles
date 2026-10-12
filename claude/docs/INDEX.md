@@ -16,13 +16,13 @@ CLAUDE.md「参照ドキュメント」節の主要 docs と異なり起動前�
 - drizzle(SQLite / D1 の migration のテーブル作り直しで列欠落・子行消失、D1 の batch に `db.run` を入れられない、generate の meta JSON が Prettier 未整形) → drizzle.md
 - pnpm(Windows で `link:` の区切りがバックスラッシュになる、新しい worktree の `pnpm install` が better-sqlite3 の C++ のビルド(ClangCL・MSB8020)で止まる、`link:` の package の peer が link 先の copy に解決され型が合わない、link 先を build し直すと Vite の dev server が消えた dist を参照して 500) → pnpm.md
 - Playwright(ブラウザ revision 不一致で起動失敗、evaluate/content にタイムアウトが無く巡回が止まる、スマホ向けページの WebKit での確認: Chromium だけの CSS・lazy 画像が撮れない、aria-disabled のボタンを click() が押さない・jsdom で再現しないクリック中の DOM 入れ替わり) → playwright.md
-- React(React Compiler lint の `react-hooks/refs`: ref を含むオブジェクトを props に渡すとエラー、`use client` 部品のレンダー中処理はサーバーでも走り `ImageData` 等が未定義) → react.md
+- React(React Compiler lint の `react-hooks/refs`: ref を含むオブジェクトを props に渡すとエラー、`use client` 部品のレンダー中処理はサーバーでも走り `ImageData` 等が未定義、rAF の再生ループで経過時間が負) → react.md
 - WezTerm の Lua 設定(評価時に始めた `call_after` が動かない、`CloseCurrentPane` がアクティブなペインを閉じる、前面プロセスが子孫・短命なプロセスを返す、Claude Code 更新時の `claude.exe.old.*` 改名、spawn/split の cwd・args が使われない、nushell の cd と OSC 7、`send_text` の取りこぼし、別プロセスでのテスト) → wezterm.md
 - 画像の中身の確かめ(透過 PNG を Read で見ると不透明度が無視され、見えない画素が見える) → images.md
 - elkjs(ELK layered の入れ子 `INCLUDE_CHILDREN` で model order 系オプションが落ちる・効かない、座標基準、エッジ/ノードラベルの配置) → elkjs.md
 - League of Legends のゲームデータ(地形 navgrid・jungle camp/個体の spawn 位置・WAD の読み方。画像から推定しない) → league-game-data.md
 - ESLint(eslintrc の parser・plugin は共有の設定の場所から解決され root の版は効かない、typescript-eslint の `project` 列挙で heap 不足 → `projectService`、`tsconfig.json` 以外の名前の設定にしか入らない file) → eslint.md
-- Node.js / tsx(`tsx -e` の top-level await、`zlib.zstdDecompressSync` の型、ES2017 target の BigInt literal) → nodejs.md
+- Node.js / tsx(`tsx -e` の top-level await、`zlib.zstdDecompressSync` の型、ES2017 target の BigInt literal、tsx の計測が重く出る、Rust→wasm の profile と速さの比べ方) → nodejs.md
 - WSL の memory(file cache が上限まで溜まり Windows を圧迫・即時に返す・上限の目安)、暇で止まると /tmp が消える → wsl.md
 - Windows のプロセス・窓(Explorer でファイルを選んで開く: `explorer /select` は初めてのフォルダで選ばない、裏の子プロセスが親のパイプを受け継ぎ読む側が待たされる、窓の手前への切り替えの制限と本人の入力が重なる試験) → windows-desktop.md
 - 自分の CLAUDE.md・skill・agent の prompt を監査・書き換えるときのユーザー方針(自発性の文言は残す・global CLAUDE.md は短く) → prompt-writing.md

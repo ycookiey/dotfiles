@@ -19,3 +19,11 @@
 - 対処: 計測・プロファイルは `esbuild <entry.ts> --bundle --platform=node --format=esm --outfile=<out>.mjs` でまとめて `node <out>.mjs`。tsconfig の paths (`@/...`) は esbuild がそのまま解決する。出力は gitignore 済みの `node_modules/.cache/` に置く
 - 経過時間はほかの処理との CPU の取り合いで ±15% ほど揺れる。`process.cpuUsage()` の CPU 時間を併記する。計算量の比較は処理の回数 (例: 回した tick 数) を数えて負荷と切り離す
 - Windows の CPU 時間は約 15.6 ms 刻み。実例: 数十 ms の処理を 1 回ずつ測ると 16・31・47・77 ms と刻みの倍数になり、倍率を 1.86 と誤った (30 回まとめると 2.45)。1 回が数百 ms に満たない処理は繰り返しをまとめて 1 回で測り、回数で割る。最小値・中央値で比べるのは 1 回が十分長いときだけ
+
+## Rust→wasm の重い所を探す・速さを比べる
+
+- `node --cpu-prof` は wasm の呼び出しの列をたどれないことが多い (sample の多くが root 直下)。inclusive は当てにならず self だけ使う
+- 関数名には name section: `wasm-pack build --profiling` + Cargo.toml `[package.metadata.wasm-pack.profile.profiling] wasm-opt = ["-O", "-g"]`。無いと `wasm-function[98]`
+- LTO で inline された関数は呼んだ側の self に入る。内訳はネイティブ build を samply で
+- ネイティブの profile は確保・解放を wasm より重く見せる (Windows HeapAlloc、dlmalloc にしても lock)。実例: 確保を減らす変更がネイティブ 35→20 秒、wasm 29→27 秒。速さは wasm で判定
+- 版の比較は交互に複数回、最小値・中央値で (1 回ずつは ±10% 揺れて逆の結論になった)
