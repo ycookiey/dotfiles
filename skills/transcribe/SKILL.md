@@ -38,7 +38,8 @@ uv run --python 3.12 \
 
 - **GPU**: cuBLAS/cuDNN の DLL を pip wheel から供給し、スクリプトが実行時に `os.add_dll_directory` で登録する（CUDA Toolkit のインストール不要）。RTX系GPUで実時間の **約20倍速**。GPUが使えない環境では自動で **CPU(int8)** にフォールバック
 - **初回のみ重いDL**: `nvidia-cudnn-cu12`(~655MB)・`nvidia-cublas-cu12`(~527MB) のwheelと、モデル本体をダウンロードする。以降は uv / HF キャッシュから即時
-- **冪等**: 既に `.txt`/`.srt` があるファイルはスキップ。再生成は `--overwrite`
+- **音声の読み込み**: `.wav` は Python 標準の `wave`、それ以外は `ffmpeg` CLI で 16kHz モノラルにしてからモデルに渡す。faster-whisper 内蔵の読み込み(PyAV)は、PyAV の版によって `open() got an unexpected keyword argument 'metadata_errors'` で失敗するため通さない。`ffmpeg` が PATH に無いときだけ内蔵の読み込みに任せる(警告を出す)
+- **冪等**: 既に `.txt`/`.srt` があるファイルはスキップ。再生成は `--overwrite`。同じ名前で拡張子だけ違うファイル(`a.mp3` と `a.wav`)は出力名が重なり、後の方がスキップされる
 - **長尺・大量件数**: 処理が長くなる場合は Bash の `run_in_background: true` で実行し、完了通知を待つ。途中経過は出力ファイルを Read で確認
 - **出力先**: 入力と同じディレクトリ。別管理したい場合は生成後に mv
 

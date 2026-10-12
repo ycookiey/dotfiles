@@ -7,7 +7,11 @@ param(
 
 . "$PSScriptRoot\..\pwsh\aliases.ps1"
 
+# Two tasks (startup/manager.ps1): the logon task runs with highest
+# privileges and starts only what needs them, then runs the user task, which
+# starts everything else with the normal (limited) user token.
 $TaskName   = "CustomStartupManager"
+$UserTask   = "CustomStartupManager-User"
 $Pwsh       = (Get-Command pwsh).Source
 $ScriptPath = "$PSScriptRoot\manager.ps1"
 $RegKey     = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
@@ -40,7 +44,14 @@ function Register-Startup {
         wh "Removed old registry entry" -Fo Gray
     }
 
-    $action    = New-ScheduledTaskAction -Execute $Pwsh -Argument "-ExecutionPolicy Bypass -W Hidden -NonInteractive -File `"$ScriptPath`""
+    # Registered first: the logon task runs it.
+    $action    = New-ScheduledTaskAction -Execute $Pwsh -Argument "-ExecutionPolicy Bypass -W Hidden -NonInteractive -File `"$ScriptPath`" -Part User"
+    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Limited -LogonType Interactive
+    $settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([timespan]'0:5:0') -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    [void](Register-ScheduledTask -TaskName $UserTask -Action $action -Principal $principal -Settings $settings -Force)
+    wh "Registered: $UserTask (TaskScheduler, on demand)" -Fo Green
+
+    $action    = New-ScheduledTaskAction -Execute $Pwsh -Argument "-ExecutionPolicy Bypass -W Hidden -NonInteractive -File `"$ScriptPath`" -Part Elevated"
     $trigger   = New-ScheduledTaskTrigger -AtLogOn
     $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest -LogonType Interactive
     $settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([timespan]'0:5:0')
@@ -55,6 +66,10 @@ function Unregister-Startup {
         wh "Unregistered: $TaskName" -Fo Green
     } else {
         wh "Not registered" -Fo Yellow
+    }
+    if (Get-ScheduledTask -TaskName $UserTask -ea 0) {
+        Unregister-ScheduledTask -TaskName $UserTask -Con:$false
+        wh "Unregistered: $UserTask" -Fo Green
     }
     if (Get-ScheduledTask -TaskName $ReaperTask -ea 0) {
         Unregister-ScheduledTask -TaskName $ReaperTask -Con:$false

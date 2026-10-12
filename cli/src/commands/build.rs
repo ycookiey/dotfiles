@@ -55,11 +55,14 @@ const CRATES: &[Crate] = &[
     },
 ];
 
+/// `cargo install` と同じ置き先 ($CARGO_HOME/bin、未設定なら ~/.cargo/bin)。
+/// 実行中の exe の場所から導くと、target/release の dotcli から dotb したとき
+/// コピー元と置き先が同じファイルになるので使わない。
 fn cargo_bin_dir() -> Option<PathBuf> {
-    // Derive from current exe (dotcli itself is in cargo bin)
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+    let home = std::env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|h| h.join(".cargo")))?;
+    Some(home.join("bin")).filter(|d| d.is_dir())
 }
 
 fn newest_mtime(dir: &Path) -> Option<SystemTime> {
@@ -330,10 +333,10 @@ pub fn run() {
 
 // On Windows, a running exe can't be overwritten (cargo install's final move
 // fails with os error 5), but it can be renamed. So: build in the project's
-// target dir, rename the live exe out of the way, then copy the new one in
-// (install_exe). Applies to all crates: dotcli is always running during dotb (and as
-// long-lived MCP servers), and Claude Code starts claude-statusline afresh each time it
-// redraws the status line, so a copy may be running while it is being replaced.
+// target dir, then swap the new exe in with install_exe. Applies to all crates:
+// dotcli is always running during dotb (and as long-lived MCP servers), and Claude
+// Code starts claude-statusline afresh each time it redraws the status line, so a
+// copy may be running while it is being replaced.
 fn build_project(cargo: &Path, dotfiles: &Path, cargo_bin: &Path, crate_info: &Crate) -> bool {
     let project_dir = dotfiles.join(crate_info.path);
     if !project_dir.join("Cargo.toml").exists() {
@@ -370,49 +373,60 @@ fn build_project(cargo: &Path, dotfiles: &Path, cargo_bin: &Path, crate_info: &C
             true
         }
         Err(e) => {
-            eprintln!("FAILED (copy: {e})");
+            eprintln!("FAILED ({e})");
             false
         }
     }
 }
 
-/// Copies `src` to `<dir>/<bin_name>.exe`, first renaming a live exe there out of the way.
+/// `<bin_dir>/<bin_name>.exe` を `src` で置き換える。
+/// 1. 新 exe を `.exe.new` へコピー（ここが遅い部分。稼働中の exe には触れない）
+/// 2. 稼働中の exe を毎回異なる名前 `<bin_name>.<ms>.old` へ退避（実行中でも rename は可能。
+///    固定名だと、前回の退避先を別プロセスがまだ実行中のとき置き換え不可で失敗する）
+/// 3. `.exe.new` を本来の名前へ rename（exe が無い時間を rename 1 回分に縮める）
 ///
-/// The rename target is unique per build (`<bin_name>.exe.<nanos>-<pid>.old`): a fixed
-/// name would have to replace the previous build's `.old`, which fails while a
-/// long-lived process (e.g. an MCP server started before that build) still runs it, and
-/// the copy onto the still-present live exe then fails too. After a successful copy every
-/// `<bin_name>.*.old` that can be deleted is removed; ones still running stay until a
-/// later build.
-fn install_exe(src: &Path, dir: &Path, bin_name: &str) -> std::io::Result<()> {
-    let dst = dir.join(format!("{bin_name}.exe"));
-    let old = dir.join(unique_old_name(bin_name));
-    let renamed = dst.exists() && std::fs::rename(&dst, &old).is_ok();
-    match std::fs::copy(src, &dst) {
-        Ok(_) => {
-            remove_old_exes(dir, bin_name);
-            Ok(())
-        }
-        Err(e) => {
-            if renamed {
-                // dst was moved away, so anything there now is a partial copy.
-                let _ = std::fs::remove_file(&dst);
-                let _ = std::fs::rename(&old, &dst);
-            }
-            Err(e)
+/// 退避ファイルは毎回削除を試み、まだ実行中で消せないものだけ次回へ残す。
+fn install_exe(src: &Path, bin_dir: &Path, bin_name: &str) -> Result<(), String> {
+    let dst = bin_dir.join(format!("{bin_name}.exe"));
+    if let (Ok(a), Ok(b)) = (src.canonicalize(), dst.canonicalize()) {
+        if a == b {
+            return Err(format!("source and destination are the same file: {}", a.display()));
         }
     }
+
+    let staged = bin_dir.join(format!("{bin_name}.exe.new"));
+    let _ = std::fs::remove_file(&staged);
+    std::fs::copy(src, &staged).map_err(|e| format!("copy: {e}"))?;
+
+    let aside = if dst.exists() {
+        let ms = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let aside = bin_dir.join(format!("{bin_name}.{ms}.old"));
+        if let Err(e) = std::fs::rename(&dst, &aside) {
+            let _ = std::fs::remove_file(&staged);
+            return Err(format!("move aside: {e}"));
+        }
+        Some(aside)
+    } else {
+        None
+    };
+
+    if let Err(e) = std::fs::rename(&staged, &dst) {
+        if let Some(aside) = &aside {
+            let _ = std::fs::rename(aside, &dst);
+        }
+        let _ = std::fs::remove_file(&staged);
+        return Err(format!("swap in: {e}"));
+    }
+
+    remove_old_exes(bin_dir, bin_name);
+    Ok(())
 }
 
-fn unique_old_name(bin_name: &str) -> String {
-    let nanos = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    format!("{bin_name}.exe.{nanos}-{}.old", std::process::id())
-}
-
-/// `<bin_name>.old` (older builds), `<bin_name>.exe.old` and `<bin_name>.exe.<id>.old`.
+/// Names `install_exe` and earlier builds moved a live exe to: `<bin_name>.<ms>.old`,
+/// `<bin_name>.exe.<id>.old`, and the fixed `<bin_name>.old` / `<bin_name>.exe.old`.
 fn is_old_exe_name(name: &str, bin_name: &str) -> bool {
     name.strip_prefix(bin_name)
         .and_then(|rest| rest.strip_prefix('.'))
@@ -520,6 +534,7 @@ mod tests {
         for name in [
             "tool.exe.old",
             "tool.exe.1-2.old",
+            "tool.1.old",
             "toolbox.old",
             "other.exe.old",
             "tool.txt",
@@ -536,12 +551,19 @@ mod tests {
         // Leftovers of this bin that nothing runs are removed; held ones stay.
         assert!(!dir.join("tool.exe.old").exists());
         assert!(!dir.join("tool.exe.1-2.old").exists());
+        assert!(!dir.join("tool.1.old").exists());
+        assert!(!dir.join("tool.exe.new").exists());
         assert!(dir.join("tool.old").exists());
+        // The live exe went to `tool.<ms>.old` and stays there while it runs.
         let renamed: Vec<_> = std::fs::read_dir(dir)
             .unwrap()
             .flatten()
             .map(|e| e.file_name().to_string_lossy().into_owned())
-            .filter(|n| n.starts_with("tool.exe.") && n.ends_with(".old"))
+            .filter(|n| {
+                n.strip_prefix("tool.")
+                    .and_then(|r| r.strip_suffix(".old"))
+                    .is_some_and(|ms| !ms.is_empty() && ms.bytes().all(|b| b.is_ascii_digit()))
+            })
             .collect();
         assert_eq!(renamed.len(), 1, "the running exe was renamed once: {renamed:?}");
         // Other names are left alone.
@@ -552,13 +574,18 @@ mod tests {
 
     #[test]
     fn old_exe_names_match_only_this_bin() {
-        use super::{is_old_exe_name, unique_old_name};
-        for name in ["dotcli.old", "dotcli.exe.old", "dotcli.exe.17-4.old"] {
+        use super::is_old_exe_name;
+        for name in [
+            "dotcli.old",
+            "dotcli.exe.old",
+            "dotcli.exe.17-4.old",
+            "dotcli.1760000000000.old",
+        ] {
             assert!(is_old_exe_name(name, "dotcli"), "{name}");
         }
-        assert!(is_old_exe_name(&unique_old_name("dotcli"), "dotcli"));
         for name in [
             "dotcli.exe",
+            "dotcli.exe.new",
             "dotcli.exe.old.1",
             "dotcliold",
             "dotcli-x.old",
@@ -568,7 +595,6 @@ mod tests {
         ] {
             assert!(!is_old_exe_name(name, "dotcli"), "{name}");
         }
-        assert_ne!(unique_old_name("dotcli"), unique_old_name("dotcli"));
     }
 
     #[test]
@@ -578,6 +604,16 @@ mod tests {
         std::fs::write(&src, b"b").unwrap();
         install_exe(&src, &tmp.0, "tool").unwrap();
         assert_eq!(std::fs::read(tmp.0.join("tool.exe")).unwrap(), b"b");
+    }
+
+    #[test]
+    fn install_exe_refuses_to_copy_a_file_onto_itself() {
+        let tmp = TempDir::new("same");
+        let dst = tmp.0.join("tool.exe");
+        std::fs::write(&dst, b"live").unwrap();
+        assert!(install_exe(&dst, &tmp.0, "tool").is_err());
+        assert_eq!(std::fs::read(&dst).unwrap(), b"live");
+        assert!(!tmp.0.join("tool.exe.new").exists());
     }
 
     #[test]

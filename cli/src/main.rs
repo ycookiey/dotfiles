@@ -31,6 +31,11 @@ enum Commands {
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
     },
+    /// zoxide interactive pick → cd → Claude (same args as ClaudeSwitch)
+    ClaudeZi {
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
+    },
     /// Cursor CLI: ensure .cursor/rules + run `cursor agent`
     CursorAgent {
         #[arg(long)]
@@ -191,6 +196,7 @@ fn main() {
         }
         Commands::Proxy { args } => commands::proxy::run(&args),
         Commands::ClaudeSwitch { args } => commands::c::run(&args),
+        Commands::ClaudeZi { args } => commands::c::run_zi(&args),
         Commands::CursorAgent {
             force,
             skip_mdc,

@@ -4,6 +4,7 @@ use crate::protocol::{CLAUDE_PROVIDER_ENV, ExecCommand, Message, MessageLevel, S
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn claude_dir() -> PathBuf {
@@ -11,6 +12,40 @@ fn claude_dir() -> PathBuf {
 }
 
 pub fn run(args: &[String]) {
+    run_in(args, None);
+}
+
+/// zoxide の対話選択でディレクトリを選び、そこで `c` と同じ引数解釈で起動する。
+/// `r` / `rs` の再開ピッカーは選んだディレクトリのセッションに絞る。
+pub fn run_zi(args: &[String]) {
+    let output = Command::new("zoxide")
+        .args(["query", "--interactive"])
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .output();
+    let output = match output {
+        Ok(o) => o,
+        Err(e) => {
+            ShellAction::error(format!("Failed to start zoxide: {e}")).print_and_exit();
+            return;
+        }
+    };
+    let dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !output.status.success() || dir.is_empty() {
+        // fzf キャンセル
+        ShellAction {
+            exit_code: output.status.code().unwrap_or(1),
+            ..Default::default()
+        }
+        .print_and_exit();
+        return;
+    }
+    run_in(args, Some(dir));
+}
+
+/// `dir` 指定時は起動前にそこへ cd する（`cz` 用）。
+fn run_in(args: &[String], dir: Option<String>) {
     let d = claude_dir();
     let last_file = d.join(".last_account");
 
@@ -85,6 +120,15 @@ pub fn run(args: &[String]) {
         );
     }
 
+    // Fullscreen renderer: Claude Code turns it off by itself after a few
+    // sessions end within 10 s of starting (e.g. panes closed right after a
+    // session restore), whatever the `tui` setting says. The variable keeps
+    // it on and leaves such sessions uncounted. A value already set (`0` for
+    // the classic renderer) wins; `/tui default` still switches one session.
+    if std::env::var_os("CLAUDE_CODE_NO_FLICKER").is_none() {
+        env.insert("CLAUDE_CODE_NO_FLICKER".into(), "1".into());
+    }
+
     let unset_env: Vec<String> = CLAUDE_PROVIDER_ENV.iter().map(|s| s.to_string()).collect();
 
     // s → safe mode (no --dangerously-skip-permissions)
@@ -101,13 +145,30 @@ pub fn run(args: &[String]) {
         let mut action = if query.len() == 1 && resume::is_session_id(&query[0]) {
             resume::resume_by_id(&query[0], skip_perms)
         } else {
-            resume::select(&query, skip_perms)
+            resume::select(&query, skip_perms, dir.as_deref())
         };
         action.set_env.extend(env);
         action.unset_env = unset_env;
         action.messages.extend(messages);
         action.print_and_exit();
         return;
+    }
+
+    // n <name> → 名前付きで新規作成。同名セッションが既にあれば作らず c r を案内
+    if claude_args.first().map(|s| s.as_str()) == Some("n") {
+        let Some(name) = claude_args.get(1).cloned() else {
+            ShellAction::error("Usage: c n <name>").print_and_exit();
+            return;
+        };
+        if let Some(s) = resume::find_by_title(&name) {
+            ShellAction::error(format!(
+                "Session \"{name}\" already exists ({}, {}). Resume: c r {name}",
+                s.project, s.cwd
+            ))
+            .print_and_exit();
+            return;
+        }
+        claude_args.splice(0..2, ["--name".to_string(), name]);
     }
 
     // Default: add --dangerously-skip-permissions unless safe mode
@@ -118,6 +179,7 @@ pub fn run(args: &[String]) {
     let action = ShellAction {
         set_env: env,
         unset_env,
+        cd: dir,
         messages,
         exec: Some(ExecCommand {
             program: "claude".into(),

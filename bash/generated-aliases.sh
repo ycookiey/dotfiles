@@ -79,6 +79,7 @@ nvbc() { cmd.exe //d //c start "" "$PROGRAMFILES"'\NVIDIA Corporation\NVIDIA Bro
 # --- Commands (via dotcli) ---
 proxy() { local _dotcli_out; _dotcli_out=$(dotcli proxy "$@"); _dotcli_apply "$_dotcli_out" "$?"; }
 c() { local _dotcli_out; _dotcli_out=$(dotcli claude-switch "$@"); _dotcli_apply "$_dotcli_out" "$?"; }
+cz() { local _dotcli_out; _dotcli_out=$(dotcli claude-zi "$@"); _dotcli_apply "$_dotcli_out" "$?"; }
 a() { local _dotcli_out; _dotcli_out=$(dotcli cursor-agent "$@"); _dotcli_apply "$_dotcli_out" "$?"; }
 cb() { local _dotcli_out; _dotcli_out=$(dotcli claude-bedrock "$@"); _dotcli_apply "$_dotcli_out" "$?"; }
 cg() { local _dotcli_out; _dotcli_out=$(dotcli claude-glm "$@"); _dotcli_apply "$_dotcli_out" "$?"; }

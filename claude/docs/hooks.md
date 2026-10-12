@@ -31,4 +31,5 @@ hook は yhooky(github.com/ycookiey/yhooky、Rust の 1 実行ファイル、sco
 - Windows の Claude Code は shell form の hook・statusLine を Git Bash で起動する。MSYS は子を一時停止の状態で作ってから動かすので、その間に bash が止められると子が一時停止のまま残る(推定)。2026-10-11 に jq 594 個・claude-statusline 58 個が親なしで残っていた
 - 残ったプロセスは CPU は使わないが、全プロセスのパスを読む処理(`Get-Process | % Path`、scoop の update・uninstall の起動中チェック)が 1 個あたり数秒待たされ、何分も止まる
 - 対策: タスク スケジューラの `OrphanReaper`(`bin/reap-orphans.ps1`、`startup/register.ps1` が登録)が 5 分ごとに、親のない Git Bash の道具・jq・claude-statusline のうち、一時停止のまま 30 分以上のもの(git も含む)と、2 回続けて CPU を使い続けたものを止める。ほかの実行ファイルの空回りは止めずに記録する。記録は `~/.local/state/orphan-reaper/log.txt`(「busy, left running」が想定外の漏れの元)。試すときは `-DryRun`
+- 道具の一覧にない名前は、空回りしても記録だけで止まらない。2026-10-11 には `find /`(Bash ツールの時間切れの後に残ったもの)3 つが数時間 1 コアずつ使い、記録だけされていた。`find.exe` を一覧に足し、ルートから始める find は yhooky の規則 `find-root-guard` が止める。記録するだけでは誰も読まなかったので、「busy, left running」を記録した回は `dotcli notify` で画面に知らせる(1 回の見回りで 1 つ、60 秒)。知らせが出たら、その名前を一覧に足すか考える
 - statusLine には exec form がない(公式 docs は hooks にだけ `args` を書く)

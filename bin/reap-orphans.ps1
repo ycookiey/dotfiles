@@ -3,7 +3,7 @@
 # the statusline and Bash tool commands through Git Bash, and when bash is
 # stopped its children can stay suspended forever or keep a core busy
 # (2026-10-11: 594 suspended jq, 58 suspended claude-statusline, hook bash
-# processes spinning for hours). Run every 5 minutes by Task Scheduler
+# processes and `find /` spinning for hours). Run every 5 minutes by Task Scheduler
 # (startup/register.ps1). Logs to ~/.local/state/orphan-reaper/log.txt.
 #
 # A process counts only when its parent is gone (a parent id reused by a
@@ -13,7 +13,9 @@
 # - busy (30 s of CPU in each of the last two 5-minute runs), and one of
 #   the tools below (not git, whose own background work runs on after it
 #   returns): stopped
-# - busy and anything else: logged once, left running
+# - busy and anything else: logged once, left running, and shown in one
+#   desktop popup per run (dotcli notify): a line in the log alone went
+#   unread while three `find /` ran for hours
 # -DryRun logs what it would do and stops nothing. The other parameters
 # change the limits and the state folder, for trying it out.
 param(
@@ -35,7 +37,7 @@ $LogKeepLines = 2000
 # statusline. Matched by name: a suspended process often has no path.
 $Tools = @(
     'bash.exe', 'sh.exe', 'jq.exe', 'cat.exe', 'grep.exe', 'sed.exe', 'awk.exe', 'gawk.exe',
-    'tr.exe', 'tail.exe', 'head.exe', 'cut.exe', 'sort.exe', 'uniq.exe', 'wc.exe', 'xargs.exe',
+    'tr.exe', 'find.exe', 'tail.exe', 'head.exe', 'cut.exe', 'sort.exe', 'uniq.exe', 'wc.exe', 'xargs.exe',
     'sha1sum.exe', 'cygpath.exe', 'dirname.exe', 'basename.exe', 'mkdir.exe', 'date.exe',
     'cygwin-console-helper.exe', 'claude-statusline.exe'
 )
@@ -57,6 +59,7 @@ $created = @{}
 foreach ($p in $all) { $created[[int]$p.ProcessId] = $p.CreationDate }
 
 $state = @{}
+$leftRunning = @()
 foreach ($p in $all) {
     $id = [int]$p.ProcessId
     if ($id -le 4 -or !$p.CreationDate) { continue }
@@ -85,6 +88,7 @@ foreach ($p in $all) {
         $stop = 'busy'
     } elseif ($busyRuns -ge $BusyRunsToStop -and !$reported) {
         Write-Log "busy, left running: $what"
+        $leftRunning += $p.Name
         $reported = $true
     }
 
@@ -101,6 +105,19 @@ foreach ($p in $all) {
 }
 
 $state | ConvertTo-Json -Compress > $StatePath
+
+if ($leftRunning.Count -gt 0) {
+    $notify = Get-Command dotcli -ea 0
+    # The popup has room for about three lines: the count and two names.
+    $names = ($leftRunning | select -First 2) -join ', '
+    $more = $leftRunning.Count -gt 2 ? ' ほか' : ''
+    $message = "親のないプロセスが CPU を使い続けている(止めていない): $($leftRunning.Count) 件。$names$more"
+    if ($notify) {
+        Start-Process $notify.Source -ArgumentList 'notify', '-t', 'orphan-reaper', '-m', "`"$message`"", '-d', 60000 -WindowStyle Hidden
+    } else {
+        Write-Log 'notify skipped: dotcli not found'
+    }
+}
 if ((tp $LogPath) -and @(gc $LogPath).Count -gt $LogKeepLines) {
     $kept = gc $LogPath -Tail $LogKeepLines
     $kept > $LogPath

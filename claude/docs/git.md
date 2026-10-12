@@ -75,7 +75,7 @@ printf 'protocol=https\nhost=credtest.invalid\nusername=test-user\n\n' | git cre
   - 自分の編集が、写しと index で違う行(他人の変更)に触れると拒否(exit 1、index は不変)。新規 file は対象外(`git add`)
   - 改行は index の版に合わせる(autocrlf の CRLF 作業ツリー + LF の blob も可)
 - 後: `git diff --cached` で確認 → commit。test: `bash bin/tests/git-stage-own-edit.test.sh`
-- 編集前に begin し忘れないよう、hook(yhooky の組み込みの判定 `stage-own-edit-reminder`)が Edit/Write の直前に知らせる(追跡済み・HEAD との差分あり・begin 前のときだけ、session ごと file ごとに 1 回)
+- 編集前に begin し忘れないよう、hook(yhooky の組み込みの判定 `stage-own-edit-reminder`)がその file の初回の Edit/Write を止める(追跡済み・HEAD との差分あり・begin 前のときだけ、session ごと file ごとに 1 回)。begin してから同じ編集を出し直す。単独で commit しないなら、そのまま出し直せば通る
 
 ## ignore の対象の下にある追跡済み file は `git add <path>` が拒否される
 
@@ -88,3 +88,9 @@ printf 'protocol=https\nhost=credtest.invalid\nusername=test-user\n\n' | git cre
 - 影響: python や sed で `"...\n..."` を含む複数行を完全一致で置換するパッチが「見つからない」で失敗する。文字化けや日本語の問題に見えて原因を取り違えやすい
 - 対処: 置換前に `file <path>` で改行を確かめる。複数行の置換は Edit ツールで行う (改行の違いを吸収する)。スクリプトで置換するなら読み込み時に `\r\n` → `\n` に正規化する
 - stash を使った前後比較 (変更前の版でスクリプトを走らせる等) は、この書き戻しが起きる操作だと意識しておく
+
+## HEAD にない途中の形へは git checkout で戻せない
+
+- 現象: 未 commit の変更の上で別の手を試していると、前の手の形に戻したくなっても `git checkout` で戻るのは HEAD の形だけ(今日の変更が全部消える)
+- 対処: 別の手を試す前に、作業中のファイルを scratchpad に複製して控える。戻すときはその控えから
+- `git stash create` は作業ツリーを変えずに控えを作れるが、未追跡のファイルを含まない

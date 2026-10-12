@@ -1,15 +1,29 @@
 # Windows Startup Manager
+#
+# Two scheduled tasks (startup/register.ps1) run this script:
+# - CustomStartupManager (at logon, highest privileges, -Part Elevated):
+#   starts the apps that need administrator rights, then runs the next task.
+# - CustomStartupManager-User (on demand, limited, -Part User): starts every
+#   other app with the normal user token, the same one an app started from
+#   the Start menu gets, so UAC elevation from those apps works.
+# (Lowering rights with `runas /trustlevel` instead keeps High integrity but
+# strips the Administrators group and privileges for good: elevating from
+# such an app never gets full rights.)
+param([ValidateSet('Elevated', 'User')][string]$Part = 'Elevated')
 
 . "$PSScriptRoot\..\pwsh\aliases.ps1"
+. "$PSScriptRoot\..\generated-aliases.ps1"
 . "$PSScriptRoot\popup.ps1"
+
+$UserTaskName = "CustomStartupManager-User"
 
 $script:LogFile = $null
 
 function Initialize-Logging {
     param([string]$Dir)
     mkd $Dir
-    $script:LogFile = "$Dir\startup-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
-    Write-Log "Startup Manager started"
+    $script:LogFile = "$Dir\startup-$(Get-Date -Format 'yyyyMMdd-HHmmss')-$($Part.ToLower()).log"
+    Write-Log "Startup Manager started ($Part, admin: $(isadmin))"
 }
 
 function Write-Log {
@@ -18,23 +32,12 @@ function Write-Log {
     if ($script:LogFile) { ac $script:LogFile $line -Enc UTF8 }
 }
 
-function Start-Unelevated([scriptblock]$Launch) {
-    $dotRoot = "$PSScriptRoot\.."
-    $inner = ". '$dotRoot\pwsh\aliases.ps1'; . '$dotRoot\generated-aliases.ps1'; " + $Launch.ToString().Trim()
-    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($inner))
-    & runas /trustlevel:0x20000 "pwsh -NoProfile -W Hidden -NonInteractive -EncodedCommand $encoded"
-}
-
 function Start-App-Logged {
-    param([string]$Name, [scriptblock]$Launch, [switch]$Elevated)
+    param([string]$Name, [scriptblock]$Launch)
     Write-Log "Starting: $Name"
     Show-AppStatus -AppName $Name -Status "Starting"
     try {
-        if (!$Elevated -and (isadmin)) {
-            Start-Unelevated $Launch
-        } else {
-            & $Launch
-        }
+        & $Launch
         Write-Log "  Started: $Name"
         Show-AppStatus -AppName $Name -Status "Success"
     } catch {
@@ -44,14 +47,28 @@ function Start-App-Logged {
 }
 
 Initialize-Logging -Dir "$PSScriptRoot\..\logs"
-Show-PopupNotification "Startup" "Starting apps" 2000
+
+if ($Part -eq 'Elevated') {
+    Show-PopupNotification "Startup" "Starting apps" 2000
+    # Elevated so it can focus UAC dialogs (autohotkey/shortcuts.ahk).
+    Start-App-Logged "AutoHotkey" {
+        start "$HOME\scoop\shims\autohotkey.exe" -Arg "C:\Main\Project\dotfiles\autohotkey\shortcuts.ahk"
+    }
+    sleep -Seconds 1
+    Write-Log "Starting the user task: $UserTaskName"
+    try {
+        Start-ScheduledTask -TaskName $UserTaskName -ea Stop
+    } catch {
+        # Never fall back to starting the other apps from here: they would
+        # run with administrator rights.
+        Write-Log "  Failed: $($_.Exception.Message)" "ERROR"
+        Show-PopupNotification "Error" "$UserTaskName did not start (startup/register.ps1)" 5000
+    }
+    return
+}
 
 # --- High priority ---
 Start-App-Logged "WezTerm" { wezterm-gui }
-Start-App-Logged "AutoHotkey" -Elevated {
-    start "$HOME\scoop\shims\autohotkey.exe" -Arg "C:\Main\Project\dotfiles\autohotkey\shortcuts.ahk"
-}
-sleep -Seconds 1
 Start-App-Logged "yClocky" { yclocky }
 Start-App-Logged "ybasey-mirror" {
     start "C:\Main\Project\ybasey-mirror\target\release\ybasey-mirror.exe" `

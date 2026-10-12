@@ -10,10 +10,15 @@ usage (uv経由):
 
 path はファイル / ディレクトリ(再帰探索) / glob。出力は各入力と同じディレクトリに <name>.txt / <name>.srt。
 既存の出力があるファイルはスキップ(冪等)。--overwrite で上書き。
+
+音声は自前で 16kHz モノラルの配列にしてからモデルに渡す(.wav は標準の wave、それ以外は ffmpeg CLI)。
+faster-whisper 内蔵の読み込み(PyAV)は、PyAV の版によって引数が合わず失敗することがあるため通さない。
+ffmpeg が無い環境で .wav 以外を渡したときだけ、内蔵の読み込みに任せる。
 """
-import sys, os, time, argparse, glob, importlib.util
+import sys, os, time, argparse, glob, importlib.util, shutil, subprocess, wave
 
 DEFAULT_MODEL = "mobiuslabsgmbh/faster-whisper-large-v3-turbo"  # HFキャッシュ利用
+TARGET_SR = 16000
 MEDIA_EXTS = {".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v",
               ".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma"}
 
@@ -35,6 +40,62 @@ def register_cuda_dlls():
             os.environ["PATH"] = d + os.pathsep + os.environ.get("PATH", "")
             added.append(sub)
     return added
+
+
+def _resample(x, sr):
+    """線形補間で TARGET_SR へ(wave 経路で 16kHz 以外の WAV が来たとき用)"""
+    import numpy as np
+    if sr == TARGET_SR or len(x) == 0:
+        return x
+    n = int(round(len(x) * TARGET_SR / sr))
+    return np.interp(np.linspace(0, len(x) - 1, n), np.arange(len(x)), x).astype(np.float32)
+
+
+def _read_wav(path):
+    """PCM の WAV を float32 モノラル 16kHz の配列に。非対応の形式なら None"""
+    import numpy as np
+    try:
+        with wave.open(path, "rb") as w:
+            ch, width, sr, n = w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()
+            raw = w.readframes(n)
+    except (wave.Error, EOFError):
+        return None  # 浮動小数点 WAV 等は ffmpeg へ
+    if width == 2:
+        x = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+    elif width == 4:
+        x = np.frombuffer(raw, dtype=np.int32).astype(np.float32) / 2147483648.0
+    elif width == 1:
+        x = (np.frombuffer(raw, dtype=np.uint8).astype(np.float32) - 128.0) / 128.0
+    else:
+        return None
+    if ch > 1:
+        x = x[: len(x) // ch * ch].reshape(-1, ch).mean(axis=1)
+    return _resample(x, sr)
+
+
+def _read_ffmpeg(path):
+    """ffmpeg CLI で 16kHz モノラル s16le に変換して読む。ffmpeg が無ければ None"""
+    import numpy as np
+    exe = shutil.which("ffmpeg")
+    if not exe:
+        return None
+    r = subprocess.run([exe, "-nostdin", "-v", "error", "-i", path,
+                        "-f", "s16le", "-ac", "1", "-ar", str(TARGET_SR), "-"],
+                       capture_output=True)
+    if r.returncode != 0:
+        raise RuntimeError("ffmpeg: " + r.stderr.decode("utf-8", "replace").strip()[-300:])
+    return np.frombuffer(r.stdout, dtype=np.int16).astype(np.float32) / 32768.0
+
+
+def load_audio(path):
+    """モデルに渡す入力。配列にできればその配列、できなければ path(内蔵の読み込みに任せる)"""
+    x = _read_wav(path) if path.lower().endswith(".wav") else None
+    if x is None:
+        x = _read_ffmpeg(path)
+    if x is None:
+        print("[warn] ffmpeg が見つからない。faster-whisper 内蔵の読み込み(PyAV)を使う")
+        return path
+    return x
 
 
 def fmt_ts(t):
@@ -97,7 +158,7 @@ def transcribe_one(model, path, lang, formats, overwrite):
             return
     t0 = time.time()
     print(f"[run] {path}")
-    segments, info = model.transcribe(path, language=lang, vad_filter=True, beam_size=5)
+    segments, info = model.transcribe(load_audio(path), language=lang, vad_filter=True, beam_size=5)
     ft = open(out_txt, "w", encoding="utf-8") if want_txt else None
     fs = open(out_srt, "w", encoding="utf-8") if want_srt else None
     n = 0

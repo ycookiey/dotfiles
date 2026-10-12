@@ -41,6 +41,7 @@
 - upstream 投稿 → oss-contribute.md
 - Gate/test 設計則 (codegen stale gate / non-vacuous / fixture SOT / property arb / doc drift) → gate-and-test.md
 - UI・画面のデザイン(柔軟に使う指針) → ui-design.md
+- 外に出る日本語(送る文・画面の文言・共有する文書。ユーザー向けの返事は除く) → external-japanese.md
 
 # 補助ドキュメント
 
