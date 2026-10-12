@@ -18,8 +18,10 @@ return {
         callback = function(ev)
           local opts = { buffer = ev.buf }
           vim.keymap.set("n", "gd", vim.lsp.buf.definition, opts)
-          -- 組み込みの grr/grn/gra 等と前方一致するため、nowait で timeoutlen の待ちを避ける
-          vim.keymap.set("n", "gr", vim.lsp.buf.references, { buffer = ev.buf, nowait = true })
+          -- TODO: gr は組み込みの grr/grn/gra/gri/grt/grx の前方一致なので、押すと timeoutlen まで待つ。
+          -- nowait を付けると gr が即発火し gri/grt/grx 等に届かなくなる(:h map-nowait)。
+          -- 待ちを無くす方法(gr を外して grr を使う / 別キーを足す)は未決
+          vim.keymap.set("n", "gr", vim.lsp.buf.references, opts)
           vim.keymap.set("n", "K", vim.lsp.buf.hover, opts)
           vim.keymap.set("n", "<leader>rn", vim.lsp.buf.rename, opts)
           vim.keymap.set("n", "<leader>ca", vim.lsp.buf.code_action, opts)
