@@ -175,6 +175,127 @@ expect = "quiet"
 command = "MSYS2_ARG_CONV_EXCL='*' cmd /c dir"
 
 [[case]]
+name = "cmd-no-pathconv"
+rule = "cmd-switch-guard"
+expect = "quiet"
+command = "MSYS_NO_PATHCONV=1 cmd /c dir"
+
+[[case]]
+name = "exe-switch"
+rule = "exe-switch-guard"
+expect = "deny"
+command = '''timeout 20 ~/scoop/apps/autohotkey/current/v2/AutoHotkey64.exe /ErrorStdOut /Validate "$S/a.ahk"; echo "exit=$?"'''
+
+[[case]]
+name = "exe-switch-before-quoted-path"
+rule = "exe-switch-guard"
+expect = "deny"
+command = '''AutoHotkey64.exe /ErrorStdOut /validate 'C:\wt\a.ahk' 2>&1 | cat'''
+
+[[case]]
+name = "exe-quoted-exe-path"
+rule = "exe-switch-guard"
+expect = "deny"
+command = '''"C:/Program Files/AutoHotkey/v2/AutoHotkey64.exe" /ErrorStdOut=UTF-8 a.ahk'''
+
+[[case]]
+name = "exe-quoted-switch"
+rule = "exe-switch-guard"
+expect = "quiet"
+command = '''pwsh -c "start regsvr32.exe -Arg '/u /s a.dll' -Verb RunAs"'''
+
+[[case]]
+name = "var-assignment-in-other-code"
+rule = "exe-switch-guard"
+expect = "quiet"
+command = '''$x = schtasks /query /tn $Task /xml'''
+
+[[case]]
+name = "exe-one-letter-switch"
+rule = "exe-switch-guard"
+expect = "deny"
+command = "taskkill.exe /F /PID 123"
+
+[[case]]
+name = "var-command-in-loop"
+rule = "exe-switch-guard"
+expect = "deny"
+command = '''A=~/scoop/apps/autohotkey/current/v2/AutoHotkey64.exe
+for f in good bad; do timeout 20 $A /ErrorStdOut /validate "$(cygpath -w $D/$f.ahk)" 2>&1 | cat; done'''
+
+[[case]]
+name = "var-command-quoted"
+rule = "exe-switch-guard"
+expect = "deny"
+command = '''"$AHK" /ErrorStdOut a.ahk'''
+
+[[case]]
+name = "exe-double-slash"
+rule = "exe-switch-guard"
+expect = "quiet"
+command = "AutoHotkey64.exe //ErrorStdOut //validate a.ahk"
+
+[[case]]
+name = "exe-conversion-off"
+rule = "exe-switch-guard"
+expect = "quiet"
+command = "MSYS2_ARG_CONV_EXCL='*' AutoHotkey64.exe /ErrorStdOut a.ahk"
+
+[[case]]
+name = "exe-no-pathconv"
+rule = "exe-switch-guard"
+expect = "quiet"
+command = "MSYS_NO_PATHCONV=1 AutoHotkey64.exe /ErrorStdOut a.ahk"
+
+[[case]]
+name = "exe-colon-switch"
+rule = "exe-switch-guard"
+expect = "quiet"
+command = "link.exe /out:a.exe a.obj"
+
+[[case]]
+name = "exe-posix-path"
+rule = "exe-switch-guard"
+expect = "quiet"
+command = "node.exe /c/Users/x/a.js"
+
+[[case]]
+name = "exe-switch-inside-quoted-command"
+rule = "exe-switch-guard"
+expect = "quiet"
+command = '''powershell.exe -NoProfile -c "robocopy a b /E"'''
+
+[[case]]
+name = "exe-redirect"
+rule = "exe-switch-guard"
+expect = "quiet"
+command = "foo.exe a > /tmp"
+
+[[case]]
+name = "exe-name-in-quoted-filter"
+rule = "exe-switch-guard"
+expect = "quiet"
+command = '''tasklist //FI "IMAGENAME eq AutoHotkey64.exe" | tail -3'''
+
+[[case]]
+name = "cmd-double-slash-quoted-switches"
+rule = "exe-switch-guard"
+expect = "quiet"
+command = '''cmd.exe //c "rmdir /s /q C:\path"'''
+
+[[case]]
+name = "var-as-argument"
+rule = "exe-switch-guard"
+expect = "quiet"
+command = "echo $A /tmp"
+
+[[case]]
+name = "cmd-reported-once"
+rule = "exe-switch-guard"
+expect = "quiet"
+command = "cmd.exe /c dir"
+
+[[case]]
 name = "devserver-pnpm-dev"
 rule = "devserver-launch-guard"
 expect = "deny"

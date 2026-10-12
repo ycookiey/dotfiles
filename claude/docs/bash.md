@@ -42,6 +42,8 @@ grep -qiF -- "$pat" "$f"; case $? in 0) 一致 ;; 1) 不一致 ;; *) エラー�
 - 回避: `MSYS2_ARG_CONV_EXCL="/D" cmd ...`(複数prefixは `;` 区切り、全除外は `*`)
 - 全除外時は引数内のパスを自前で Windows 形式に(`cygpath -w`)
 - 例: `cmd.exe /c <command>` の `/c` が `C:/` に変わり、cmd が対話の画面で起動して入力を待ち止まる → `cmd.exe //c ...`。hook(yhooky の規則 `cmd-switch-guard`)が `/c` の形を止める
+- 例: `AutoHotkey64.exe /ErrorStdOut /validate x.ahk` の `/ErrorStdOut` が `C:/.../git/<版>/ErrorStdOut` になり、AutoHotkey はそれをスクリプトとして開こうとして、ユーザーの画面に「Script file not found」のダイアログを出す(stderr には何も出ない)。GUI のプログラムは、こうして実行の失敗がユーザーの画面に出る。hook(yhooky の規則 `exe-switch-guard`)が、`.exe` か、コマンドの位置の `$VAR` に `/英字` を渡す形を止める
+- 書き換わる形(Git for Windows 2.53 で実測): `/Foo` と `/Foo=UTF-8` は `C:/.../git/<版>/Foo...` になり、引用符で囲んだ `"/Foo"` も同じ。1 文字の `/S` は `S:/` になる。書き換わらない形: `//Foo` と、`:` を含む `/Foo:x`。`MSYS_NO_PATHCONV=1` も `MSYS2_ARG_CONV_EXCL='*'` と同じく変換を止める
 
 ## Claude Code の Bash ツールで `\\` が縮む・長い heredoc が壊れる
 

@@ -131,9 +131,29 @@ event = "PreToolUse"
 tools = '^Bash$'
 fields = ["tool_input.command"]
 all = ['(^|[^[:alnum:]_./-])cmd([.]exe)?[[:space:]]+/[[:alpha:]]([[:space:]]|$)']
-none = ['MSYS2_ARG_CONV_EXCL']
+none = ['MSYS2_ARG_CONV_EXCL', 'MSYS_NO_PATHCONV']
+group = "msys-switch"
 action = "deny"
 message = '''Git Bash は cmd の /c を C:/ に変えるので、cmd が対話の画面で起動して止まる。cmd.exe //c ... と書くか、MSYS2_ARG_CONV_EXCL='*' を付ける(ファイルを既定のアプリで開くなら PowerShell の Start-Process、フォルダなら explorer.exe も可)。詳細 ~/.claude/docs/bash.md の「MSYS パス変換」'''
+
+# Git Bash also rewrites a `/Switch` argument given to any native program:
+# `/ErrorStdOut` reaches AutoHotkey as `C:/.../git/<ver>/ErrorStdOut`, which
+# it opens as the script and shows a "Script file not found" dialog on the
+# user's desktop. Checks the unquoted arguments of a `.exe` command up to the
+# first quoted one, and a `$VAR` in command position followed directly by a
+# switch. Quoted switches are left out: in past commands they were mostly
+# text inside another program's code (`pwsh -c "... '/u' ..."`, printf),
+# not arguments. MSYS leaves `//X` and `/X:...` alone.
+[[rule]]
+id = "exe-switch-guard"
+event = "PreToolUse"
+tools = '^Bash$'
+fields = ["tool_input.command"]
+all = ['(?i)([.]exe[\x22\x27]?([[:space:]]+[^;&|<>[:space:]\x22\x27]+)*|(^|[;&|(]|(^|[[:space:]])(do|then|timeout([[:space:]]+-[^[:space:]]+)*[[:space:]]+[0-9.]+[smhd]?))[[:space:]]*\x22?[$][{]?[[:alnum:]_]+[}]?\x22?)[[:space:]]+/[[:alpha:]][^/:;&|[:space:]\x22\x27]*([[:space:];&|)]|$)']
+none = ['MSYS2_ARG_CONV_EXCL', 'MSYS_NO_PATHCONV']
+group = "msys-switch"
+action = "deny"
+message = '''Git Bash は Windows のプログラムに渡す /Switch 形式の引数を、パスに変える(例: AutoHotkey64.exe /ErrorStdOut は C:/.../git/<版>/ErrorStdOut になり、AutoHotkey がそれをスクリプトとして開こうとして、ユーザーの画面に「Script file not found」のダイアログを出す。/S は S:/ になる)。//ErrorStdOut のように / を重ねるか、MSYS2_ARG_CONV_EXCL='*' か MSYS_NO_PATHCONV=1 を付ける(このときは引数のパスを Windows 形式で渡す)。PowerShell の tool から呼んでもよい。詳細 ~/.claude/docs/bash.md の「MSYS パス変換」'''
 
 # A dev server started in the background from Git Bash loses its Windows
 # parent at npm's shim, so TaskStop leaves node and workerd holding the
