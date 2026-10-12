@@ -64,3 +64,11 @@
 - `ui.render` の AbovePrompt: 入力欄の真上に 1 行と右端の `[-]`。`Text` の `color`(theme key・16 進・名前)が効かず白
 - 会話の開始後に install した plugin も `/reload-plugins` で読み込まれる(再起動不要)
 - directory marketplace の plugin は install 時に `~/.claude/plugins/cache/<marketplace>/<name>/<version>` へ写されるが、`/reload-plugins` で元のフォルダから読み直される(出力に `re-read from its folder`)。版を上げずに編集が反映される
+
+## 表示方式 (renderer) の判別 (v2.1.296)
+
+- settings の `"tui": "fullscreen"` ≠ 実際の renderer。起動後 10 秒未満で終わった session (`/exit`・Ctrl+C・Ctrl+D 以外) が続くと自動で classic へ。記録: `~/.claude-N/.claude.json` の `fullscreenAutoDisabled` (`version`・`at`・`strikes`)。`/tui fullscreen` か update まで classic、`tui` 設定より優先
+- 判別: `/tui` (引数なし) の Current renderer。見た目: 入力欄が下に固定 = fullscreen、出力と共に動く = classic
+- classic の症状: pane の resize (WezTerm `Alt+Z` の zoom 等) のたびに会話を新しい幅で再出力 → scrollback に同じ内容が上下二重・幅が混在。`CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT` は fullscreen 専用で効かない
+- 予防: `CLAUDE_CODE_NO_FLICKER=1` を起動環境で渡すと、失敗後も fullscreen、失敗も数えない。dotcli の `c` が付与 (`cli/src/commands/c.rs`)
+- 端末は WezTerm (Windows、ConPTY 経由)。Windows Terminal 前提にしない。`TERM_PROGRAM` で確認
