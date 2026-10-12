@@ -16,25 +16,10 @@
       "Id": "Anysphere.Cursor"
     },
     {
-      "Id": "AutoHotkey.AutoHotkey"
-    },
-    {
       "Id": "Beeper.Beeper"
     },
     {
-      "Id": "Canonical.Ubuntu"
-    },
-    {
-      "Id": "Discord.Discord"
-    },
-    {
       "Id": "Docker.DockerDesktop"
-    },
-    {
-      "Id": "EpicGames.EpicGamesLauncher"
-    },
-    {
-      "Id": "EpicGames.EpicOnlineServices"
     },
     {
       "Id": "GitHub.GitHubDesktop"
@@ -55,19 +40,10 @@
       "Id": "Kenkun.AviUtlExEdit2"
     },
     {
-      "Id": "Microsoft.AppInstaller"
-    },
-    {
-      "Id": "Microsoft.DotNet.Native.Runtime"
+      "Id": "Microsoft.365Copilot"
     },
     {
       "Id": "Microsoft.DotNet.SDK.8"
-    },
-    {
-      "Id": "Microsoft.Edge"
-    },
-    {
-      "Id": "Microsoft.OneDrive"
     },
     {
       "Id": "Microsoft.Outlook"
@@ -76,67 +52,13 @@
       "Id": "Microsoft.Teams"
     },
     {
-      "Id": "Microsoft.UI.Xaml.2.7"
-    },
-    {
-      "Id": "Microsoft.UI.Xaml.2.8"
-    },
-    {
-      "Id": "Microsoft.VCLibs.14"
-    },
-    {
-      "Id": "Microsoft.VCLibs.Desktop.14"
-    },
-    {
-      "Id": "Microsoft.VCRedist.2010.x64"
-    },
-    {
-      "Id": "Microsoft.VCRedist.2010.x86"
-    },
-    {
-      "Id": "Microsoft.VCRedist.2012.x64"
-    },
-    {
-      "Id": "Microsoft.VCRedist.2012.x86"
-    },
-    {
-      "Id": "Microsoft.VCRedist.2013.x64"
-    },
-    {
-      "Id": "Microsoft.VCRedist.2013.x86"
-    },
-    {
       "Id": "Microsoft.VCRedist.2015+.x64"
-    },
-    {
-      "Id": "Microsoft.VCRedist.2015+.x86"
-    },
-    {
-      "Id": "Microsoft.VisualStudio.2019.BuildTools"
     },
     {
       "Id": "Microsoft.VisualStudio.BuildTools"
     },
     {
-      "Id": "Microsoft.WSL"
-    },
-    {
       "Id": "Microsoft.WindowsADK"
-    },
-    {
-      "Id": "Microsoft.WindowsAppRuntime.1.5"
-    },
-    {
-      "Id": "Microsoft.WindowsAppRuntime.1.6"
-    },
-    {
-      "Id": "Microsoft.WindowsAppRuntime.1.7"
-    },
-    {
-      "Id": "Microsoft.WindowsAppRuntime.1.8"
-    },
-    {
-      "Id": "Microsoft.WindowsAppRuntime.2"
     },
     {
       "Id": "Microsoft.WindowsSDK.10.0.26100"
@@ -151,16 +73,10 @@
       "Id": "Notion.NotionCalendar"
     },
     {
-      "Id": "Nvidia.PhysX"
-    },
-    {
       "Id": "Oracle.VirtualBox"
     },
     {
       "Id": "ParadoxInteractive.ParadoxLauncher"
-    },
-    {
-      "Id": "Parsec.Parsec"
     },
     {
       "Id": "Parsec.ParsecVDD"
@@ -187,13 +103,7 @@
       "Id": "ZhipuAI.AutoClaw"
     },
     {
-      "Id": "Zoom.Zoom.EXE"
-    },
-    {
       "Id": "Zulip.Zulip"
-    },
-    {
-      "Id": "junegunn.fzf"
     }
   ]
 }
