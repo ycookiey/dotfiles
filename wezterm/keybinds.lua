@@ -134,8 +134,39 @@ local function find_neighbor(infos, cur, dir)
   return nil
 end
 
+-- swap で何をするかを決める。戻り値:
+--   "swap", nbr, flag, size  辺を丸ごと共有する隣 nbr と入れ替える (flag は split-pane の向き)
+--   "tab"                    delta 方向の角のペイン (-1 は左上、1 は右下) なのでタブを動かす
+--   "none"                   その方向に部分的にしか接しない隣しかない。分割の木を作り替えないよう何もしない
+-- ペインはタブを隙間なく埋めるので、左上の角は left == 0 かつ top == 0、右下の角は
+-- 右端と下端がそれぞれ全ペインの最大値に届くことで判定できる
+local function swap_plan(infos, cur, delta)
+  local candidates = delta < 0
+    and { { "left", "--left", "width" }, { "up", "--top", "height" } }
+    or { { "right", "--right", "width" }, { "down", "--bottom", "height" } }
+
+  for _, c in ipairs(candidates) do
+    local nbr = find_neighbor(infos, cur, c[1])
+    if nbr then return "swap", nbr, c[2], c[3] end
+  end
+
+  local at_corner
+  if delta < 0 then
+    at_corner = cur.left == 0 and cur.top == 0
+  else
+    local max_right, max_bottom = 0, 0
+    for _, o in ipairs(infos) do
+      max_right = math.max(max_right, o.left + o.width)
+      max_bottom = math.max(max_bottom, o.top + o.height)
+    end
+    at_corner = cur.left + cur.width == max_right and cur.top + cur.height == max_bottom
+  end
+  return at_corner and "tab" or "none"
+end
+
 -- 隣のペインと位置を入れ替える。delta=-1 は左 (なければ上)、1 は右 (なければ下)。
--- 隣がなければタブ自体を delta 方向へ動かす。サイズは 2 ペインの合計に対する今の比で保つ
+-- サイズは 2 ペインの合計に対する今の比で保つ。delta 方向の角のペインならタブ自体を動かし、
+-- 部分的に接する隣しかなければ何もしない
 local function swap(delta)
   return wezterm.action_callback(function(window, pane)
     local tab = window:active_tab()
@@ -148,28 +179,23 @@ local function swap(delta)
     end
     if cur == nil then return end
 
-    local candidates = delta < 0
-      and { { "left", "--left", "width" }, { "up", "--top", "height" } }
-      or { { "right", "--right", "width" }, { "down", "--bottom", "height" } }
-
-    for _, c in ipairs(candidates) do
-      local nbr = find_neighbor(infos, cur, c[1])
-      if nbr then
-        local size = c[3]
-        local pct = math.floor(cur[size] / (cur[size] + nbr[size]) * 100 + 0.5)
-        if cli({
-          "split-pane",
-          "--move-pane-id", tostring(current_id),
-          "--pane-id", tostring(nbr.pane:pane_id()),
-          c[2], "--percent", tostring(pct),
-        }) then
-          focus_pane(current_id)
-        end
-        return
+    local plan, nbr, flag, size = swap_plan(infos, cur, delta)
+    if plan == "swap" then
+      local pct = math.floor(cur[size] / (cur[size] + nbr[size]) * 100 + 0.5)
+      if cli({
+        "split-pane",
+        "--move-pane-id", tostring(current_id),
+        "--pane-id", tostring(nbr.pane:pane_id()),
+        flag, "--percent", tostring(pct),
+      }) then
+        focus_pane(current_id)
       end
+    elseif plan == "tab" then
+      window:perform_action(act.MoveTabRelative(delta), pane)
+    else
+      wezterm.log_info("swap: pane " .. current_id .. " has no neighbor sharing a whole edge in direction "
+        .. delta .. "; nothing to do")
     end
-
-    window:perform_action(act.MoveTabRelative(delta), pane)
   end)
 end
 
