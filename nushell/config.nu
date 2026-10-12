@@ -79,16 +79,10 @@ def chrome-yatcy [
     ...extra: string
 ] {
     let profile_dir = ($env.LOCALAPPDATA | path join "chrome-profiles" $profile)
-    if not ($profile_dir | path exists) {
-        mkdir $profile_dir
-    }
     let chrome = (which chrome | get path.0?)
     if ($chrome | is-empty) {
         error make { msg: "chrome.exe not found. Try: scoop install extras/googlechrome" }
     }
-    print $"chrome-yatcy: port=($port), profile=($profile)"
-    print $"  exe : ($chrome)"
-    print $"  data: ($profile_dir)"
     let chrome_args = ([
         $"--remote-debugging-port=($port)"
         "--remote-allow-origins=*"
@@ -96,10 +90,37 @@ def chrome-yatcy [
         "--no-first-run"
         "--no-default-browser-check"
     ] ++ $extra)
-    # TODO: _dotcli_launch は cmd /c start 経由のため、引数を cmd.exe が再解釈する。
-    #   nu は空白を含む引数しかクォートしないので、空白なしで & | < > ^ ( ) を含む引数
-    #   (例: "https://e.com/?a=1&b=2") はメタ文字の位置で切れ、残りが別コマンドとして実行される。
-    #   %VAR% はクォート内でも展開される。対処方針(cmd を通さない detach / エスケープ / 拒否)は未決定。
+    # _dotcli_launch は cmd /c start 経由なので、引数を cmd.exe がもう一度解釈する。
+    # 壊れる引数は起動前 (プロファイル作成前) に拒む:
+    # - & | < > ^ : nu は空白を含む引数しかクォートしないので、区切り・エスケープとして効く
+    #   (例: "https://e.com/?a=1&b=2" は & で切れ、残りが別コマンドとして実行される)
+    # - "        : cmd へは \" で渡り、cmd のクォート状態を反転させる
+    # - %NAME%   : NAME (":" 以降の置換・部分指定は除く) が定義済みならクォート内でも展開される。
+    #              未定義なら残るので、%20 等のパーセントエンコードは通す
+    # ( ) はコマンド先頭でなければそのまま渡るので許す。
+    # TODO: 拒否は暫定。cmd を通さない detach (pwsh Start-Process) かエスケープへ移すかは未決定。
+    let cmd_dynamic_vars = [cd date time random errorlevel cmdextversion cmdcmdline highestnumanodenumber __cd__ __appdir__]
+    let defined_vars = ($env | columns | str downcase | append $cmd_dynamic_vars)
+    for arg in ([$chrome] ++ $chrome_args) {
+        let reason = if ($arg =~ '[&|<>^"]') {
+            'contains one of & | < > ^ "'
+        } else {
+            # "%" で割った内側の区間がそれぞれ %...% の候補 (a%20%OS% の OS も拾う)
+            let segs = ($arg | split row '%')
+            let names = if ($segs | length) > 2 { $segs | skip 1 | drop 1 } else { [] }
+            let hit = ($names | each {|s| $s | split row ':' | first | str downcase } | where {|n| $n in $defined_vars })
+            if ($hit | is-empty) { "" } else { $"would expand %($hit | first)%" }
+        }
+        if $reason != "" {
+            error make { msg: $"chrome-yatcy: argument '($arg)' ($reason) and cmd.exe would re-parse it. Use the pwsh version instead: pwsh -NoProfile -File '($env.DOT | path join bin chrome-yatcy.ps1)' ..." }
+        }
+    }
+    if not ($profile_dir | path exists) {
+        mkdir $profile_dir
+    }
+    print $"chrome-yatcy: port=($port), profile=($profile)"
+    print $"  exe : ($chrome)"
+    print $"  data: ($profile_dir)"
     _dotcli_launch $chrome ...$chrome_args
 }
 
