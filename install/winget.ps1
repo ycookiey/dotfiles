@@ -43,7 +43,7 @@ if (!(gcm winget -ea 0)) {
 
     if (!(gcm winget -ea 0)) {
         wh "winget installation failed. Skipping." -Fo Yellow
-        return
+        exit 1
     }
     wh "winget installed." -Fo Green
 }
@@ -51,19 +51,66 @@ if (!(gcm winget -ea 0)) {
 $json = gc $WingetFile -Raw | ConvertFrom-Json
 
 # Cache winget list output for installed check
-$wingetOutput = (winget list 2>$null) -join "`n"
+# --accept-source-agreements/--disable-interactivity: 同意前の新 PC で Y/N プロンプトが捕捉された出力に隠れて止まるのを防ぐ
+$wingetOutput = (winget list --accept-source-agreements --disable-interactivity 2>$null) -join "`n"
 
 $overrides = @{
     'Microsoft.VisualStudio.BuildTools' = '--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet --wait'
 }
 
+# winget の非 0 のうち失敗に数えないもの (値は Process.ExitCode と同じ符号付き 32bit)
+# https://github.com/microsoft/winget-cli/blob/master/doc/windows/package-manager/winget/returnCodes.md
+# 上の導入済み判定は winget list の表示文字列への一致だけなので、漏れた ID は install が走り
+# 「既に入っている」系の非 0 で終わる。パッケージは入っているので成功として扱う
+$alreadyInstalledCodes = @(
+    -1978335189  # 0x8A15002B UPDATE_NOT_APPLICABLE
+    -1978335135  # 0x8A150061 PACKAGE_ALREADY_INSTALLED
+    -1978335153  # 0x8A15004F UPGRADE_VERSION_NOT_NEWER
+    -1978335128  # 0x8A150068 PACKAGE_IS_PINNED
+    -1978334963  # 0x8A15010D INSTALL_ALREADY_INSTALLED
+    -1978334962  # 0x8A15010E INSTALL_DOWNGRADE
+    -1978334956  # 0x8A150114 INSTALL_UPGRADE_NOT_SUPPORTED
+)
+# 再起動で導入が終わるもの (VS BuildTools 等)。失敗に数えず、最後に再起動を促す
+# (INSTALL_REBOOT_REQUIRED_FOR_INSTALL 0x8A15010A は導入できていないので失敗のまま)
+$rebootToFinishCodes = @(
+    -1978334967  # 0x8A150109 INSTALL_REBOOT_REQUIRED_TO_FINISH
+    -1978334965  # 0x8A15010B INSTALL_REBOOT_INITIATED
+)
+
+# 失敗 (上以外の非 0) は集めて最後に一覧を出す。S キーのスキップ ($null) は失敗に数えない
+$failed = @()
+$needsReboot = @()
 foreach ($app in $json.apps) {
     if ($wingetOutput -match ([regex]::Escape($app.Id) + '\s')) {
         continue
     }
     $argStr = "install --id $($app.Id) -e --accept-source-agreements --accept-package-agreements"
     if ($overrides[$app.Id]) { $argStr += " --override `"$($overrides[$app.Id])`"" }
-    Invoke-Skippable "Installing $($app.Id)" winget $argStr
+    $rc = Invoke-Skippable "Installing $($app.Id)" winget $argStr
+    if ($null -eq $rc -or $rc -eq 0) { continue }
+    if ($rc -in $alreadyInstalledCodes) {
+        wh "  Already installed: $($app.Id) (exit $rc)" -Fo DarkGray
+    } elseif ($rc -in $rebootToFinishCodes) {
+        wh "  Restart needed to finish: $($app.Id) (exit $rc)" -Fo Yellow
+        $needsReboot += $app.Id
+    } else {
+        wh "  Failed: $($app.Id) (exit $rc)" -Fo Yellow
+        $failed += $app.Id
+    }
+}
+
+if ($needsReboot.Count -gt 0) {
+    wh "`nRestart your PC to finish installing: $($needsReboot -join ', ')" -Fo Yellow
+}
+
+if ($failed.Count -gt 0) {
+    wh "`nFailed winget apps: $($failed -join ', ')" -Fo Yellow
+    wh "Retry:" -Fo Yellow
+    foreach ($id in $failed) { wh "  winget install --id $id -e" -Fo Yellow }
+    exit 1
 }
 
 wh "`nWinget setup complete." -Fo Green
+# 途中の native コマンド (winget list) の $LASTEXITCODE を呼び出し元に残さない
+exit 0

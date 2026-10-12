@@ -14,8 +14,10 @@ mkdir -p ~/.vscode-server/data/Machine/
 mkdir -p ~/.vscode-server/extensions/
 
 # VS Code設定をコピー
+# TODO: vscode/ の正本を repo / Settings Sync / 参照用の写しのどれにするか未決定。
+#       Settings Sync を正本にする場合はこのスクリプトごと削除する
 echo "VSCode設定をコピーしています..." | tee -a "$LOG_FILE"
-if cp "$SCRIPT_DIR/settings/vscode.json" ~/.vscode-server/data/Machine/settings.json; then
+if cp "$SCRIPT_DIR/vscode/settings.json" ~/.vscode-server/data/Machine/settings.json; then
   echo "  ✓ 設定ファイルのコピー成功" | tee -a "$LOG_FILE"
 else
   echo "  ✗ 設定ファイルのコピー失敗" | tee -a "$LOG_FILE"
@@ -23,7 +25,7 @@ fi
 
 # キーバインド設定をコピー
 echo "キーバインド設定をコピーしています..." | tee -a "$LOG_FILE"
-if cp "$SCRIPT_DIR/settings/keybindings.json" ~/.vscode-server/data/Machine/keybindings.json; then
+if cp "$SCRIPT_DIR/vscode/keybindings.json" ~/.vscode-server/data/Machine/keybindings.json; then
   echo "  ✓ キーバインド設定のコピー成功" | tee -a "$LOG_FILE"
 else
   echo "  ✗ キーバインド設定のコピー失敗" | tee -a "$LOG_FILE"
@@ -36,11 +38,14 @@ echo "拡張機能のインストール開始: $(date)" >> "$LOG_FILE"
 INSTALLED_COUNT=0
 FAILED_COUNT=0
 
-cat "$SCRIPT_DIR/.vscode/extensions" | while read -r line
+# パイプで while に渡すとループがサブシェルで動きカウンタがサマリに残らないので、リダイレクトで読む
+# 最終行に改行が無くても読むため read 失敗時も $line が空でなければ処理する
+while read -r line || [ -n "$line" ]
 do
   if [ ! -z "$line" ]; then
     echo "Installing $line" | tee -a "$LOG_FILE"
-    if code --install-extension "$line"; then
+    # code が stdin を読むと残りの行を食うので /dev/null を渡す
+    if code --install-extension "$line" < /dev/null; then
       echo "  ✓ $line" >> "$LOG_FILE"
       INSTALLED_COUNT=$((INSTALLED_COUNT+1))
     else
@@ -48,7 +53,7 @@ do
       FAILED_COUNT=$((FAILED_COUNT+1))
     fi
   fi
-done
+done < "$SCRIPT_DIR/.vscode/extensions"
 
 # インストール結果のサマリーをログに追加
 echo "拡張機能のインストール完了: $(date)" >> "$LOG_FILE"

@@ -34,8 +34,12 @@ if ($isAdmin) {
     $personalization = Get-ItemProperty $personalizationPath -ea 0
     if ($personalization.NoLockScreen -ne 1) {
         Write-Host "Disabling lock screen..." -ForegroundColor Yellow
+        # The policy key does not exist by default, and Set-ItemProperty does not create it
+        if (!(Test-Path $personalizationPath)) { $null = New-Item $personalizationPath -Force }
         Set-ItemProperty $personalizationPath -Name NoLockScreen -Value 1 -Force
     }
+} else {
+    Write-Host 'Skipping HKLM settings (UTF-8 locale / UAC / lock screen): run as admin to apply' -ForegroundColor DarkGray
 }
 
 # HKCU settings
@@ -77,15 +81,25 @@ if (!(Test-Path $Dir)) {
     git clone $Repo $Dir
 }
 
+# Snapshot the scoop manifest: Phase 2 (setup.ps1 -> dotcli sync) rewrites
+# install/scoopfile.json from `scoop export`, which drops the large apps that
+# Phase 4 has not installed yet. Phase 1 and Phase 4 both read this copy.
+$scoopSnapshot = Join-Path $env:TEMP 'dotfiles-scoopfile.snapshot.json'
+Copy-Item "$Dir\install\scoopfile.json" $scoopSnapshot -Force
+
 # Phase 1: core apps (skip large -- abort on failure)
-$pwsh = Join-Path $scoopShims 'pwsh.exe'
-& $pwsh -NoProfile -ExecutionPolicy Bypass -File "$Dir\install\scoop.ps1" -SkipLarge
+# pwsh may come from MSI/winget instead of scoop, so there may be no scoop shim
+$pwsh = (Get-Command pwsh -CommandType Application -ea 0 | Select-Object -First 1).Source
+if (!$pwsh) { $pwsh = Join-Path $scoopShims 'pwsh.exe' }
+& $pwsh -NoProfile -ExecutionPolicy Bypass -File "$Dir\install\scoop.ps1" -SkipLarge -ScoopFile $scoopSnapshot
 if ($LASTEXITCODE -ne 0) {
     throw "Phase 1 failed with exit code $LASTEXITCODE."
 }
 
 # Phase 2: config, symlinks, dotcli, startup (only needs core apps)
 & $pwsh -NoProfile -ExecutionPolicy Bypass -File "$Dir\setup.ps1"
+# TODO: setup.ps1 exits 1 when any step fails (one failed winget app included), which stops here and
+# skips Phases 3-5. Decide whether to keep going and report the setup failures at the end instead.
 if ($LASTEXITCODE -ne 0) {
     throw "Phase 2 (setup) failed with exit code $LASTEXITCODE."
 }
@@ -97,6 +111,10 @@ if ($LASTEXITCODE -ne 0) {
 if (Get-Command mise -ea 0) {
     Write-Host "`nInstalling mise tools..." -ForegroundColor Cyan
     mise install --yes
+} else {
+    # TODO: mise is in no install manifest, so a new PC always lands here. Either add mise to scoop
+    # (and let sync record it) or drop mise.toml and install the runtimes through the manifests.
+    Write-Host "`nmise not found: skipping runtime install (mise.toml tools are not installed)" -ForegroundColor Yellow
 }
 
 # Phase 3.5: uv tools (CLI tools via uv -- non-fatal)
@@ -106,7 +124,7 @@ if (Get-Command uv -ea 0) {
 }
 
 # Phase 4: large apps (non-fatal)
-& $pwsh -NoProfile -ExecutionPolicy Bypass -File "$Dir\install\scoop.ps1" -OnlyLarge
+& $pwsh -NoProfile -ExecutionPolicy Bypass -File "$Dir\install\scoop.ps1" -OnlyLarge -ScoopFile $scoopSnapshot
 
 # Phase 5: startup (skip if apps already running)
 if (!(Get-Process wezterm-gui -ea 0)) {
