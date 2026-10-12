@@ -138,8 +138,9 @@ if ($script:IsInteractive) {
 
     # --- mise ---
     # 種類を指定しない Get-Command は miss のとき module の command 探索まで走るので、Application に限る。
-    # 候補が複数 (mise.exe と shim 等) でも 1 つに絞り、絶対 path で呼ぶ
-    $_miseExe = (Get-Command mise -CommandType Application -ea 0 | select -First 1).Source
+    # 候補が複数 (mise.exe と shim 等) でも 1 つに絞り、絶対 path で呼ぶ。
+    # 絞るのは -TotalCount (select は Microsoft.PowerShell.Utility の自動読込で起動が遅くなる)
+    $_miseExe = (Get-Command mise -CommandType Application -TotalCount 1 -ea 0).Source
     if ($_miseExe) { (& $_miseExe activate pwsh) -join "`n" | iex }
 
     # --- zoxide (手書き最小版、dot-source不要) ---
@@ -225,7 +226,7 @@ if ($script:IsInteractive) {
     # dotcli を絶対 path で別 process として起動し、prompt hook が完了を見て結果を表示する。
     # $global:j = git-prompt (自動更新), $global:syncJob = sync, $global:_buildCheckJob = build --check
     $global:_dotDir = $Dot
-    $global:_dotcli = (Get-Command dotcli -CommandType Application -ea 0 | select -First 1).Source
+    $global:_dotcli = (Get-Command dotcli -CommandType Application -TotalCount 1 -ea 0).Source  # select は使わない (mise と同じ)
     $global:_gitPromptStamp = "$cacheDir\git-prompt.stamp"  # git-prompt の起動時に touch
     $global:_gitPromptDone = "$cacheDir\git-prompt.done"    # git-prompt の完了を hook が検知したら touch
     $global:_syncStamp = "$cacheDir\sync.stamp"
