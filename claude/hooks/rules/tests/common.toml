@@ -813,3 +813,27 @@ name = "langlist-variable"
 rule = "winuserlanguagelist-reminder"
 expect = "quiet"
 command = '''pwsh -Command '$l = Get-WinUserLanguageList; foreach ($x in $l) { $x.LanguageTag }' '''
+
+[[case]]
+name = "cargo-fmt-plain"
+rule = "cargo-fmt-scope-reminder"
+expect = "context"
+command = "cd cli && cargo fmt && cargo clippy"
+
+[[case]]
+name = "cargo-fmt-package"
+rule = "cargo-fmt-scope-reminder"
+expect = "context"
+command = "cargo fmt -p yimey-host"
+
+[[case]]
+name = "cargo-fmt-check"
+rule = "cargo-fmt-scope-reminder"
+expect = "quiet"
+command = "cargo fmt -p yimey-host --check"
+
+[[case]]
+name = "cargo-format-other-word"
+rule = "cargo-fmt-scope-reminder"
+expect = "quiet"
+command = "cargo fmtx && echo cargo-fmt"
