@@ -23,6 +23,10 @@ $env.PATH = ($env.PATH | split row (char esep)
   | where {|p| $p | path exists }
   | uniq)
 
+# git-worktree-runner/bin の gtr は拡張子なしの bash スクリプトで nushell からは解決されない。
+# pwsh の `gtr` (git-gtr の alias) と同じく git サブコマンド経由で呼ぶ (git は shebang を解釈する)
+def --wrapped gtr [...args] { ^git gtr ...$args }
+
 # --- starship ---
 use ($NU_DIR | path join 'cache/starship.nu')
 
