@@ -332,7 +332,8 @@ pub fn run() {
 // fails with os error 5), but it can be renamed. So: build in the project's
 // target dir, rename the live exe out of the way, then copy the new one in
 // (install_exe). Applies to all crates: dotcli is always running during dotb (and as
-// long-lived MCP servers), and Claude sessions run claude-statusline for the status line.
+// long-lived MCP servers), and Claude Code starts claude-statusline afresh each time it
+// redraws the status line, so a copy may be running while it is being replaced.
 fn build_project(cargo: &Path, dotfiles: &Path, cargo_bin: &Path, crate_info: &Crate) -> bool {
     let project_dir = dotfiles.join(crate_info.path);
     if !project_dir.join("Cargo.toml").exists() {
