@@ -30,6 +30,23 @@ struct Input {
     effort: Option<Effort>,
 }
 
+/// Just the rate_limits of the stdin JSON (other fields are ignored).
+#[derive(Deserialize, Default)]
+struct RateLimitsOnly {
+    rate_limits: Option<RateLimits>,
+}
+
+/// Parses the stdin JSON. When the whole Input does not parse (a field of
+/// an unexpected type, e.g. a null cost.total_cost_usd), the rate_limits
+/// are parsed on their own so they are still shown and cached; the other
+/// fields stay at their defaults.
+fn parse_input(s: &str) -> Input {
+    serde_json::from_str(s).unwrap_or_else(|_| Input {
+        rate_limits: serde_json::from_str::<RateLimitsOnly>(s).ok().and_then(|r| r.rate_limits),
+        ..Input::default()
+    })
+}
+
 #[derive(Deserialize, Default)]
 struct Effort {
     level: Option<String>,
@@ -70,13 +87,13 @@ struct Cost {
     total_lines_removed: u64,
 }
 
-#[derive(Deserialize, Serialize, Clone, Default)]
+#[derive(Deserialize, Serialize, Clone, Default, PartialEq, Debug)]
 struct RateLimits {
     five_hour: Option<Window>,
     seven_day: Option<Window>,
 }
 
-#[derive(Deserialize, Serialize, Clone, Default)]
+#[derive(Deserialize, Serialize, Clone, Default, PartialEq, Debug)]
 struct Window {
     used_percentage: Option<f64>,
     resets_at: Option<serde_json::Value>,
@@ -110,8 +127,7 @@ fn fmt_num(n: u64) -> String {
 fn now_unix() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs_f64()
+        .map_or(0.0, |d| d.as_secs_f64())
 }
 
 fn parse_resets_at(v: &serde_json::Value) -> Option<f64> {
@@ -122,17 +138,24 @@ fn parse_resets_at(v: &serde_json::Value) -> Option<f64> {
     }
 }
 
+// "YYYY-MM-DDTHH:MM:SS[.fff][Z|±HH[:MM]]" → Unix seconds. No suffix means UTC.
+// Fields are sliced with get() so a multibyte char never panics (→ None).
 fn parse_iso8601(s: &str) -> Option<f64> {
     let s = s.trim();
-    if s.len() < 19 {
-        return None;
-    }
-    let year: i64 = s[0..4].parse().ok()?;
-    let month: i64 = s[5..7].parse().ok()?;
-    let day: i64 = s[8..10].parse().ok()?;
-    let hour: i64 = s[11..13].parse().ok()?;
-    let min: i64 = s[14..16].parse().ok()?;
-    let sec: i64 = s[17..19].parse().ok()?;
+    let field = |a: usize, b: usize| -> Option<i64> {
+        let f = s.get(a..b)?;
+        if !f.bytes().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        f.parse().ok()
+    };
+    let year = field(0, 4)?;
+    let month = field(5, 7)?;
+    let day = field(8, 10)?;
+    let hour = field(11, 13)?;
+    let min = field(14, 16)?;
+    let sec = field(17, 19)?;
+    let offset = parse_utc_offset(s.get(19..)?)?;
     let mut y = year;
     let mut m = month;
     if m <= 2 {
@@ -140,7 +163,44 @@ fn parse_iso8601(s: &str) -> Option<f64> {
         m += 12;
     }
     let days = 365 * y + y / 4 - y / 100 + y / 400 + (153 * (m - 3) + 2) / 5 + day - 719469;
-    Some((days * 86400 + hour * 3600 + min * 60 + sec) as f64)
+    Some((days * 86400 + hour * 3600 + min * 60 + sec - offset) as f64)
+}
+
+// Suffix after the seconds field: optional ".fff", then "", "Z"/"z" or
+// "±HH", "±HHMM", "±HH:MM". Returns the offset east of UTC in seconds.
+fn parse_utc_offset(rest: &str) -> Option<i64> {
+    let rest = match rest.strip_prefix('.') {
+        Some(frac) => {
+            let digits = frac.bytes().take_while(u8::is_ascii_digit).count();
+            if digits == 0 {
+                return None;
+            }
+            &frac[digits..]
+        }
+        None => rest,
+    };
+    let sign = match rest.as_bytes().first() {
+        None => return Some(0),
+        Some(b'Z' | b'z') if rest.len() == 1 => return Some(0),
+        Some(b'+') => 1,
+        Some(b'-') => -1,
+        Some(_) => return None,
+    };
+    let hm = rest.get(1..)?;
+    let (hh, mm) = match hm.len() {
+        2 => (hm, "00"),
+        4 => (hm.get(0..2)?, hm.get(2..4)?),
+        5 if hm.as_bytes()[2] == b':' => (hm.get(0..2)?, hm.get(3..5)?),
+        _ => return None,
+    };
+    if !hh.bytes().chain(mm.bytes()).all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let (h, m): (i64, i64) = (hh.parse().ok()?, mm.parse().ok()?);
+    if h > 23 || m > 59 {
+        return None;
+    }
+    Some(sign * (h * 3600 + m * 60))
 }
 
 fn elapsed_pct(resets_at: &Option<serde_json::Value>, window_secs: f64) -> i32 {
@@ -227,30 +287,69 @@ fn context_pct(cw: &ContextWindow) -> Option<i32> {
     Some(pct.min(100.0) as i32)
 }
 
+// Transcripts can reach hundreds of MB, so only the tail is read: start with
+// this window and double it up to the cap while no model is found.
+const TRANSCRIPT_TAIL_INITIAL: u64 = 256 * 1024;
+const TRANSCRIPT_TAIL_MAX: u64 = 4 * 1024 * 1024;
+
 fn read_model_from_transcript(path: &str) -> Option<String> {
-    let content = std::fs::read_to_string(path).ok()?;
-    for line in content.lines().rev() {
+    read_model_from_transcript_tail(path, TRANSCRIPT_TAIL_INITIAL, TRANSCRIPT_TAIL_MAX)
+}
+
+/// Model of the last assistant line within the last `max_window` bytes.
+fn read_model_from_transcript_tail(path: &str, initial_window: u64, max_window: u64) -> Option<String> {
+    use std::io::{Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    let mut window = initial_window.max(1).min(len);
+    loop {
+        // Read one byte before the window so a line starting exactly at the
+        // window edge is kept; the partial first line is dropped below.
+        let start = len - window;
+        let read_from = start.saturating_sub(1);
+        file.seek(SeekFrom::Start(read_from)).ok()?;
+        let mut buf = Vec::with_capacity((len - read_from) as usize);
+        file.by_ref().take(len - read_from).read_to_end(&mut buf).ok()?;
+        let bytes = if read_from > 0 {
+            match buf.iter().position(|&b| b == b'\n') {
+                Some(i) => &buf[i + 1..],
+                None => &[][..],
+            }
+        } else {
+            &buf[..]
+        };
+        if let Some(model) = find_last_assistant_model(&String::from_utf8_lossy(bytes)) {
+            return Some(model);
+        }
+        if start == 0 || window >= max_window {
+            return None;
+        }
+        window = window.saturating_mul(2).min(max_window).min(len);
+    }
+}
+
+/// Scans lines from the end; unparsable lines (e.g. one still being written)
+/// and assistant lines without a model are skipped.
+fn find_last_assistant_model(content: &str) -> Option<String> {
+    content.lines().rev().find_map(|line| {
         if !line.contains("\"type\"") || !line.contains("\"assistant\"") {
-            continue;
+            return None;
         }
         let obj: serde_json::Value = serde_json::from_str(line).ok()?;
-        if obj.get("type")?.as_str()? == "assistant" {
-            return obj
-                .get("message")?
-                .get("model")?
-                .as_str()
-                .map(|s| s.to_string());
+        if obj.get("type")?.as_str()? != "assistant" {
+            return None;
         }
-    }
-    None
+        obj.get("message")?.get("model")?.as_str().map(|s| s.to_string())
+    })
 }
 
 // ========================================
 // Statusline TOML Rules
 // ========================================
 
+/// A `[[model]]` or `[[provider]]` entry: names matched case-insensitively.
 #[derive(Deserialize, Default, Clone)]
-struct ModelRule {
+struct Rule {
     #[serde(default)]
     name: Vec<String>,
     #[serde(default)]
@@ -262,55 +361,54 @@ struct ModelRule {
 #[derive(Deserialize, Default)]
 struct RulesFile {
     #[serde(default)]
-    model: Vec<ModelRule>,
+    model: Vec<Rule>,
     #[serde(default)]
-    provider: Vec<ProviderRule>,
+    provider: Vec<Rule>,
 }
 
-#[derive(Deserialize, Default, Clone)]
-struct ProviderRule {
-    #[serde(default)]
-    name: Vec<String>,
-    #[serde(default)]
-    display: String,
-    #[serde(default)]
-    color: String,
+// ========================================
+// Config dir
+// ========================================
+
+/// Claude config dir: CLAUDE_CONFIG_DIR, else USERPROFILE/.claude, else
+/// HOME/.claude. An empty variable counts as unset.
+fn config_dir() -> Option<String> {
+    config_dir_from(|name| env::var(name).ok())
+}
+
+fn config_dir_from(get: impl Fn(&str) -> Option<String>) -> Option<String> {
+    let get = |name: &str| get(name).filter(|v| !v.is_empty());
+    get("CLAUDE_CONFIG_DIR").or_else(|| {
+        get("USERPROFILE")
+            .or_else(|| get("HOME"))
+            .map(|h| format!("{h}/.claude"))
+    })
 }
 
 // ========================================
 // TOML Rule Loading
 // ========================================
 
-fn match_model_rule<'a>(model_name: &'a str, rules: &'a [ModelRule]) -> Option<&'a ModelRule> {
-    rules.iter().find(|rule| {
-        rule.name.iter().any(|n| n.eq_ignore_ascii_case(model_name))
-    })
+fn match_rule<'a>(name: &str, rules: &'a [Rule]) -> Option<&'a Rule> {
+    rules.iter().find(|r| r.name.iter().any(|n| n.eq_ignore_ascii_case(name)))
 }
 
-struct LoadedRules {
-    model: Vec<ModelRule>,
-    provider: Vec<ProviderRule>,
+/// Rules are only consulted for a model the Anthropic pattern does not cover
+/// and for a provider badge, so most runs skip reading and parsing the file.
+fn rules_needed(model_raw: &str, provider: Option<&str>) -> bool {
+    provider.is_some() || anthropic_badge(model_raw).is_none()
 }
 
-fn load_rules() -> LoadedRules {
-    let dir = env::var("CLAUDE_CONFIG_DIR").unwrap_or_else(|_| {
-        env::var("USERPROFILE")
-            .or_else(|_| env::var("HOME"))
-            .map(|h| format!("{}/.claude", h))
-            .unwrap_or_default()
-    });
-    let rules_path = format!("{dir}/statusline-rules.toml");
-    let content = std::fs::read_to_string(&rules_path)
-        .unwrap_or_else(|_| include_str!("../statusline-models.toml").to_string());
-    let parsed = toml::from_str::<RulesFile>(&content)
+fn load_rules(dir: Option<&str>) -> RulesFile {
+    let content = dir
+        .and_then(|d| std::fs::read_to_string(format!("{d}/statusline-rules.toml")).ok())
+        .unwrap_or_else(|| include_str!("../statusline-models.toml").to_string());
+    toml::from_str::<RulesFile>(&content)
         .unwrap_or_else(|e| {
-            eprintln!("Failed to parse statusline rules: {e}");
+            use std::io::Write as _;
+            let _ = writeln!(io::stderr(), "Failed to parse statusline rules: {e}");
             RulesFile::default()
-        });
-    LoadedRules {
-        model: parsed.model,
-        provider: parsed.provider,
-    }
+        })
 }
 
 fn fmt_color(rgb: &str) -> String {
@@ -360,12 +458,12 @@ fn anthropic_badge(name: &str) -> Option<(String, String)> {
     Some((format!("{sym} {ver}{plus}"), color.to_string()))
 }
 
-fn model_short_with_rules(display_name: &str, rules: &[ModelRule]) -> String {
+fn model_short_with_rules(display_name: &str, rules: &[Rule]) -> String {
     // Anthropic モデルはパターン解析で自動生成（toml 追記不要）
     if let Some((disp, color)) = anthropic_badge(display_name) {
         return format!("{}{disp}{RST}", fmt_color(&color));
     }
-    if let Some(rule) = match_model_rule(display_name, rules) {
+    if let Some(rule) = match_rule(display_name, rules) {
         let color = fmt_color(&rule.color);
         format!("{color}{}{RST}", rule.display)
     } else {
@@ -388,10 +486,6 @@ fn effort_badge(level: &str) -> String {
     format!(" {}{label}{RST}", fmt_color(rgb))
 }
 
-fn match_provider_rule<'a>(name: &str, rules: &'a [ProviderRule]) -> Option<&'a ProviderRule> {
-    rules.iter().find(|r| r.name.iter().any(|n| n.eq_ignore_ascii_case(name)))
-}
-
 fn detect_provider() -> Option<String> {
     env::var("ANTHROPIC_BASE_URL")
         .ok()
@@ -399,8 +493,8 @@ fn detect_provider() -> Option<String> {
         .map(|_| "z.ai".into())
 }
 
-fn provider_badge_with_rules(name: &str, rules: &[ProviderRule]) -> Option<String> {
-    match_provider_rule(name, rules).map(|rule| fmt_badge(&rule.display, &rule.color))
+fn provider_badge_with_rules(name: &str, rules: &[Rule]) -> Option<String> {
+    match_rule(name, rules).map(|rule| fmt_badge(&rule.display, &rule.color))
 }
 
 // ========================================
@@ -408,39 +502,144 @@ fn provider_badge_with_rules(name: &str, rules: &[ProviderRule]) -> Option<Strin
 // ========================================
 
 const CACHE_TTL_SECONDS: u64 = 60;
+// After a failed fetch, skip the network for this long. Without it every run
+// past the TTL blocks on the HTTPS timeout while z.ai is down or offline.
+const FAIL_CACHE_TTL_SECONDS: u64 = 30;
+const GLM_API_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
-#[derive(Deserialize, Serialize, Default)]
+#[derive(Deserialize, Serialize, Default, Clone)]
 struct CachedRateLimits {
+    /// Time the rate_limits were last fetched successfully (0 = never).
+    /// ycusage reads it to label stale data, so failures leave it unchanged.
     cached_at: u64,
     provider: Option<String>,
-    rate_limits: RateLimits,
+    /// None (written as null) until a fetch has succeeded, so readers such
+    /// as ycusage treat the file as having no data rather than as 0% usage.
+    #[serde(default)]
+    rate_limits: Option<RateLimits>,
+    /// Time of the last failed fetch (0 = the last attempt succeeded).
+    /// Absent in caches written before this field existed.
+    #[serde(default)]
+    failed_at: u64,
 }
 
-fn get_glm_rate_limits() -> RateLimits {
-    let dir = env::var("CLAUDE_CONFIG_DIR").unwrap_or_else(|_| {
-        env::var("USERPROFILE")
-            .or_else(|_| env::var("HOME"))
-            .map(|h| format!("{h}/.claude"))
-            .unwrap_or_default()
-    });
-    if dir.is_empty() {
-        return RateLimits::default();
+/// Whether the cache can be used without calling the API.
+fn cache_is_fresh(cached: &CachedRateLimits, now: u64) -> bool {
+    if cached.provider.as_deref() != Some("z.ai") {
+        return false;
     }
+    if cached.cached_at > 0 && now.saturating_sub(cached.cached_at) < CACHE_TTL_SECONDS {
+        return true;
+    }
+    cached.failed_at > 0 && now.saturating_sub(cached.failed_at) < FAIL_CACHE_TTL_SECONDS
+}
+
+/// Cache to write after a failed fetch: keeps the previous data and its
+/// cached_at, and records the failure so the next runs skip the network.
+/// Without a previous success (cached_at 0) there is no data to keep.
+fn failure_cache(prev: Option<CachedRateLimits>, now: u64) -> CachedRateLimits {
+    let prev = prev.unwrap_or_default();
+    CachedRateLimits {
+        cached_at: prev.cached_at,
+        provider: Some("z.ai".into()),
+        rate_limits: if prev.cached_at > 0 { prev.rate_limits } else { None },
+        failed_at: now,
+    }
+}
+
+/// Plain overwrite, not temp + rename: ~/.claude-N/.glm-rate-limits.json is a
+/// symlink shared by all accounts, and a rename would replace the link.
+fn write_glm_cache(cache_path: &str, data: &CachedRateLimits) {
+    if let Ok(json_str) = serde_json::to_string(data) {
+        let _ = std::fs::write(cache_path, json_str);
+    }
+}
+
+/// What get_glm_rate_limits found in the cache file before fetching.
+enum GlmCacheRead {
+    /// No file, or it could not be read.
+    Missing,
+    /// The file was read but did not parse, and was modified moments ago.
+    /// fs::write truncates before writing, so this can be another run's
+    /// write caught midway.
+    Unparsable,
+    Parsed(CachedRateLimits),
+}
+
+/// An unparsable cache last modified longer ago than this is broken rather
+/// than a write in progress, and is treated as missing so a failed fetch can
+/// replace it. Without this, a file left torn by a killed writer would keep
+/// every run blocking on the HTTPS timeout while z.ai is down.
+const TORN_WRITE_WINDOW: std::time::Duration = std::time::Duration::from_secs(5);
+
+fn read_glm_cache(path: &str) -> GlmCacheRead {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return GlmCacheRead::Missing;
+    };
+    if let Ok(v) = serde_json::from_str::<CachedRateLimits>(&text) {
+        return GlmCacheRead::Parsed(v);
+    }
+    // Unknown or future mtime counts as recent, which keeps the file.
+    let recent = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| std::time::SystemTime::now().duration_since(t).ok())
+        .is_none_or(|age| age < TORN_WRITE_WINDOW);
+    if recent {
+        GlmCacheRead::Unparsable
+    } else {
+        GlmCacheRead::Missing
+    }
+}
+
+/// Cache to write just before calling the API, recording the attempt as a
+/// failure. A run that never gets to record its result (killed by the
+/// watchdog while DNS resolution hangs, which ureq's timeout does not cover,
+/// or cancelled by Claude Code) then still keeps the next runs off the
+/// network for FAIL_CACHE_TTL_SECONDS. A successful fetch overwrites it with
+/// failed_at 0. None for an unparsable file, which is left alone for the
+/// same reason as in glm_fetch_failed.
+fn attempt_marker(prev: &GlmCacheRead, now: u64) -> Option<CachedRateLimits> {
+    match prev {
+        GlmCacheRead::Unparsable => None,
+        GlmCacheRead::Missing => Some(failure_cache(None, now)),
+        GlmCacheRead::Parsed(c) => Some(failure_cache(Some(c.clone()), now)),
+    }
+}
+
+/// Records a failed fetch and returns the rate limits to display.
+/// An unparsable file is left alone: it may be a good cache being written by
+/// a concurrent run, and replacing it would drop the last fetched data.
+fn glm_fetch_failed(cache_path: &str, prev: GlmCacheRead, now: u64, msg: &str) -> RateLimits {
+    if env_truthy("STATUSLINE_DEBUG") {
+        use std::io::Write as _;
+        let _ = writeln!(io::stderr(), "{msg}");
+    }
+    let prev = match prev {
+        GlmCacheRead::Unparsable => return RateLimits::default(),
+        GlmCacheRead::Missing => None,
+        GlmCacheRead::Parsed(c) => Some(c),
+    };
+    let cache = failure_cache(prev, now);
+    write_glm_cache(cache_path, &cache);
+    cache.rate_limits.unwrap_or_default()
+}
+
+fn get_glm_rate_limits(dir: Option<&str>) -> RateLimits {
+    let Some(dir) = dir else {
+        return RateLimits::default();
+    };
     let cache_path = format!("{dir}/.glm-rate-limits.json");
 
     let now = now_unix() as u64;
 
     // Read cache without provider filter (will check after parsing)
-    let parsed_cache: Option<CachedRateLimits> = std::fs::read_to_string(&cache_path)
-        .ok()
-        .and_then(|c| serde_json::from_str(&c).ok());
+    let parsed_cache = read_glm_cache(&cache_path);
 
-    // Check if cache is fresh AND is from z.ai
-    if let Some(ref cached_data) = parsed_cache {
-        let age = now.saturating_sub(cached_data.cached_at);
-        let is_zai = cached_data.provider.as_deref() == Some("z.ai");
-        if age < CACHE_TTL_SECONDS && is_zai {
-            return cached_data.rate_limits.clone();
+    // Fresh z.ai cache (successful, or a recent failure) skips the API
+    if let GlmCacheRead::Parsed(ref cached_data) = parsed_cache {
+        if cache_is_fresh(cached_data, now) {
+            return cached_data.rate_limits.clone().unwrap_or_default();
         }
     }
 
@@ -457,15 +656,20 @@ fn get_glm_rate_limits() -> RateLimits {
         }
     };
 
+    // parsed_cache stays unchanged so a failure below still keeps its data.
+    if let Some(marker) = attempt_marker(&parsed_cache, now) {
+        write_glm_cache(&cache_path, &marker);
+    }
+
     let resp = match ureq::get("https://api.z.ai/api/monitor/usage/quota/limit")
         .set("Authorization", &api_key)
-        .timeout(std::time::Duration::from_secs(3))
+        .timeout(GLM_API_TIMEOUT)
         .call() {
         Ok(r) => r,
         Err(e) => {
             // API failed: use stale cache if available
-            eprintln!("GLM API request failed: {e}");
-            return parsed_cache.unwrap_or_default().rate_limits;
+            let msg = format!("GLM API request failed: {e}");
+            return glm_fetch_failed(&cache_path, parsed_cache, now, &msg);
         }
     };
 
@@ -473,22 +677,25 @@ fn get_glm_rate_limits() -> RateLimits {
         Ok(s) => match serde_json::from_str(&s) {
             Ok(v) => v,
             Err(e) => {
-                eprintln!("Failed to parse GLM JSON: {e}, body: {s}");
-                return parsed_cache.unwrap_or_default().rate_limits;
+                let msg = format!("Failed to parse GLM JSON: {e}, body: {s}");
+                return glm_fetch_failed(&cache_path, parsed_cache, now, &msg);
             }
         },
         Err(e) => {
-            eprintln!("Failed to read GLM response body: {e}");
-            return parsed_cache.unwrap_or_default().rate_limits;
+            let msg = format!("Failed to read GLM response body: {e}");
+            return glm_fetch_failed(&cache_path, parsed_cache, now, &msg);
         }
     };
 
-    let limits_vec: Vec<serde_json::Value> = body.get("data")
+    // An invalid token comes back as HTTP 200 with {"code":401,"success":false}
+    // and no data; treat it as a failure so the previous numbers are kept.
+    let Some(limits) = body.get("data")
         .and_then(|d| d.get("limits"))
         .and_then(|l| l.as_array())
-        .map(|v| v.to_vec())
-        .unwrap_or_default();
-    let limits = limits_vec.as_slice();
+    else {
+        let msg = format!("GLM response has no data.limits: {body}");
+        return glm_fetch_failed(&cache_path, parsed_cache, now, &msg);
+    };
 
     let mut five_hour_pct: f64 = 0.0;
     let mut five_hour_reset: Option<serde_json::Value> = None;
@@ -521,9 +728,6 @@ fn get_glm_rate_limits() -> RateLimits {
         }
     }
 
-    eprintln!("GLM parsed: five_hour_pct={}, seven_day_pct={}, five_hour_reset={:?}, seven_day_reset={:?}",
-        five_hour_pct, seven_day_pct, five_hour_reset, seven_day_reset);
-
     let rl = RateLimits {
         five_hour: Some(Window {
             used_percentage: Some(five_hour_pct),
@@ -539,25 +743,19 @@ fn get_glm_rate_limits() -> RateLimits {
     let cache_data = CachedRateLimits {
         cached_at: now,
         provider: Some("z.ai".into()),
-        rate_limits: rl.clone(),
+        rate_limits: Some(rl.clone()),
+        failed_at: 0,
     };
-    let json_str = serde_json::to_string(&cache_data).unwrap_or_default();
-    let _ = std::fs::write(&cache_path, json_str);
+    write_glm_cache(&cache_path, &cache_data);
 
     rl
 }
 
-fn acc_from_env() -> u32 {
-    let dir = env::var("CLAUDE_CONFIG_DIR").unwrap_or_default();
-    let dir = if dir.is_empty() {
-        env::var("HOME")
-            .or_else(|_| env::var("USERPROFILE"))
-            .map(|h| format!("{h}/.claude"))
-            .unwrap_or_default()
-    } else {
-        dir
-    };
+/// Account number from the trailing digits of the config dir name
+/// (`.claude-3` -> 3). The default `.claude` gives 0.
+fn acc_from_dir(dir: Option<&str>) -> u32 {
     let tail = dir
+        .unwrap_or("")
         .trim_end_matches(['/', '\\'])
         .rsplit(['/', '\\'])
         .next()
@@ -597,14 +795,56 @@ fn display_width(s: &str) -> usize {
         // Enclosed Alphanumeric Supplement (🅾🆂🅷 etc.) — text presentation, 1 wide
         if (0x1F100..=0x1F1FF).contains(&cp) {
             w += 1;
-        // Emoji (U+1F300+) and CJK fullwidth → 2
-        } else if cp >= 0x1F300 || (0x2E80..=0x9FFF).contains(&cp) {
+        // Emoji (U+1F300+), BMP emoji-presentation symbols (❓ etc.) and CJK fullwidth → 2
+        } else if cp >= 0x1F300 || (0x2E80..=0x9FFF).contains(&cp) || is_bmp_emoji_presentation(cp) {
             w += 2;
         } else {
             w += 1;
         }
     }
     w
+}
+
+// BMP code points with Emoji_Presentation=Yes (Unicode emoji-data.txt). Terminals
+// draw these as 2-wide emoji even without U+FE0F. Text-presentation symbols
+// (▲▼▓░①⧗ …) are deliberately absent: they stay 1 wide.
+fn is_bmp_emoji_presentation(cp: u32) -> bool {
+    matches!(
+        cp,
+        0x231A..=0x231B
+            | 0x23E9..=0x23EC
+            | 0x23F0
+            | 0x23F3
+            | 0x25FD..=0x25FE
+            | 0x2614..=0x2615
+            | 0x2648..=0x2653
+            | 0x267F
+            | 0x2693
+            | 0x26A1
+            | 0x26AA..=0x26AB
+            | 0x26BD..=0x26BE
+            | 0x26C4..=0x26C5
+            | 0x26CE
+            | 0x26D4
+            | 0x26EA
+            | 0x26F2..=0x26F3
+            | 0x26F5
+            | 0x26FA
+            | 0x26FD
+            | 0x2705
+            | 0x270A..=0x270B
+            | 0x2728
+            | 0x274C
+            | 0x274E
+            | 0x2753..=0x2755
+            | 0x2757
+            | 0x2795..=0x2797
+            | 0x27B0
+            | 0x27BF
+            | 0x2B1B..=0x2B1C
+            | 0x2B50
+            | 0x2B55
+    )
 }
 
 fn pad_right(s: &str, width: usize) -> String {
@@ -625,36 +865,60 @@ fn pad_left(s: &str, width: usize) -> String {
     }
 }
 
-/// Cache rate_limits to $CLAUDE_CONFIG_DIR/.rate-limits.json for ycusage
-fn cache_rate_limits(raw: &str) {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) else {
-        return;
+// A cache with the same rate_limits younger than this is not rewritten.
+// ycusage only labels data older than 3600s as stale.
+const RATE_LIMITS_REWRITE_SECONDS: u64 = 300;
+
+/// $CLAUDE_CONFIG_DIR/.rate-limits.json, read by bin/ycusage.ps1.
+/// The rate_limits are re-serialized from the typed struct, so fields other
+/// than five_hour/seven_day.{used_percentage,resets_at} are dropped, and
+/// stdin whose rate_limits themselves do not fit the struct writes nothing.
+/// A type mismatch elsewhere in the stdin does not stop the write
+/// (parse_input falls back to the rate_limits alone). ycusage reads only
+/// those fields and cached_at.
+#[derive(Deserialize, Serialize)]
+struct RateLimitsCache {
+    rate_limits: RateLimits,
+    cached_at: u64,
+}
+
+/// Whether the cache needs writing: skipped while the existing file holds
+/// the same rate_limits written less than RATE_LIMITS_REWRITE_SECONDS ago.
+fn rate_limits_cache_stale(existing: Option<&str>, rl: &RateLimits, now: u64) -> bool {
+    let Some(prev) = existing.and_then(|s| serde_json::from_str::<RateLimitsCache>(s).ok()) else {
+        return true;
     };
-    let Some(rl) = v.get("rate_limits") else { return };
-    if rl.is_null() {
+    let recent = prev.cached_at <= now && now - prev.cached_at < RATE_LIMITS_REWRITE_SECONDS;
+    !(recent && prev.rate_limits == *rl)
+}
+
+/// Plain overwrite, not temp + rename: .rate-limits.json can be a symlink
+/// (e.g. under ~/.claude-N.lock), and a rename would replace the link.
+fn cache_rate_limits(dir: Option<&str>, rl: &RateLimits, now: u64) {
+    let Some(dir) = dir else { return };
+    let path = format!("{dir}/.rate-limits.json");
+    let existing = std::fs::read_to_string(&path).ok();
+    if !rate_limits_cache_stale(existing.as_deref(), rl, now) {
         return;
     }
-    let dir = env::var("CLAUDE_CONFIG_DIR").unwrap_or_else(|_| {
-        env::var("USERPROFILE")
-            .or_else(|_| env::var("HOME"))
-            .map(|h| format!("{h}/.claude"))
-            .unwrap_or_default()
-    });
-    if dir.is_empty() {
-        return;
+    let cache = RateLimitsCache { rate_limits: rl.clone(), cached_at: now };
+    if let Ok(json_str) = serde_json::to_string(&cache) {
+        let _ = std::fs::write(&path, json_str);
     }
-    let cache = serde_json::json!({
-        "rate_limits": rl,
-        "cached_at": now_unix() as u64,
-    });
-    let _ = std::fs::write(format!("{dir}/.rate-limits.json"), cache.to_string());
 }
 
 fn main() {
-    // Claude Code が in-flight 実行をキャンセルした際、Windows では
-    // 孫プロセスとして取り残されることがあり、stdin の EOF が来ず
-    // read_to_string で永遠にブロックしてゾンビ化する。
-    // 正常実行は数ms〜3秒(GLM API timeout=3s)なので 5秒で強制終了する。
+    // Watchdog: a normal run takes a few ms, or about GLM_API_TIMEOUT when it
+    // calls the GLM API, so exit after 5s if this process stalls once main is
+    // running, e.g. stdin never reaches EOF or a network call hangs. DNS
+    // resolution is not covered by GLM_API_TIMEOUT (ureq 2 resolves without a
+    // deadline) and can run until this exit; the attempt marker written
+    // before the call keeps later runs off the network meanwhile.
+    // It does not cover the orphans seen on Windows: Git Bash (MSYS) creates
+    // the child suspended, and if Claude Code cancels the bash in between,
+    // the child stays suspended with main never run (1 thread, CPU 0), so
+    // this thread never starts. bin/reap-orphans.ps1 (Task Scheduler task
+    // OrphanReaper, every 5 minutes) stops those.
     std::thread::spawn(|| {
         std::thread::sleep(std::time::Duration::from_secs(5));
         std::process::exit(2);
@@ -662,20 +926,40 @@ fn main() {
 
     let mut input_str = String::new();
     let _ = io::stdin().read_to_string(&mut input_str);
-    let j: Input = serde_json::from_str(&input_str).unwrap_or_default();
+    let j = parse_input(&input_str);
 
-    let LoadedRules { model: rules, provider: provider_rules } = load_rules();
+    let dir = config_dir();
+    let dir = dir.as_deref();
 
     let provider = detect_provider();
     let is_glm = provider.is_some();
-    let provider_badge = provider.as_ref().and_then(|p| provider_badge_with_rules(p, &provider_rules))
+
+    // Model
+    let model_stdin = j.model.as_ref().and_then(|m| m.display_name.clone()).unwrap_or_default();
+    let model_raw = if !model_stdin.is_empty() {
+        model_stdin
+    } else {
+        j.transcript_path
+            .as_deref()
+            .and_then(read_model_from_transcript)
+            .unwrap_or_else(|| "?".into())
+    };
+
+    let rules = if rules_needed(&model_raw, provider.as_deref()) {
+        load_rules(dir)
+    } else {
+        RulesFile::default()
+    };
+    let provider_badge = provider.as_ref().and_then(|p| provider_badge_with_rules(p, &rules.provider))
         .unwrap_or_default();
 
     // Rate limits: GLM or Anthropic
     let rate_limits = if is_glm {
-        Some(get_glm_rate_limits())
+        Some(get_glm_rate_limits(dir))
     } else {
-        cache_rate_limits(&input_str);
+        if let Some(rl) = &j.rate_limits {
+            cache_rate_limits(dir, rl, now_unix() as u64);
+        }
         j.rate_limits.clone()
     };
     let has_rl = rate_limits.is_some();
@@ -691,18 +975,8 @@ fn main() {
         (0, 0, 0, 0)
     };
 
-    // Model
-    let model_stdin = j.model.as_ref().and_then(|m| m.display_name.clone()).unwrap_or_default();
-    let model_raw = if !model_stdin.is_empty() {
-        model_stdin
-    } else {
-        j.transcript_path
-            .as_deref()
-            .and_then(read_model_from_transcript)
-            .unwrap_or_else(|| "?".into())
-    };
-    let model = model_short_with_rules(&model_raw, &rules);
-    let acc = acc_from_env();
+    let model = model_short_with_rules(&model_raw, &rules.model);
+    let acc = acc_from_dir(dir);
     let acc_str = if acc > 0 && (acc as usize) <= ACC_ICONS.len() {
         ACC_ICONS[(acc - 1) as usize].to_string()
     } else {
@@ -791,5 +1065,546 @@ fn main() {
             out.push('\n');
         }
     }
-    print!("{out}");
+    // print! panics when the pipe is gone (parent bash killed); with
+    // panic = "abort" that would be a crash, so write and ignore errors.
+    use std::io::Write as _;
+    let mut stdout = io::stdout().lock();
+    let _ = stdout.write_all(out.as_bytes());
+    let _ = stdout.flush();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn zai_cache(cached_at: u64, failed_at: u64) -> CachedRateLimits {
+        CachedRateLimits {
+            cached_at,
+            provider: Some("z.ai".into()),
+            rate_limits: Some(RateLimits::default()),
+            failed_at,
+        }
+    }
+
+    #[test]
+    fn success_cache_fresh_until_ttl() {
+        let now = 1_000_000;
+        let c = zai_cache(now - (CACHE_TTL_SECONDS - 1), 0);
+        assert!(cache_is_fresh(&c, now));
+        let c = zai_cache(now - CACHE_TTL_SECONDS, 0);
+        assert!(!cache_is_fresh(&c, now));
+    }
+
+    #[test]
+    fn failure_cache_fresh_until_fail_ttl() {
+        let now = 1_000_000;
+        // last success long ago, recent failure
+        let c = zai_cache(now - 3600, now - (FAIL_CACHE_TTL_SECONDS - 1));
+        assert!(cache_is_fresh(&c, now));
+        let c = zai_cache(now - 3600, now - FAIL_CACHE_TTL_SECONDS);
+        assert!(!cache_is_fresh(&c, now));
+        // never succeeded
+        let c = zai_cache(0, now - 1);
+        assert!(cache_is_fresh(&c, now));
+        let c = zai_cache(0, now - FAIL_CACHE_TTL_SECONDS);
+        assert!(!cache_is_fresh(&c, now));
+    }
+
+    #[test]
+    fn non_zai_cache_is_never_fresh() {
+        let now = 1_000_000;
+        let mut c = zai_cache(now, now);
+        c.provider = None;
+        assert!(!cache_is_fresh(&c, now));
+    }
+
+    #[test]
+    fn legacy_cache_without_failed_at_is_success() {
+        let json = r#"{"cached_at":1000,"provider":"z.ai","rate_limits":{"five_hour":{"used_percentage":12.0,"resets_at":2000},"seven_day":null}}"#;
+        let c: CachedRateLimits = serde_json::from_str(json).unwrap();
+        assert_eq!(c.failed_at, 0);
+        assert_eq!(c.cached_at, 1000);
+        assert!(cache_is_fresh(&c, 1000 + CACHE_TTL_SECONDS - 1));
+        assert!(!cache_is_fresh(&c, 1000 + CACHE_TTL_SECONDS));
+    }
+
+    #[test]
+    fn failure_cache_keeps_data_and_skips_network_next_run() {
+        let now = 1_000_000;
+        let mut prev = zai_cache(now - 3600, 0);
+        prev.rate_limits.as_mut().unwrap().five_hour = Some(Window {
+            used_percentage: Some(42.0),
+            resets_at: None,
+        });
+        let c = failure_cache(Some(prev), now);
+        assert_eq!(c.cached_at, now - 3600);
+        assert_eq!(c.failed_at, now);
+        assert_eq!(c.provider.as_deref(), Some("z.ai"));
+        assert_eq!(
+            c.rate_limits.as_ref().and_then(|r| r.five_hour.as_ref()).and_then(|w| w.used_percentage),
+            Some(42.0)
+        );
+        assert!(cache_is_fresh(&c, now + 1));
+        assert!(!cache_is_fresh(&c, now + FAIL_CACHE_TTL_SECONDS));
+
+        // no previous cache
+        let c = failure_cache(None, now);
+        assert_eq!(c.cached_at, 0);
+        assert!(c.rate_limits.is_none());
+        assert!(cache_is_fresh(&c, now + 1));
+
+        // a previous cache that never succeeded has no data to keep
+        let c = failure_cache(Some(zai_cache(0, now - 100)), now);
+        assert!(c.rate_limits.is_none());
+    }
+
+    #[test]
+    fn failure_cache_without_data_writes_null_rate_limits() {
+        // ycusage treats a null rate_limits as no cache; an object with null
+        // windows would show as 0% usage.
+        let v = serde_json::to_value(failure_cache(None, 1_000)).unwrap();
+        assert!(v.get("rate_limits").is_some_and(|r| r.is_null()));
+        let back: CachedRateLimits = serde_json::from_value(v).unwrap();
+        assert!(back.rate_limits.is_none());
+        // a cache without the key also deserializes
+        let c: CachedRateLimits =
+            serde_json::from_str(r#"{"cached_at":0,"provider":"z.ai","failed_at":5}"#).unwrap();
+        assert!(c.rate_limits.is_none());
+    }
+
+    #[test]
+    fn attempt_marker_keeps_data_and_skips_network_until_fail_ttl() {
+        // a run killed after writing the marker (DNS hang, cancel) must still
+        // keep the next runs off the network
+        let now = 1_000_000;
+        let mut prev = zai_cache(now - 3600, 0);
+        prev.rate_limits.as_mut().unwrap().five_hour = Some(Window {
+            used_percentage: Some(42.0),
+            resets_at: None,
+        });
+        assert!(!cache_is_fresh(&prev, now));
+        let m = attempt_marker(&GlmCacheRead::Parsed(prev), now).unwrap();
+        assert_eq!(m.cached_at, now - 3600);
+        assert_eq!(m.failed_at, now);
+        assert_eq!(
+            m.rate_limits.as_ref().and_then(|r| r.five_hour.as_ref()).and_then(|w| w.used_percentage),
+            Some(42.0)
+        );
+        assert!(cache_is_fresh(&m, now + FAIL_CACHE_TTL_SECONDS - 1));
+        assert!(!cache_is_fresh(&m, now + FAIL_CACHE_TTL_SECONDS));
+
+        // no cache yet: a marker without data
+        let m = attempt_marker(&GlmCacheRead::Missing, now).unwrap();
+        assert_eq!(m.cached_at, 0);
+        assert!(m.rate_limits.is_none());
+        assert!(cache_is_fresh(&m, now + 1));
+
+        // a possibly torn cache is left alone
+        assert!(attempt_marker(&GlmCacheRead::Unparsable, now).is_none());
+    }
+
+    #[test]
+    fn fetch_failure_does_not_overwrite_unparsable_cache() {
+        // a torn read of a good cache must not be replaced by an empty one
+        let partial = br#"{"cached_at":1000,"provider":"z.ai","rate_li"#;
+        let f = TempFile::new("glm-torn", partial);
+        let rl = glm_fetch_failed(f.path(), GlmCacheRead::Unparsable, 2_000, "test");
+        assert!(rl.five_hour.is_none() && rl.seven_day.is_none());
+        assert_eq!(std::fs::read(f.path()).unwrap(), partial);
+
+        // a missing cache gets a failure record with null rate_limits
+        let f = TempFile::new("glm-missing", b"");
+        std::fs::remove_file(f.path()).unwrap();
+        glm_fetch_failed(f.path(), GlmCacheRead::Missing, 2_000, "test");
+        let c: CachedRateLimits =
+            serde_json::from_str(&std::fs::read_to_string(f.path()).unwrap()).unwrap();
+        assert_eq!(c.failed_at, 2_000);
+        assert!(c.rate_limits.is_none());
+    }
+
+    #[test]
+    fn read_glm_cache_treats_only_recent_unparsable_file_as_torn() {
+        let f = TempFile::new("glm-read", b"{\"cached_at\":1");
+        assert!(matches!(read_glm_cache(f.path()), GlmCacheRead::Unparsable));
+
+        let old = std::time::SystemTime::now() - TORN_WRITE_WINDOW * 2;
+        std::fs::File::options().write(true).open(f.path()).unwrap().set_modified(old).unwrap();
+        assert!(matches!(read_glm_cache(f.path()), GlmCacheRead::Missing));
+
+        std::fs::write(f.path(), r#"{"cached_at":1,"provider":"z.ai","rate_limits":null}"#).unwrap();
+        assert!(matches!(read_glm_cache(f.path()), GlmCacheRead::Parsed(_)));
+
+        std::fs::remove_file(f.path()).unwrap();
+        assert!(matches!(read_glm_cache(f.path()), GlmCacheRead::Missing));
+    }
+
+    struct TempFile(std::path::PathBuf);
+
+    impl TempFile {
+        fn new(name: &str, content: &[u8]) -> Self {
+            let path = std::env::temp_dir()
+                .join(format!("claude-statusline-test-{}-{name}.jsonl", std::process::id()));
+            std::fs::write(&path, content).unwrap();
+            TempFile(path)
+        }
+        fn path(&self) -> &str {
+            self.0.to_str().unwrap()
+        }
+    }
+
+    impl Drop for TempFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    fn assistant_line(model: &str) -> String {
+        format!("{{\"type\":\"assistant\",\"message\":{{\"model\":\"{model}\",\"content\":[]}}}}\n")
+    }
+
+    #[test]
+    fn transcript_skips_partial_last_line() {
+        let content = format!(
+            "{{\"type\":\"user\"}}\n{}{{\"type\":\"assistant\",\"mess",
+            assistant_line("glm-4.6")
+        );
+        let f = TempFile::new("partial", content.as_bytes());
+        assert_eq!(read_model_from_transcript(f.path()).as_deref(), Some("glm-4.6"));
+    }
+
+    #[test]
+    fn transcript_skips_assistant_line_without_model() {
+        let content = format!(
+            "{}{{\"type\":\"assistant\",\"message\":{{\"content\":[]}}}}\n{{\"type\":\"assistant\"}}\n",
+            assistant_line("glm-4.5")
+        );
+        let f = TempFile::new("nomodel", content.as_bytes());
+        assert_eq!(read_model_from_transcript(f.path()).as_deref(), Some("glm-4.5"));
+    }
+
+    #[test]
+    fn transcript_tolerates_invalid_utf8() {
+        let mut content = b"\xff\xfe{\"type\":\"user\",\"x\":\"\xc3\"}\n".to_vec();
+        content.extend_from_slice(assistant_line("glm-4.6").as_bytes());
+        let f = TempFile::new("utf8", &content);
+        assert_eq!(read_model_from_transcript(f.path()).as_deref(), Some("glm-4.6"));
+    }
+
+    #[test]
+    fn transcript_larger_than_window_returns_tail_model() {
+        let filler = "{\"type\":\"user\",\"message\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}\n";
+        let mut content = assistant_line("head-model");
+        for _ in 0..12_000 {
+            content.push_str(filler);
+        }
+        content.push_str(&assistant_line("tail-model"));
+        content.push_str(filler);
+        assert!(content.len() as u64 > TRANSCRIPT_TAIL_INITIAL);
+        let f = TempFile::new("large", content.as_bytes());
+        assert_eq!(read_model_from_transcript(f.path()).as_deref(), Some("tail-model"));
+    }
+
+    #[test]
+    fn transcript_window_doubles_until_cap() {
+        let filler = "{\"type\":\"user\",\"message\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}\n";
+        let mut content = assistant_line("near-model");
+        for _ in 0..10 {
+            content.push_str(filler);
+        }
+        let f = TempFile::new("double", content.as_bytes());
+        // initial window 64B misses the model; doubling reaches it
+        assert_eq!(
+            read_model_from_transcript_tail(f.path(), 64, 4096).as_deref(),
+            Some("near-model")
+        );
+        // cap below the model's offset: not found
+        assert_eq!(read_model_from_transcript_tail(f.path(), 64, 256), None);
+    }
+
+    #[test]
+    fn transcript_line_at_window_edge_is_kept() {
+        let line = assistant_line("edge-model");
+        let content = format!("{{\"type\":\"user\"}}\n{line}");
+        let f = TempFile::new("edge", content.as_bytes());
+        let window = line.len() as u64;
+        assert_eq!(
+            read_model_from_transcript_tail(f.path(), window, window).as_deref(),
+            Some("edge-model")
+        );
+    }
+
+    #[test]
+    fn transcript_missing_or_empty_file() {
+        assert_eq!(read_model_from_transcript("Z:/nonexistent/claude-statusline.jsonl"), None);
+        let f = TempFile::new("empty", b"");
+        assert_eq!(read_model_from_transcript(f.path()), None);
+    }
+
+    #[test]
+    fn cache_json_keeps_key_names() {
+        let v = serde_json::to_value(zai_cache(5, 0)).unwrap();
+        for key in ["cached_at", "provider", "rate_limits", "failed_at"] {
+            assert!(v.get(key).is_some(), "missing {key}");
+        }
+    }
+
+    fn env_of<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |name| vars.iter().find(|(k, _)| *k == name).map(|(_, v)| v.to_string())
+    }
+
+    #[test]
+    fn config_dir_prefers_claude_config_dir() {
+        let vars = [("CLAUDE_CONFIG_DIR", "C:/u/.claude-3"), ("USERPROFILE", "C:/u"), ("HOME", "/h")];
+        assert_eq!(config_dir_from(env_of(&vars)).as_deref(), Some("C:/u/.claude-3"));
+    }
+
+    #[test]
+    fn config_dir_treats_empty_as_unset() {
+        let vars = [("CLAUDE_CONFIG_DIR", ""), ("USERPROFILE", "C:/u"), ("HOME", "/h")];
+        assert_eq!(config_dir_from(env_of(&vars)).as_deref(), Some("C:/u/.claude"));
+        let vars = [("CLAUDE_CONFIG_DIR", ""), ("USERPROFILE", ""), ("HOME", "/h")];
+        assert_eq!(config_dir_from(env_of(&vars)).as_deref(), Some("/h/.claude"));
+        let vars = [("CLAUDE_CONFIG_DIR", ""), ("USERPROFILE", ""), ("HOME", "")];
+        assert_eq!(config_dir_from(env_of(&vars)), None);
+    }
+
+    #[test]
+    fn config_dir_falls_back_userprofile_then_home() {
+        let vars = [("USERPROFILE", "C:/u"), ("HOME", "/h")];
+        assert_eq!(config_dir_from(env_of(&vars)).as_deref(), Some("C:/u/.claude"));
+        let vars = [("HOME", "/h")];
+        assert_eq!(config_dir_from(env_of(&vars)).as_deref(), Some("/h/.claude"));
+        assert_eq!(config_dir_from(env_of(&[])), None);
+    }
+
+    #[test]
+    fn acc_from_dir_reads_trailing_digits() {
+        assert_eq!(acc_from_dir(Some("C:/u/.claude-3")), 3);
+        assert_eq!(acc_from_dir(Some("C:\\u\\.claude-9\\")), 9);
+        assert_eq!(acc_from_dir(Some("/h/.claude-12/")), 12);
+        // every fallback ends in /.claude, whichever of USERPROFILE/HOME is used
+        assert_eq!(acc_from_dir(Some("C:/u3/.claude")), 0);
+        assert_eq!(acc_from_dir(Some("/h3/.claude")), 0);
+        assert_eq!(acc_from_dir(None), 0);
+    }
+
+    fn rule(names: &[&str], display: &str) -> Rule {
+        Rule {
+            name: names.iter().map(|s| s.to_string()).collect(),
+            display: display.into(),
+            color: "1,2,3".into(),
+        }
+    }
+
+    #[test]
+    fn match_rule_is_case_insensitive_and_first_wins() {
+        let rules = [rule(&["glm-4.6", "GLM-4.6-Air"], "a"), rule(&["glm-4.6"], "b")];
+        assert_eq!(match_rule("GLM-4.6", &rules).map(|r| r.display.as_str()), Some("a"));
+        assert_eq!(match_rule("glm-4.6-air", &rules).map(|r| r.display.as_str()), Some("a"));
+        assert!(match_rule("glm-4", &rules).is_none());
+        assert!(match_rule("x", &[]).is_none());
+    }
+
+    #[test]
+    fn bundled_rules_parse() {
+        let parsed: RulesFile = toml::from_str(include_str!("../statusline-models.toml")).unwrap();
+        assert!(!parsed.model.is_empty() || !parsed.provider.is_empty());
+    }
+
+    #[test]
+    fn rules_not_needed_for_anthropic_models() {
+        assert!(!rules_needed("Opus 5.5", None));
+        assert!(!rules_needed("Sonnet 4.6 (1M context)", None));
+        assert!(!rules_needed("Haiku 4.5", None));
+        // no version: anthropic_badge gives None, rules decide
+        assert!(rules_needed("Opus", None));
+        assert!(rules_needed("glm-4.6", None));
+        assert!(rules_needed("?", None));
+        // provider badge always needs the rules
+        assert!(rules_needed("Opus 5.5", Some("z.ai")));
+    }
+
+    fn rl(pct5: f64) -> RateLimits {
+        RateLimits {
+            five_hour: Some(Window {
+                used_percentage: Some(pct5),
+                resets_at: Some(serde_json::json!(1791699600)),
+            }),
+            seven_day: Some(Window {
+                used_percentage: Some(22.0),
+                resets_at: Some(serde_json::json!(1792180800)),
+            }),
+        }
+    }
+
+    fn rl_cache_json(r: &RateLimits, cached_at: u64) -> String {
+        serde_json::to_string(&RateLimitsCache { rate_limits: r.clone(), cached_at }).unwrap()
+    }
+
+    #[test]
+    fn rate_limits_cache_skips_same_recent() {
+        let now = 1_000_000;
+        let same = rl_cache_json(&rl(23.0), now - (RATE_LIMITS_REWRITE_SECONDS - 1));
+        assert!(!rate_limits_cache_stale(Some(&same), &rl(23.0), now));
+        // too old
+        let old = rl_cache_json(&rl(23.0), now - RATE_LIMITS_REWRITE_SECONDS);
+        assert!(rate_limits_cache_stale(Some(&old), &rl(23.0), now));
+        // changed
+        assert!(rate_limits_cache_stale(Some(&same), &rl(24.0), now));
+        // written by a clock ahead of ours
+        let future = rl_cache_json(&rl(23.0), now + 10);
+        assert!(rate_limits_cache_stale(Some(&future), &rl(23.0), now));
+        // missing or unreadable
+        assert!(rate_limits_cache_stale(None, &rl(23.0), now));
+        assert!(rate_limits_cache_stale(Some("not json"), &rl(23.0), now));
+    }
+
+    #[test]
+    fn rate_limits_cache_compares_values_not_text() {
+        // written by the raw-copy version: integers and extra fields
+        let now = 1_000_000;
+        let legacy = format!(
+            r#"{{"cached_at":{},"rate_limits":{{"five_hour":{{"used_percentage":23,"resets_at":1791699600}},"seven_day":{{"used_percentage":22,"resets_at":1792180800}},"extra":1}}}}"#,
+            now - 5
+        );
+        assert!(!rate_limits_cache_stale(Some(&legacy), &rl(23.0), now));
+    }
+
+    #[test]
+    fn cache_rate_limits_writes_only_when_stale() {
+        let dir = std::env::temp_dir()
+            .join(format!("claude-statusline-test-{}-rlcache", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let d = dir.to_str().unwrap();
+        let path = dir.join(".rate-limits.json");
+        let read = || serde_json::from_str::<RateLimitsCache>(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let now = 1_000_000;
+
+        cache_rate_limits(Some(d), &rl(23.0), now);
+        assert_eq!(read().cached_at, now);
+        // same data shortly after: file left as is
+        cache_rate_limits(Some(d), &rl(23.0), now + 10);
+        assert_eq!(read().cached_at, now);
+        // changed data: rewritten
+        cache_rate_limits(Some(d), &rl(30.0), now + 20);
+        let c = read();
+        assert_eq!(c.cached_at, now + 20);
+        assert_eq!(c.rate_limits, rl(30.0));
+        // same data after the rewrite interval: rewritten
+        cache_rate_limits(Some(d), &rl(30.0), now + 20 + RATE_LIMITS_REWRITE_SECONDS);
+        assert_eq!(read().cached_at, now + 20 + RATE_LIMITS_REWRITE_SECONDS);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // A type mismatch in an unrelated field must not lose the rate_limits.
+    const STDIN_NULL_COST: &str = r#"{"model":{"display_name":"Opus 5.5"},"cost":{"total_cost_usd":null},"rate_limits":{"five_hour":{"used_percentage":5,"resets_at":1791699600}}}"#;
+
+    #[test]
+    fn parse_input_keeps_rate_limits_when_other_fields_mismatch() {
+        // precondition: the full Input really fails on this stdin
+        assert!(serde_json::from_str::<Input>(STDIN_NULL_COST).is_err());
+        let j = parse_input(STDIN_NULL_COST);
+        let rl = j.rate_limits.expect("rate_limits kept");
+        let w = rl.five_hour.expect("five_hour kept");
+        assert_eq!(w.used_percentage, Some(5.0));
+        assert_eq!(w.resets_at, Some(serde_json::json!(1791699600)));
+        assert!(rl.seven_day.is_none());
+        // the rest falls back to defaults, as before
+        assert!(j.model.is_none());
+        // a well-formed stdin still parses in full
+        let ok = parse_input(r#"{"model":{"display_name":"Opus 5.5"},"rate_limits":{"five_hour":{"used_percentage":5}}}"#);
+        assert_eq!(ok.model.and_then(|m| m.display_name).as_deref(), Some("Opus 5.5"));
+        assert!(ok.rate_limits.is_some());
+        // unparsable stdin or no rate_limits: nothing
+        assert!(parse_input("not json").rate_limits.is_none());
+        assert!(parse_input(r#"{"cost":{"total_cost_usd":null}}"#).rate_limits.is_none());
+    }
+
+    #[test]
+    fn cache_rate_limits_written_when_other_fields_mismatch() {
+        let dir = std::env::temp_dir()
+            .join(format!("claude-statusline-test-{}-rlcache-mismatch", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(".rate-limits.json");
+        let _ = std::fs::remove_file(&path);
+        let j = parse_input(STDIN_NULL_COST);
+        cache_rate_limits(dir.to_str(), j.rate_limits.as_ref().unwrap(), 1_000_000);
+        let c: RateLimitsCache = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(c.cached_at, 1_000_000);
+        assert_eq!(c.rate_limits.five_hour.and_then(|w| w.used_percentage), Some(5.0));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn display_width_counts_bmp_emoji_as_wide() {
+        assert_eq!(display_width("❓"), 2);
+        assert_eq!(display_width("❓ foo"), 6);
+        assert_eq!(display_width("\x1b[38;2;150;150;150m❓ ?\x1b[0m"), 4);
+        assert_eq!(display_width("⚡✅⭐❔❕❗"), 12);
+        // U+FE0F after a wide emoji adds nothing
+        assert_eq!(display_width("❓\u{fe0f}"), 2);
+    }
+
+    #[test]
+    fn display_width_keeps_text_symbols_narrow() {
+        assert_eq!(display_width("🅾"), 1);
+        assert_eq!(display_width("🅶"), 1);
+        assert_eq!(display_width("①⑨"), 2);
+        assert_eq!(display_width("▓░▼▲"), 4);
+        assert_eq!(display_width("⧗"), 1);
+        // emoji with text presentation by default (Emoji_Presentation=No)
+        assert_eq!(display_width("✔❤⚠"), 3);
+        assert_eq!(display_width("漢字かな"), 8);
+    }
+
+    #[test]
+    fn iso8601_applies_utc_offset() {
+        let utc = parse_iso8601("2026-10-11T03:00:00Z").unwrap();
+        assert_eq!(utc, 1_791_687_600.0);
+        assert_eq!(parse_iso8601("2026-10-11T03:00:00"), Some(utc));
+        assert_eq!(parse_iso8601("2026-10-11T03:00:00z"), Some(utc));
+        assert_eq!(parse_iso8601("2026-10-11T12:00:00+09:00"), Some(utc));
+        assert_eq!(parse_iso8601("2026-10-11T12:00:00+0900"), Some(utc));
+        assert_eq!(parse_iso8601("2026-10-11T12:00:00+09"), Some(utc));
+        assert_eq!(parse_iso8601("2026-10-10T22:30:00-04:30"), Some(utc));
+        assert_eq!(parse_iso8601("2026-10-11T03:00:00.123Z"), Some(utc));
+        assert_eq!(parse_iso8601("2026-10-11T12:00:00.5+09:00"), Some(utc));
+        assert_eq!(parse_iso8601(" 2026-10-11T03:00:00Z \n"), Some(utc));
+    }
+
+    #[test]
+    fn iso8601_rejects_malformed_without_panic() {
+        for s in [
+            "2026-10-1あT12:00:00",
+            "あ026-10-11T12:00:00",
+            "2026-10-11T12:00:0あ",
+            "2026-10-11T12:00:00+あa",
+            "2026-10-11T12:00:00+0あ",
+            "2026-10-11T12:00:00+09:あ",
+            "2026-10-11T12:00:00あ",
+            "2026-10-11T12:00:00.",
+            "2026-10-11T12:00:00.Z",
+            "2026-10-11T12:00:00Zx",
+            "2026-10-11T12:00:00+9",
+            "2026-10-11T12:00:00+24:00",
+            "2026-10-11T12:00:00+09:60",
+            "2026-10-11T12:00:00 UTC",
+            "2026-10-11T12:00",
+            "2026-10-11",
+            "",
+        ] {
+            assert_eq!(parse_iso8601(s), None, "{s:?}");
+        }
+    }
+
+    #[test]
+    fn resets_at_number_is_used_as_is() {
+        assert_eq!(parse_resets_at(&serde_json::json!(1791699600)), Some(1_791_699_600.0));
+        assert_eq!(
+            parse_resets_at(&serde_json::json!("2026-10-11T12:00:00+09:00")),
+            Some(1_791_687_600.0)
+        );
+        assert_eq!(parse_resets_at(&serde_json::json!(null)), None);
+    }
 }
