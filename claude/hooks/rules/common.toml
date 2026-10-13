@@ -356,3 +356,18 @@ all = ['(^|[[:space:];&|(])cargo[[:space:]]+fmt([[:space:]]|$)']
 none = ['--check']
 action = "context"
 message = '''cargo fmt は workspace 全体(-p ならその crate 全体)を整形する。整形されていない repo では触っていないファイルまで書き換わる。先に cargo fmt --check で差の出るファイルを見るか、触ったファイルだけ rustfmt --edition <crate の edition> <file> で整える。rustfmt はそのファイルを LF にするので、作業ツリーが CRLF なら unix2dos -q <file> で戻す。'''
+
+# `git checkout <file>` / `git restore` put the whole file back to HEAD, so
+# undoing a temporary probe this way also drops the real uncommitted edits in
+# the same file (2026-10-13: a probe on a test script was undone with git
+# checkout and took an unrelated, uncommitted removal with it; it was noticed
+# and re-applied). docs/git.md had the backup-copy advice and it was missed.
+# Branch names with / or . also match; the note is harmless there.
+[[rule]]
+id = "checkout-file-reminder"
+event = "PreToolUse"
+tools = '^Bash$'
+fields = ["tool_input.command"]
+all = ['(^|[^[:alnum:]_-])git([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+(checkout([[:space:]]+[^[:space:]|;&]+)*[[:space:]]+(--|[^-[:space:]|;&]*[./][^[:space:]|;&]*)|restore)([[:space:]]|$)']
+action = "context"
+message = '''git checkout <file> / git restore はファイル全体を HEAD (か index) の形に戻す。同じファイルに残したい未 commit の変更があると、それも消える。一時の試しを取り消すだけなら、試す前に控えた複製から戻す (cp)。戻す前に git diff <file> で消える中身を確かめる (docs/git.md「HEAD にない途中の形へは git checkout で戻せない」)。'''

@@ -837,3 +837,39 @@ name = "cargo-format-other-word"
 rule = "cargo-fmt-scope-reminder"
 expect = "quiet"
 command = "cargo fmtx && echo cargo-fmt"
+
+[[case]]
+name = "checkout-dashdash"
+rule = "checkout-file-reminder"
+expect = "context"
+command = '''git checkout -- scripts/check-tick-golden.ts'''
+
+[[case]]
+name = "checkout-path"
+rule = "checkout-file-reminder"
+expect = "context"
+command = '''cd /c/repo && git checkout src/sim/tick/policy.ts sim-rs/src/world.rs && git status --short'''
+
+[[case]]
+name = "restore-file"
+rule = "checkout-file-reminder"
+expect = "context"
+command = '''git restore src/a.ts'''
+
+[[case]]
+name = "checkout-branch"
+rule = "checkout-file-reminder"
+expect = "quiet"
+command = '''git checkout main'''
+
+[[case]]
+name = "checkout-new-branch"
+rule = "checkout-file-reminder"
+expect = "quiet"
+command = '''git checkout -b fix-replay'''
+
+[[case]]
+name = "log-mentions-checkout"
+rule = "checkout-file-reminder"
+expect = "quiet"
+command = '''git log --oneline -3'''
