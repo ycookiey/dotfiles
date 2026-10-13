@@ -345,6 +345,17 @@ all = ['「[^」]*」.*「[^」]*」.*「']
 action = "context"
 message = '''外に出る文のカギかっこは、画面の表記と発言の引用だけに使う。強調や用語の囲みに使わない(docs/external-japanese.md)。'''
 
+# Slide text written by a generator script is outward Japanese too, but the two rules above only
+# watch form/message tools; the rules were skipped for a whole pptx deck.
+[[rule]]
+id = "slide-text-external-ja-reminder"
+event = "PreToolUse"
+tools = '^(Write|Edit|Bash)$'
+fields = ["tool_input.content", "tool_input.new_string", "tool_input.command"]
+all = ['pptxgenjs|addText\(|addNotes\(', '[\p{Hiragana}\p{Katakana}]']
+action = "context"
+message = '''スライドと発表者ノートの文は外に出る日本語。書いたら docs/external-japanese.md の規則を全部照らし、照らした結果を返事の冒頭に書く。'''
+
 # cargo fmt formats the whole workspace: in a repo that was never formatted
 # it rewrites dozens of untouched files (happened in dotfiles' cli).
 [[rule]]
