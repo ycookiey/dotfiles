@@ -131,13 +131,13 @@ enum Commands {
         #[arg(long)]
         failure: bool,
     },
-    /// Sync dotfiles → ~/.claude*/, scoopfile, wingetfile, mcp servers
-    /// (scoop/winget exports run at most once per 6h unless --force)
+    /// Sync dotfiles → ~/.claude*/, scoopfile, wingetfile, vscode/, mcp servers
+    /// (scoop/winget/VS Code exports run at most once per 6h unless --force)
     Sync {
         /// Path to dotfiles repo (defaults to $DOTFILES_DIR)
         #[arg(long)]
         dot: Option<String>,
-        /// Run the scoop/winget exports even if they ran within the throttle interval
+        /// Run the scoop/winget/VS Code exports even if they ran within the throttle interval
         #[arg(long)]
         force: bool,
     },

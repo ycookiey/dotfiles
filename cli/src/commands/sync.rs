@@ -5,10 +5,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime};
 
-/// Minimum time between two scoop / winget exports. Shells start `dotcli sync` in the
-/// background on every launch; the exports spawn scoop (PowerShell) and winget and take
-/// seconds, so they are throttled while the cheap merges (settings, keybindings, MCP)
-/// run every time. `--force` bypasses the throttle.
+/// Minimum time between two scoop / winget / VS Code exports. Shells start `dotcli sync`
+/// in the background on every launch; the exports spawn scoop (PowerShell), winget and
+/// code and take seconds, so they are throttled while the cheap merges (settings,
+/// keybindings, MCP) run every time. `--force` bypasses the throttle.
 const EXPORT_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
 pub fn run(dot_arg: Option<String>, force: bool) {
@@ -46,6 +46,11 @@ pub fn run(dot_arg: Option<String>, force: bool) {
         Ok(true) => synced = true,
         Ok(false) => {}
         Err(e) => eprintln!("dotcli sync winget: {e}"),
+    }
+    match sync_vscode(&dot, stamp_dir.as_deref(), force, now) {
+        Ok(true) => synced = true,
+        Ok(false) => {}
+        Err(e) => eprintln!("dotcli sync vscode: {e}"),
     }
     if let Some(home) = &home {
         match sync_mcp_servers(&dot, home, &claude_dirs) {
@@ -338,7 +343,7 @@ fn is_account_dir_name(name: &str) -> bool {
         .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
-// --- 2a) Export throttle (scoop / winget) ---
+// --- 2a) Export throttle (scoop / winget / vscode) ---
 //
 // One stamp file per export kind: `<cache_dir>/dotcli/sync-<kind>.stamp`
 // (%LOCALAPPDATA%\dotcli on Windows). Its mtime is when the last export that went on
@@ -659,6 +664,397 @@ fn export_wingetfile(dot: &Path) -> Result<Option<bool>> {
     })();
     let _ = std::fs::remove_file(&tmp);
     result
+}
+
+// --- 3b) VS Code snapshot ---
+//
+// `<dot>/vscode/` holds a read-only copy of the VS Code extension list, settings.json
+// and keybindings.json for sharing. VS Code Settings Sync stays the source of truth:
+// nothing here is linked or written back to the live profile. Secrets are replaced
+// with REDACTED before writing (see `redact_secrets`); a file that does not parse is
+// skipped rather than copied as is. vscode/README.md is maintained by hand.
+
+const REDACTED: &str = "<redacted>";
+
+/// Substrings (compared lowercased) of a key name whose value is redacted, at any depth.
+const SECRET_KEY_WORDS: &[&str] = &[
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "apikey",
+    "api_key",
+    "api-key",
+    "accesskey",
+    "access_key",
+    "credential",
+    "auth",
+    "cookie",
+    "session",
+    "private",
+];
+
+/// Prefixes of well-known token formats, with the minimum length of the rest.
+const TOKEN_PREFIXES: &[(&str, usize)] = &[
+    ("ghp_", 16),
+    ("gho_", 16),
+    ("ghu_", 16),
+    ("ghs_", 16),
+    ("ghr_", 16),
+    ("github_pat_", 16),
+    ("glpat-", 16),
+    ("xoxb-", 10),
+    ("xoxp-", 10),
+    ("xoxs-", 10),
+    ("xoxa-", 10),
+    ("AIza", 30),
+];
+
+fn vscode_user_dir() -> Option<PathBuf> {
+    dirs::config_dir().map(|d| d.join("Code").join("User"))
+}
+
+fn sync_vscode(
+    dot: &Path,
+    stamp_dir: Option<&Path>,
+    force: bool,
+    now: SystemTime,
+) -> Result<bool> {
+    let has_code = which("code").is_some();
+    let user_dir = vscode_user_dir().filter(|d| d.is_dir());
+    if !has_code && user_dir.is_none() {
+        return Ok(false);
+    }
+    run_throttled(stamp_dir, "vscode", force, now, || {
+        let extensions = if has_code { list_vscode_extensions() } else { None };
+        let export = export_vscode(
+            &dot.join("vscode"),
+            extensions.as_deref(),
+            user_dir.as_deref(),
+        )?;
+        if !export.redacted.is_empty() {
+            // Key paths only; the values never leave this process.
+            eprintln!(
+                "dotcli sync vscode: redacted {} value(s): {}",
+                export.redacted.len(),
+                export.redacted.join(", ")
+            );
+        }
+        Ok(export.produced.then_some(export.changed))
+    })
+}
+
+/// stdout of `code --list-extensions`, or None when it fails.
+fn list_vscode_extensions() -> Option<String> {
+    // code is a .cmd launcher → invoke via cmd /C like scoop
+    let out = Command::new("cmd")
+        .args(["/C", "code", "--list-extensions"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+struct VscodeExport {
+    /// At least one file was generated (whether or not it differed from the old one).
+    produced: bool,
+    /// At least one file was rewritten.
+    changed: bool,
+    /// `<file>#<JSON pointer>` of every redacted value.
+    redacted: Vec<String>,
+}
+
+/// Writes extensions.txt (from `extensions_stdout`, the output of
+/// `code --list-extensions`) and the redacted settings.json / keybindings.json found in
+/// `user_dir` into `out_dir`. A missing input leaves the matching file untouched.
+fn export_vscode(
+    out_dir: &Path,
+    extensions_stdout: Option<&str>,
+    user_dir: Option<&Path>,
+) -> Result<VscodeExport> {
+    let mut export = VscodeExport {
+        produced: false,
+        changed: false,
+        redacted: Vec::new(),
+    };
+    let mut outputs: Vec<(&str, String)> = Vec::new();
+    if let Some(list) = extensions_stdout.map(normalize_extensions)
+        && !list.is_empty()
+    {
+        outputs.push(("extensions.txt", list));
+    }
+    for name in ["settings.json", "keybindings.json"] {
+        let Some(src) = user_dir.and_then(|d| std::fs::read_to_string(d.join(name)).ok()) else {
+            continue;
+        };
+        let mut value = match parse_jsonc(&src) {
+            Ok(v) => v,
+            Err(e) => {
+                // Line/column only: never echo the source, it may hold secrets.
+                eprintln!(
+                    "dotcli sync vscode: {name} skipped (not JSONC, line {} column {})",
+                    e.line(),
+                    e.column()
+                );
+                continue;
+            }
+        };
+        for path in redact_secrets(&mut value) {
+            export.redacted.push(format!("{name}#{path}"));
+        }
+        outputs.push((name, serde_json::to_string_pretty(&value)?));
+    }
+    if outputs.is_empty() {
+        return Ok(export);
+    }
+    std::fs::create_dir_all(out_dir)?;
+    for (name, content) in outputs {
+        export.produced = true;
+        export.changed |= write_if_different(&out_dir.join(name), &content)?;
+    }
+    Ok(export)
+}
+
+/// Extension IDs from `code --list-extensions`, lowercased, sorted, deduplicated, one per
+/// line. Lines that are not `publisher.name` (blank, messages) are dropped.
+fn normalize_extensions(stdout: &str) -> String {
+    let ids: std::collections::BTreeSet<String> = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.contains('.') && !l.contains(char::is_whitespace))
+        .map(str::to_ascii_lowercase)
+        .collect();
+    ids.into_iter().collect::<Vec<_>>().join("\n")
+}
+
+/// Parses JSON with comments (`//`, `/* */`), trailing commas and a BOM, as VS Code
+/// accepts in its settings files. Comments are lost. Duplicate keys: the last one wins.
+fn parse_jsonc(src: &str) -> serde_json::Result<Value> {
+    serde_json::from_str(&strip_trailing_commas(&strip_jsonc_comments(src)))
+}
+
+fn strip_jsonc_comments(src: &str) -> String {
+    let src = src.strip_prefix('\u{feff}').unwrap_or(src);
+    let mut out = String::with_capacity(src.len());
+    let mut chars = src.chars().peekable();
+    let mut in_str = false;
+    while let Some(c) = chars.next() {
+        if in_str {
+            out.push(c);
+            if c == '\\' {
+                if let Some(n) = chars.next() {
+                    out.push(n);
+                }
+            } else if c == '"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match c {
+            '"' => {
+                in_str = true;
+                out.push(c);
+            }
+            '/' if chars.peek() == Some(&'/') => {
+                while chars.peek().is_some_and(|&n| n != '\n') {
+                    chars.next();
+                }
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                let mut prev = '\0';
+                for n in chars.by_ref() {
+                    if prev == '*' && n == '/' {
+                        break;
+                    }
+                    prev = n;
+                }
+                out.push(' ');
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Drops a `,` that only whitespace separates from the next `}` or `]` (comments must
+/// be stripped first).
+fn strip_trailing_commas(src: &str) -> String {
+    let bytes = src.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut in_str = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if in_str {
+            out.push(b);
+            if b == b'\\' && i + 1 < bytes.len() {
+                out.push(bytes[i + 1]);
+                i += 1;
+            } else if b == b'"' {
+                in_str = false;
+            }
+        } else if b == b'"' {
+            in_str = true;
+            out.push(b);
+        } else if b == b',' {
+            let next = bytes[i + 1..].iter().find(|c| !c.is_ascii_whitespace());
+            if !matches!(next, Some(b'}' | b']')) {
+                out.push(b);
+            }
+        } else {
+            out.push(b);
+        }
+        i += 1;
+    }
+    // Only ASCII bytes were dropped, so the rest is still valid UTF-8.
+    String::from_utf8(out).expect("valid UTF-8")
+}
+
+/// Replaces secrets in `value` with REDACTED and returns the JSON pointers of the
+/// replaced values.
+/// (a) A key whose name contains a SECRET_KEY_WORDS entry: its value as a whole (an
+///     object or array included), unless it is a bool, a number, null or "".
+/// (b) A string that holds a token (`string_has_secret`), wherever it is.
+fn redact_secrets(value: &mut Value) -> Vec<String> {
+    let mut paths = Vec::new();
+    redact_at(value, "", &mut paths);
+    paths
+}
+
+fn redact_at(value: &mut Value, path: &str, paths: &mut Vec<String>) {
+    match value {
+        Value::Object(map) => {
+            for (k, v) in map.iter_mut() {
+                let p = format!("{path}/{}", k.replace('~', "~0").replace('/', "~1"));
+                let harmless = match v {
+                    Value::Bool(_) | Value::Number(_) | Value::Null => true,
+                    Value::String(s) => s.is_empty(),
+                    _ => false,
+                };
+                if is_secret_key(k) && !harmless {
+                    *v = Value::String(REDACTED.into());
+                    paths.push(p);
+                } else {
+                    redact_at(v, &p, paths);
+                }
+            }
+        }
+        Value::Array(items) => {
+            for (i, v) in items.iter_mut().enumerate() {
+                redact_at(v, &format!("{path}/{i}"), paths);
+            }
+        }
+        Value::String(s) => {
+            if string_has_secret(s) {
+                *value = Value::String(REDACTED.into());
+                paths.push(path.to_string());
+            }
+        }
+        _ => {}
+    }
+}
+
+fn is_secret_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    SECRET_KEY_WORDS.iter().any(|w| lower.contains(w))
+}
+
+/// Whether `s` holds a token: a known token format anywhere in it, a URL with
+/// credentials (userinfo, or a secret-named query parameter), or an opaque string
+/// (`is_opaque_token`) that is not a path or URL.
+fn string_has_secret(s: &str) -> bool {
+    s.split_whitespace().any(|piece| {
+        if let Some(i) = piece.find("://") {
+            return url_has_secret(&piece[i + 3..]);
+        }
+        piece
+            .split(|c: char| "\"'`,;=()<>[]{}".contains(c))
+            .any(|w| is_known_token(w) || (!is_path_like(w) && is_opaque_token(w)))
+    })
+}
+
+/// `rest` is a URL after `scheme://`. URLs are exempt from the opaque-string rule, but
+/// not from userinfo, secret-named query parameters and known token formats.
+fn url_has_secret(rest: &str) -> bool {
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    if rest[..authority_end].contains('@') {
+        return true;
+    }
+    let (path, query) = match rest.find(['?', '#']) {
+        Some(i) => (&rest[..i], &rest[i + 1..]),
+        None => (rest, ""),
+    };
+    if path.split('/').any(is_known_token) {
+        return true;
+    }
+    query.split(['&', '#', ';']).any(|param| {
+        let (k, v) = param.split_once('=').unwrap_or((param, ""));
+        let k = k.to_ascii_lowercase();
+        let secret_name = is_secret_key(&k)
+            || matches!(k.as_str(), "key" | "sig" | "signature" | "code" | "pass" | "pwd");
+        (secret_name && !v.is_empty()) || is_known_token(v)
+    })
+}
+
+fn is_token_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || "-_=+/.".contains(c)
+}
+
+fn is_known_token(w: &str) -> bool {
+    if w.is_empty() || !w.chars().all(is_token_char) {
+        return false;
+    }
+    let prefixed = TOKEN_PREFIXES
+        .iter()
+        .any(|(p, min)| w.strip_prefix(p).is_some_and(|rest| rest.len() >= *min));
+    // OpenAI-style `sk-…`: the rest must mix in digits so `sk-SK` and words stay.
+    let openai = w
+        .strip_prefix("sk-")
+        .is_some_and(|rest| rest.len() >= 20 && rest.chars().any(|c| c.is_ascii_digit()));
+    // AWS access key ID: AKIA + 16 of [0-9A-Z].
+    let aws = w.match_indices("AKIA").any(|(i, _)| {
+        let tail = &w.as_bytes()[i + 4..];
+        tail.len() >= 16
+            && tail[..16]
+                .iter()
+                .all(|b| b.is_ascii_digit() || b.is_ascii_uppercase())
+    });
+    // JWT: base64 of `{"` starts with eyJ.
+    let jwt = w.starts_with("eyJ") && w.len() >= 20;
+    prefixed || openai || aws || jwt
+}
+
+/// Long strings of token characters whose letters and digits alternate the way random
+/// strings do. Identifiers such as `ms-vscode-remote.remote-ssh-edit` or
+/// `workbench.action.openEditorAtIndex1` stay (no digits / a single switch).
+fn is_opaque_token(w: &str) -> bool {
+    if w.len() < 32 || !w.chars().all(is_token_char) {
+        return false;
+    }
+    let mut switches = 0;
+    let mut prev: Option<bool> = None; // Some(true) = digit, Some(false) = letter
+    for c in w.chars().filter(char::is_ascii_alphanumeric) {
+        let digit = c.is_ascii_digit();
+        if prev.is_some_and(|p| p != digit) {
+            switches += 1;
+        }
+        prev = Some(digit);
+    }
+    switches >= 3
+}
+
+fn is_path_like(w: &str) -> bool {
+    let b = w.as_bytes();
+    w.starts_with('/')
+        || w.starts_with('~')
+        || w.starts_with('\\')
+        || w.starts_with("./")
+        || w.starts_with("../")
+        || (b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && matches!(b[2], b'\\' | b'/'))
 }
 
 // --- 4) MCP servers placeholder expansion + injection ---
@@ -1409,5 +1805,288 @@ mod tests {
         }
         // Nothing left to change on a second run.
         assert!(!super::sync_mcp_servers(&dot, &home, &dirs).unwrap());
+    }
+
+    mod vscode {
+        use super::super::{
+            REDACTED, export_vscode, list_vscode_extensions, normalize_extensions, parse_jsonc,
+            redact_secrets, string_has_secret, vscode_user_dir,
+        };
+        use super::TempDir;
+        use serde_json::{Value, json};
+        use std::path::Path;
+
+        // Token-shaped test values are assembled at run time so the source holds no
+        // literal that secret scanners would flag. All of them are fake.
+        fn fake_ghp() -> String {
+            format!("ghp_{}", "aB3".repeat(12))
+        }
+
+        fn fake_secrets() -> Vec<String> {
+            let ghp = fake_ghp();
+            vec![
+                ghp.clone(),
+                format!("github_pat_{}", "x9Y".repeat(10)),
+                format!("gho_{}", "Qw8".repeat(12)),
+                format!("sk-{}", "proj7Q".repeat(6)),
+                format!("xoxb-{}", "1234-5678".repeat(2)),
+                format!("AKIA{}", "Q7".repeat(8)),
+                format!("prefixAKIA{}", "Z1".repeat(8)),
+                format!("AIza{}", "Sy0-x".repeat(7)),
+                format!("eyJ{}.eyJ{}.{}", "hbGciOiJIUzI1NiJ9", "zdWIiOiIxIn0", "c2lnbmF0dXJl"),
+                // Opaque strings: hex, base64-like, with separators.
+                format!("{}9f", "0123456789abcdef".repeat(2)),
+                "Zm9vYmFy4K".repeat(4),
+                format!("{}==", "a1B2c3D4/e5F6g7H8+i9J0".repeat(2)),
+                // Embedded in a longer string.
+                format!("Bearer {ghp}"),
+                format!("--api={}", "0123456789abcdef".repeat(3)),
+                format!("'{ghp}'"),
+                // URLs with credentials.
+                "https://example.com/cb?token=abc".into(),
+                "https://example.com/x?a=1&key=abc".into(),
+                "https://example.com/x#access_token=abc".into(),
+                "https://user:pw@example.com/".into(),
+                format!("https://{ghp}@github.com/o/r.git"),
+                format!("https://example.com/{ghp}/x"),
+                format!("https://example.com/?q={ghp}"),
+            ]
+        }
+
+        const NOT_SECRETS: &[&str] = &[
+            "",
+            "sk-SK",
+            "sk-learn-something-without-digits",
+            "ghp_",
+            "eyJ",
+            "AKIA",
+            "ms-vscode-remote.remote-ssh-edit",
+            "ms-toolsai.vscode-jupyter-cell-tags",
+            "workbench.action.openEditorAtIndex1",
+            "editor.action.insertCursorAbove",
+            "editorTextFocus && !editorReadonly && config.foo.bar2",
+            "HackGen Console NF, Consolas, monospace",
+            "#1e1e1e",
+            "${workspaceFolder}/build/a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
+            r"C:\Users\me\AppData\Local\Programs\abc123def456ghi789jkl012mno345",
+            "/c/Users/me/a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7",
+            "~/a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
+            "https://github.com/a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6/repo?tab=readme",
+            "https://example.com/search?q=hello&page=2",
+            "-interaction=nonstopmode",
+            "%DOC%",
+            "lualatex -synctex=1 -interaction=nonstopmode -file-line-error %DOC%",
+        ];
+
+        #[test]
+        fn string_rule_redacts_tokens_and_keeps_ordinary_values() {
+            for s in fake_secrets() {
+                assert!(string_has_secret(&s), "should redact: {s}");
+            }
+            for s in NOT_SECRETS {
+                assert!(!string_has_secret(s), "should keep: {s}");
+            }
+        }
+
+        #[test]
+        fn key_rule_redacts_whole_values_but_keeps_flags_and_numbers() {
+            let ghp = fake_ghp();
+            let original = json!({
+                "codic.ACCESS_TOKEN": "plainvalue",
+                "x.auth.enabled": true,
+                "x.sessionTimeout": 30,
+                "x.password": "",
+                "x.privateKey": null,
+                "x.Credentials": { "user": "u", "nested": 1 },
+                "[python]": { "editor.tabSize": 4, "my.apiKey": "abc" },
+                "tools": [{ "name": "x", "args": ["--key", ghp] }],
+                "**/a~b": { "Cookie": ["x"] },
+                "plain": "keep",
+            });
+            let mut v = original.clone();
+            let paths = redact_secrets(&mut v);
+            assert_eq!(
+                paths,
+                [
+                    "/codic.ACCESS_TOKEN",
+                    "/x.Credentials",
+                    "/[python]/my.apiKey",
+                    "/tools/0/args/1",
+                    "/**~1a~0b/Cookie",
+                ]
+            );
+            for p in &paths {
+                assert!(original.pointer(p).is_some(), "{p} is a JSON pointer");
+                assert_eq!(v.pointer(p).unwrap(), REDACTED, "{p}");
+            }
+            assert_eq!(v["x.auth.enabled"], true);
+            assert_eq!(v["x.sessionTimeout"], 30);
+            assert_eq!(v["x.password"], "");
+            assert_eq!(v["x.privateKey"], Value::Null);
+            assert_eq!(v["[python]"]["editor.tabSize"], 4);
+            assert_eq!(v["tools"][0]["args"][0], "--key");
+            assert_eq!(v["plain"], "keep");
+        }
+
+        #[test]
+        fn jsonc_comments_trailing_commas_and_strings() {
+            let cases: &[(&str, Value)] = &[
+                (
+                    "// head\n{\"a\": 1, // c\n \"b\": [1, 2,],\n}",
+                    json!({ "a": 1, "b": [1, 2] }),
+                ),
+                (
+                    r#"{"url": "https://x//y", "c": "/* not */", "d": "a,}"}"#,
+                    json!({ "url": "https://x//y", "c": "/* not */", "d": "a,}" }),
+                ),
+                ("{\"p\": \"C:\\\\\" // c\n}", json!({ "p": "C:\\" })),
+                (
+                    r#"{"q": "say \"//hi\", ]"}"#,
+                    json!({ "q": "say \"//hi\", ]" }),
+                ),
+                (
+                    "\u{feff}{\"a\": [1, /* x */ 2, /* y */ ]}",
+                    json!({ "a": [1, 2] }),
+                ),
+                ("{\"a\": 1,\n  // last\n}", json!({ "a": 1 })),
+                ("{\"a\": 1,\r\n  /* multi\r\n line */\r\n}", json!({ "a": 1 })),
+                ("{\"a\": 1} // eof", json!({ "a": 1 })),
+                ("{\"a\": \"日本語 // コメントではない\"}", json!({ "a": "日本語 // コメントではない" })),
+                ("// only a comment\n[]", json!([])),
+                ("{\"a\": 1, \"a\": 2}", json!({ "a": 2 })),
+            ];
+            for (src, want) in cases {
+                assert_eq!(&parse_jsonc(src).unwrap(), want, "{src}");
+            }
+            assert!(parse_jsonc("{\"a\": }").is_err());
+        }
+
+        #[test]
+        fn extensions_are_lowercased_sorted_and_deduplicated() {
+            let out = "Foo.Bar\r\nfoo.bar\n\nms-python.python\n  A.b  \nsome message here\nnodot\n";
+            assert_eq!(normalize_extensions(out), "a.b\nfoo.bar\nms-python.python");
+            assert_eq!(normalize_extensions(""), "");
+        }
+
+        fn read(p: &Path) -> String {
+            std::fs::read_to_string(p).unwrap()
+        }
+
+        #[test]
+        fn export_writes_redacted_files_once_and_keeps_them_without_input() {
+            let t = TempDir::new("vscode-export");
+            let user = t.0.join("User");
+            let out = t.0.join("out");
+            std::fs::create_dir_all(&user).unwrap();
+            let ghp = fake_ghp();
+            std::fs::write(
+                user.join("settings.json"),
+                format!(
+                    "{{\r\n  // comment\r\n  \"codic.ACCESS_TOKEN\": \"{ghp}\",\r\n  \"editor.tabSize\": 2,\r\n}}\r\n"
+                ),
+            )
+            .unwrap();
+            std::fs::write(
+                user.join("keybindings.json"),
+                "// header\n[{ \"key\": \"ctrl+k\", \"command\": \"x.y\", },]\n",
+            )
+            .unwrap();
+
+            let r = export_vscode(&out, Some("B.c\na.b\n"), Some(&user)).unwrap();
+            assert!(r.produced && r.changed);
+            assert_eq!(r.redacted, ["settings.json#/codic.ACCESS_TOKEN"]);
+            assert_eq!(read(&out.join("extensions.txt")), "a.b\nb.c\n");
+            let settings = read(&out.join("settings.json"));
+            assert!(!settings.contains(&ghp));
+            let v: Value = serde_json::from_str(&settings).unwrap();
+            assert_eq!(v, json!({ "codic.ACCESS_TOKEN": REDACTED, "editor.tabSize": 2 }));
+            let kb: Value = serde_json::from_str(&read(&out.join("keybindings.json"))).unwrap();
+            assert_eq!(kb, json!([{ "key": "ctrl+k", "command": "x.y" }]));
+
+            // Same input: nothing rewritten.
+            let r = export_vscode(&out, Some("a.b\nB.c"), Some(&user)).unwrap();
+            assert!(r.produced && !r.changed);
+
+            // No code / empty list / unparsable settings: existing files stay.
+            std::fs::write(user.join("settings.json"), "{ broken").unwrap();
+            std::fs::remove_file(user.join("keybindings.json")).unwrap();
+            let r = export_vscode(&out, Some("\n"), Some(&user)).unwrap();
+            assert!(!r.produced && !r.changed);
+            let r = export_vscode(&out, None, None).unwrap();
+            assert!(!r.produced && !r.changed);
+            assert_eq!(read(&out.join("extensions.txt")), "a.b\nb.c\n");
+            assert_eq!(read(&out.join("settings.json")), settings);
+            assert!(out.join("keybindings.json").exists());
+        }
+
+        fn string_leaves<'a>(v: &'a Value, acc: &mut Vec<&'a str>) {
+            match v {
+                Value::String(s) => acc.push(s),
+                Value::Array(a) => a.iter().for_each(|x| string_leaves(x, acc)),
+                Value::Object(o) => o.values().for_each(|x| string_leaves(x, acc)),
+                _ => {}
+            }
+        }
+
+        /// Generates the snapshot from the live VS Code profile into
+        /// $DOTCLI_VSCODE_EXPORT_OUT and checks that no redacted value reaches any output
+        /// file. Prints only counts, key paths and booleans, never values.
+        #[test]
+        #[ignore = "reads the live VS Code profile; set DOTCLI_VSCODE_EXPORT_OUT"]
+        fn live_export_leaks_no_redacted_value() {
+            let Some(out) = std::env::var_os("DOTCLI_VSCODE_EXPORT_OUT") else {
+                panic!("DOTCLI_VSCODE_EXPORT_OUT is not set");
+            };
+            let out = Path::new(&out).to_path_buf();
+            let user = vscode_user_dir().unwrap();
+            let ext = list_vscode_extensions();
+            println!("code --list-extensions succeeded: {}", ext.is_some());
+            let r = export_vscode(&out, ext.as_deref(), Some(&user)).unwrap();
+            println!("produced={} changed={} redacted={}", r.produced, r.changed, r.redacted.len());
+            for p in &r.redacted {
+                println!("redacted: {p}");
+            }
+            let outputs: Vec<String> = ["extensions.txt", "settings.json", "keybindings.json"]
+                .iter()
+                .map(|f| std::fs::read_to_string(out.join(f)).unwrap_or_default())
+                .collect();
+            for name in ["settings.json", "keybindings.json"] {
+                let Ok(src) = std::fs::read_to_string(user.join(name)) else {
+                    println!("{name}: not found");
+                    continue;
+                };
+                let orig = parse_jsonc(&src).unwrap();
+                let top = match &orig {
+                    Value::Object(m) => m.len(),
+                    Value::Array(a) => a.len(),
+                    _ => 0,
+                };
+                println!("{name}: top-level entries {top}");
+                let prefix = format!("{name}#");
+                for p in r.redacted.iter().filter_map(|p| p.strip_prefix(&prefix)) {
+                    let mut leaves = Vec::new();
+                    string_leaves(orig.pointer(p).unwrap(), &mut leaves);
+                    // Short leaves (e.g. "a") occur anywhere; they cannot be secrets.
+                    let absent = leaves
+                        .iter()
+                        .filter(|s| s.len() >= 8)
+                        .all(|s| outputs.iter().all(|o| !o.contains(*s)));
+                    println!("{name}#{p}: original value absent from all outputs: {absent}");
+                    assert!(absent, "a redacted value leaked");
+                }
+            }
+            let codic = std::fs::read_to_string(user.join("settings.json"))
+                .ok()
+                .and_then(|s| parse_jsonc(&s).ok())
+                .and_then(|v| v.get("codic.ACCESS_TOKEN").and_then(Value::as_str).map(String::from));
+            match codic {
+                Some(tok) if !tok.is_empty() => {
+                    let absent = outputs.iter().all(|o| !o.contains(&tok));
+                    println!("codic.ACCESS_TOKEN set in live: true, absent from all outputs: {absent}");
+                    assert!(absent, "codic token leaked");
+                }
+                _ => println!("codic.ACCESS_TOKEN set in live: false"),
+            }
+        }
     }
 }

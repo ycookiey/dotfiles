@@ -45,7 +45,7 @@ $env.config = ($env.config | upsert keybindings (
     }
 ))
 
-# --- Background sync (settings.json / scoopfile / wingetfile / MCP servers) ---
+# --- Background sync (settings.json / scoopfile / wingetfile / vscode/ / MCP servers) ---
 # dotcli の有無は起動時に 1 回だけ判定し、pre_prompt hook でも再利用する
 $env.DOTCLI_AVAILABLE = (which dotcli | is-not-empty)
 if $env.DOTCLI_AVAILABLE {
