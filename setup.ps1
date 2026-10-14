@@ -121,12 +121,9 @@ Invoke-Step 'PowerShell profile' {
 
 Invoke-Step 'Git config' {
     mkl "$HOME\.gitconfig" "$ScriptDir\git\.gitconfig"
-    # TODO: Git はこの ~/.gitattributes を読まない (読むのは core.attributesFile か、未設定なら ~/.config/git/attributes のみ)。
-    #       グローバル ignore (git/ignore) もまだ Git に読ませていない。配線を次のどちらかに決める (両方は不可: core.attributesFile / core.excludesFile は XDG の既定パスを上書きする)
-    #       A: git/.gitconfig の [core] に attributesFile = ~/.gitattributes と excludesFile を足す (この link は残す)
-    #       B: ここで mkd "$HOME\.config\git" し、git/gitattributes を ~/.config/git/attributes、git/ignore を ~/.config/git/ignore に link して、この link は消す
-    #       mkl は既存の実ファイルを退避せず上書きするので、~/.config/git/ignore の中身が git/ignore に入っていることを先に確かめる
+    # git/.gitconfig の core.attributesFile / core.excludesFile がこの 2 つを指す (XDG の ~/.config/git/ は読まれない)
     mkl "$HOME\.gitattributes" "$ScriptDir\git\gitattributes"
+    mkl "$HOME\.gitignore_global" "$ScriptDir\git\ignore"
 }
 
 # SSH config（鍵自体は install/bw-secrets.ps1 が Bitwarden から取得）

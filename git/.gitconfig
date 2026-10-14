@@ -15,6 +15,10 @@
 	# (ignorecase は書かない: init/clone が FS に合わせて repo の config に書く。NTFS で false にすると rename 検出と index が壊れる)
 	# untracked ファイル走査の結果をディレクトリ mtime 付きで index に保存し、status/diff を速くする (NTFS で安全)
 	untrackedCache = true
+	# グローバル attributes / ignore (setup.ps1 が repo の git/gitattributes と git/ignore へ link する)
+	# 指定すると XDG の既定 (~/.config/git/attributes, ignore) は読まれない
+	attributesFile = ~/.gitattributes
+	excludesFile = ~/.gitignore_global
 	# TODO: fsmonitor は未採用。全体で有効にする / 大きな repo だけ ([includeIf] か repo の config) / 入れない のどれにするか未定
 
 [init]
