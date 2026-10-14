@@ -1,5 +1,5 @@
 use crate::paths::dotfiles_root;
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
@@ -115,25 +115,19 @@ fn get_outdated_info(
         .ok()?
         .as_secs();
 
-    // Get commits after binary build time. `--since=@<epoch>` takes the exact
-    // timestamp (inclusive; the `commit_ts > bin_timestamp` check below keeps
+    // Commits touching the crate after the binary was built, with their changed
+    // files, from one `git log` per crate. `--since=@<epoch>` takes the exact
+    // timestamp (inclusive; the `committed > bin_timestamp` check below keeps
     // the comparison strict).
-    // TODO: this still spawns `git log -1` and `git diff` once per listed
-    // commit. Collapse it to one git call per crate: either one
-    // `git log --since=@<epoch> --format=... --name-only` parsed in place, or a
-    // tree-hash stamp written by `dotcli build` and compared on check. The
-    // choice is pending (misses commits pulled in with an older committer
-    // date vs. a stamp file to keep in sync).
+    // Known limit: `--since` and the check go by committer date, so a commit
+    // whose committer date is older than the binary but that arrived later
+    // (pulled or rebased in without rewriting the date) is missed. When every
+    // newer change to the crate is such a commit, this returns None and
+    // `check` reports nothing for the crate, though its sources are newer.
     let since = format!("--since=@{bin_timestamp}");
     let log_output = match Command::new("git")
-        .args([
-            "log",
-            &since,
-            "--format=%H %s",
-            "--",
-            crate_info.path,
-        ])
-        .current_dir(&dotfiles)
+        .args(["log", &since, LOG_FORMAT, "--name-only", "--", crate_info.path])
+        .current_dir(dotfiles)
         .output()
     {
         Ok(output) => String::from_utf8_lossy(&output.stdout).to_string(),
@@ -141,49 +135,30 @@ fn get_outdated_info(
     };
 
     let mut commits = Vec::new();
-    let mut changed_files = HashSet::new();
+    let mut changed_files = BTreeSet::new();
     let prefix = format!("{}/", crate_info.path);
 
-    for line in log_output.lines() {
-        if let Some(space_idx) = line.find(' ') {
-            let hash = &line[..space_idx];
-            let msg = &line[space_idx + 1..];
-            // Check commit time
-            let time_output = match Command::new("git")
-                .args(["log", "-1", "--format=%ct", hash, "--", crate_info.path])
-                .current_dir(&dotfiles)
-                .output()
-            {
-                Ok(output) => String::from_utf8_lossy(&output.stdout).trim().to_string(),
-                _ => continue,
-            };
-            if let Ok(commit_ts) = time_output.parse::<u64>() {
-                if commit_ts > bin_timestamp {
-                    commits.push((hash.to_string(), msg.to_string()));
-                    // Get changed files for this commit
-                    let diff_output = match Command::new("git")
-                        .args([
-                            "diff",
-                            "--name-only",
-                            &format!("{}^..{}", hash, hash),
-                            "--",
-                            crate_info.path,
-                        ])
-                        .current_dir(&dotfiles)
-                        .output()
-                    {
-                        Ok(output) => String::from_utf8_lossy(&output.stdout).to_string(),
-                        _ => continue,
-                    };
-                    for file in diff_output.lines() {
-                        if !file.ends_with("Cargo.lock") && !file.starts_with("target/") {
-                            if let Some(stripped) = file.strip_prefix(&prefix) {
-                                changed_files.insert(stripped.to_string());
-                            } else {
-                                changed_files.insert(file.to_string());
-                            }
-                        }
-                    }
+    for commit in parse_log(&log_output) {
+        if !commit.committed.is_some_and(|ts| ts > bin_timestamp) {
+            continue;
+        }
+        // Files changed against the first parent, as `git diff <hash>^..<hash>`.
+        let files = match commit.parents.len() {
+            // A root commit has no `<hash>^`; it lists no files.
+            0 => Vec::new(),
+            1 => commit.files,
+            // `log --name-only` prints no files for a merge (and its
+            // `--diff-merges=first-parent` also changes which commits the
+            // pathspec keeps), so merges, which are rare, get their own diff.
+            _ => first_parent_diff(dotfiles, &commit.hash, crate_info.path),
+        };
+        commits.push((commit.hash, commit.subject));
+        for file in files {
+            if !file.ends_with("Cargo.lock") && !file.starts_with("target/") {
+                if let Some(stripped) = file.strip_prefix(&prefix) {
+                    changed_files.insert(stripped.to_string());
+                } else {
+                    changed_files.insert(file);
                 }
             }
         }
@@ -198,6 +173,56 @@ fn get_outdated_info(
         commits,
         changed_files: changed_files.into_iter().collect(),
     })
+}
+
+/// `%x00` before every field: no field holds a NUL, so splitting the whole
+/// output on NUL yields, per commit, the hash, the parents, the committer time
+/// and `<subject>\n\n<file>\n...` (`--name-only` adds the file lines).
+const LOG_FORMAT: &str = "--format=%x00%H%x00%P%x00%ct%x00%s";
+
+/// One commit of `git log LOG_FORMAT --name-only`.
+#[derive(Debug, PartialEq)]
+struct LoggedCommit {
+    hash: String,
+    parents: Vec<String>,
+    /// Committer time; `None` when it does not parse.
+    committed: Option<u64>,
+    subject: String,
+    files: Vec<String>,
+}
+
+fn parse_log(out: &str) -> Vec<LoggedCommit> {
+    let mut fields = out.split('\0');
+    fields.next(); // text before the first record (empty)
+    let mut commits = Vec::new();
+    while let (Some(hash), Some(parents), Some(ct), Some(rest)) =
+        (fields.next(), fields.next(), fields.next(), fields.next())
+    {
+        let mut lines = rest.lines();
+        let subject = lines.next().unwrap_or_default().to_string();
+        commits.push(LoggedCommit {
+            hash: hash.to_string(),
+            parents: parents.split_whitespace().map(str::to_string).collect(),
+            committed: ct.trim().parse().ok(),
+            subject,
+            files: lines.filter(|l| !l.is_empty()).map(str::to_string).collect(),
+        });
+    }
+    commits
+}
+
+fn first_parent_diff(dotfiles: &Path, hash: &str, path: &str) -> Vec<String> {
+    Command::new("git")
+        .args(["diff", "--name-only", &format!("{hash}^..{hash}"), "--", path])
+        .current_dir(dotfiles)
+        .output()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn missing_binary_info(crate_info: &Crate, dotfiles: &Path) -> OutdatedInfo {
@@ -471,7 +496,7 @@ fn which_cargo() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{install_exe, parse_porcelain_z};
+    use super::{install_exe, parse_log, parse_porcelain_z, LoggedCommit};
     use std::path::{Path, PathBuf};
     use std::process::{Child, Command, Stdio};
 
@@ -634,5 +659,105 @@ mod tests {
     #[test]
     fn porcelain_z_empty() {
         assert!(parse_porcelain_z("").is_empty());
+    }
+
+    fn logged(hash: &str, parents: &[&str], ts: Option<u64>, subject: &str, files: &[&str]) -> LoggedCommit {
+        LoggedCommit {
+            hash: hash.to_string(),
+            parents: parents.iter().map(|s| s.to_string()).collect(),
+            committed: ts,
+            subject: subject.to_string(),
+            files: files.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn log_parsing() {
+        // Shape of `git log LOG_FORMAT --name-only`: a merge prints no files, and the
+        // last record's file list ends with a newline.
+        let out = "\0h3\0p2 p9\01700000300\0Merge branch 'x'\n\
+                   \0h2\0p1\01700000200\0fix(cli): 日本語の件名: a b\n\ncli/src/a.rs\ncli/Cargo.lock\n\
+                   \0h1\0\01700000100\0\n\ncli/b.rs\n";
+        assert_eq!(
+            parse_log(out),
+            vec![
+                logged("h3", &["p2", "p9"], Some(1700000300), "Merge branch 'x'", &[]),
+                logged(
+                    "h2",
+                    &["p1"],
+                    Some(1700000200),
+                    "fix(cli): 日本語の件名: a b",
+                    &["cli/src/a.rs", "cli/Cargo.lock"],
+                ),
+                logged("h1", &[], Some(1700000100), "", &["cli/b.rs"]),
+            ]
+        );
+    }
+
+    #[test]
+    fn log_parsing_edge_cases() {
+        assert!(parse_log("").is_empty());
+        // A commit without files and one whose time does not parse.
+        assert_eq!(
+            parse_log("\0h1\0p0\0x\0no files\n"),
+            vec![logged("h1", &["p0"], None, "no files", &[])]
+        );
+        // A truncated record is dropped.
+        assert!(parse_log("\0h1\0p0").is_empty());
+    }
+
+    /// Runs `get_outdated_info` against a temp repo: only commits strictly after the
+    /// binary time count, merges list their first-parent diff, Cargo.lock is dropped,
+    /// and paths are made relative to the crate.
+    #[test]
+    fn outdated_info_from_temp_repo() {
+        let tmp = TempDir::new("outdated");
+        let repo = &tmp.0;
+        let git = |args: &[&str], date: &str| {
+            let out = Command::new("git")
+                .args([
+                    "-c", "user.name=t", "-c", "user.email=t@example.com",
+                    "-c", "commit.gpgsign=false", "-c", "core.hooksPath=",
+                    "-c", "init.defaultBranch=main",
+                ])
+                .args(args)
+                .env("GIT_AUTHOR_DATE", date)
+                .env("GIT_COMMITTER_DATE", date)
+                .current_dir(repo)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        };
+        let write = |rel: &str, s: &str| {
+            let p = repo.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, s).unwrap();
+        };
+        let commit = |msg: &str, date: &str| {
+            git(&["add", "-A"], date);
+            git(&["commit", "-q", "-m", msg], date);
+        };
+        git(&["init", "-q"], "@1000000000 +0000");
+        write("cr/old.rs", "1");
+        commit("old", "@1000000000 +0000");
+        // Binary built at 1000000500. A commit at exactly that time does not count.
+        write("cr/same.rs", "1");
+        commit("same second", "@1000000500 +0000");
+        write("cr/src/a.rs", "1");
+        write("cr/Cargo.lock", "1");
+        write("other/x.rs", "1");
+        commit("new: a", "@1000000600 +0000");
+        git(&["checkout", "-q", "-b", "side", "HEAD~1"], "@1000000700 +0000");
+        write("cr/side.rs", "1");
+        commit("side", "@1000000400 +0000");
+        git(&["checkout", "-q", "main"], "@1000000700 +0000");
+        git(&["merge", "-q", "--no-ff", "-m", "merge side", "side"], "@1000000800 +0000");
+
+        let krate = super::Crate { path: "cr", bin_name: "x", post: None };
+        let bin = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1000000500);
+        let info = super::get_outdated_info(&krate, repo, bin).unwrap();
+        let subjects: Vec<&str> = info.commits.iter().map(|(_, m)| m.as_str()).collect();
+        assert_eq!(subjects, ["merge side", "new: a"]);
+        assert_eq!(info.changed_files, ["side.rs", "src/a.rs"]);
     }
 }
