@@ -690,7 +690,12 @@ const SECRET_KEY_WORDS: &[&str] = &[
     "credential",
     "auth",
     "cookie",
-    "session",
+    // Not bare "session": UI settings such as chat.viewSessions.orientation contain it.
+    // Long random session values are caught by the value rules instead.
+    "sessionid",
+    "session_id",
+    "session-id",
+    "sessionkey",
     "private",
 ];
 
@@ -1901,6 +1906,8 @@ mod tests {
                 "[python]": { "editor.tabSize": 4, "my.apiKey": "abc" },
                 "tools": [{ "name": "x", "args": ["--key", ghp] }],
                 "**/a~b": { "Cookie": ["x"] },
+                "chat.viewSessions.orientation": "stacked",
+                "x.sessionId": "s1",
                 "plain": "keep",
             });
             let mut v = original.clone();
@@ -1913,6 +1920,7 @@ mod tests {
                     "/[python]/my.apiKey",
                     "/tools/0/args/1",
                     "/**~1a~0b/Cookie",
+                    "/x.sessionId",
                 ]
             );
             for p in &paths {
@@ -1925,6 +1933,7 @@ mod tests {
             assert_eq!(v["x.privateKey"], Value::Null);
             assert_eq!(v["[python]"]["editor.tabSize"], 4);
             assert_eq!(v["tools"][0]["args"][0], "--key");
+            assert_eq!(v["chat.viewSessions.orientation"], "stacked");
             assert_eq!(v["plain"], "keep");
         }
 

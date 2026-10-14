@@ -683,6 +683,6 @@
   },
   "chat.agent.maxRequests": 50,
   "git.path": "~/scoop/apps/git/current/cmd/git.exe",
-  "chat.viewSessions.orientation": "<redacted>",
+  "chat.viewSessions.orientation": "stacked",
   "comments.openView": "never"
 }
