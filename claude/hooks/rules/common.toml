@@ -266,8 +266,10 @@ action = "context"
 message = '''statusLine の refreshInterval は 2026-06 に外した(dotfiles bfc2621)。1 秒ごとだと 9 セッションで最大 90 個の claude-statusline が同時に動き、終わらずに残るものが積み上がった(~/.claude/docs/hooks.md の「罠」)。待たずに出したい表示は、plugin の $.ui.status など、プロセスを起動しない方法を先に検討する。'''
 
 # Running the claude CLI with CLAUDE_CONFIG_DIR set to ~/.claude itself (the
-# folder the accounts ~/.claude-* mirror) created ~/.claude/.claude.json,
-# which the mirroring could then link into every account.
+# folder the accounts ~/.claude-* share entries from) created ~/.claude/.claude.json,
+# which the old exclude-list mirroring could then link into every account. The
+# sharing is now an allowlist without .claude.json, but the stray config and
+# settings written there are still never read by any account.
 [[rule]]
 id = "claude-config-dir-guard"
 event = "PreToolUse"
@@ -275,7 +277,7 @@ tools = '^(Bash|PowerShell)$'
 fields = ["tool_input.command"]
 all = ['''CLAUDE_CONFIG_DIR['"]?[[:space:]]*=[[:space:]]*['"]?[^'";[:space:]]*[/\\]\.claude[/\\]?(['";[:space:]]|$)''']
 action = "deny"
-message = '''CLAUDE_CONFIG_DIR を実体の ~/.claude に向けて claude CLI を動かすと、使われていない ~/.claude/.claude.json が作られ、~/.claude-* へのミラーの対象になりうる(~/.claude/docs/symlinks.md の「マルチアカウント」)。user settings を書く CLI(plugin install・marketplace add 等)は普段のアカウント(~/.claude-N)で動かし、後で ls -la ~/.claude-*/settings.json でリンクが残っているかを確かめる。'''
+message = '''CLAUDE_CONFIG_DIR を実体の ~/.claude に向けて claude CLI を動かすと、どのアカウントも読まない ~/.claude/.claude.json が作られる(~/.claude-* と共有するのは setup.ps1 の許可リストにある名前だけ。~/.claude/docs/symlinks.md の「マルチアカウント」)。user settings を書く CLI(plugin install・marketplace add 等)は普段のアカウント(~/.claude-N)で動かし、後で ls -la ~/.claude-*/settings.json でリンクが残っているかを確かめる。'''
 
 # With a file name containing '\' (any Windows path), coreutils' *sum print
 # a leading '\' before the hash. A script comparing the hash as a string then

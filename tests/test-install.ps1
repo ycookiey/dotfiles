@@ -9,6 +9,8 @@
 # (C) install/*.json がパースできる。install-order.json の large が scoopfile.json の apps にある。
 #     scoopfile.json と wingetfile.json の中で ID が重複しない
 # (D) setup.ps1 の mkl <link> "$ScriptDir\..." のリンク先がリポジトリに存在する
+# (E) setup.ps1 の Claude マルチアカウント許可リスト ($claudeShared*) が文字列の literal で、名前が重複せず、
+#     ワイルドカードを含まず、除外 ($claudeExclude) のどのパターンにも当たらない
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path $PSScriptRoot
 $failed = 0
@@ -170,6 +172,52 @@ foreach ($m in $mkls) {
     else { Test-Fail "setup.ps1:$line mkl target '$rel' does not exist in the repo" }
 }
 if ($checked -eq 0) { Test-Fail "no mkl `"`$ScriptDir\...`" call found in setup.ps1" }
+
+# === (E) マルチアカウント許可リスト ===
+Write-Host "`n[E] setup.ps1 multi-account allowlist" -ForegroundColor Cyan
+
+# 代入の右辺を文字列配列として取り出す。literal でない (式・変数を含む) なら $null
+function Get-LiteralStrings($assign) {
+    $expr = $assign.Right
+    if ($expr -is [System.Management.Automation.Language.PipelineAst] -and $expr.PipelineElements.Count -eq 1 -and
+        $expr.PipelineElements[0] -is [System.Management.Automation.Language.CommandExpressionAst]) {
+        $expr = $expr.PipelineElements[0].Expression
+    } elseif ($expr -is [System.Management.Automation.Language.CommandExpressionAst]) {
+        $expr = $expr.Expression
+    }
+    $elems = if ($expr -is [System.Management.Automation.Language.ArrayLiteralAst]) { $expr.Elements } else { @($expr) }
+    if ($elems | ? { $_ -isnot [System.Management.Automation.Language.StringConstantExpressionAst] }) { return $null }
+    , @($elems | % Value)
+}
+$assigns = @($setupAst.FindAll({
+    $args[0] -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+    $args[0].Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+    $args[0].Left.VariablePath.UserPath -match '^claude(Shared\w+|Exclude)$'
+}, $true))
+$allow = [System.Collections.Generic.List[string]]::new()
+$exclude = $null
+foreach ($a in $assigns) {
+    $var = $a.Left.VariablePath.UserPath
+    $vals = Get-LiteralStrings $a
+    if ($null -eq $vals) { Test-Fail "setup.ps1:$($a.Extent.StartLineNumber) `$$var is not a list of string literals"; continue }
+    if ($var -eq 'claudeExclude') { $exclude = $vals } else { $allow.AddRange([string[]]$vals) }
+}
+if ($null -eq $exclude) { Test-Fail 'no $claudeExclude assignment found in setup.ps1' }
+# 許可リストが空・取り出し漏れでも通る検査にしないため、必ず共有すべき名前があることも見る
+foreach ($must in 'projects', 'history.jsonl', 'CLAUDE.md') {
+    if ($allow -ccontains $must) { Test-Pass "allowlist has $must" } else { Test-Fail "allowlist lacks $must" }
+}
+$dups = @($allow | group | ? Count -gt 1 | % Name)
+if ($dups) { Test-Fail "allowlist has duplicates: $($dups -join ', ')" } else { Test-Pass "allowlist has no duplicates ($($allow.Count) names)" }
+$bad = 0
+foreach ($name in $allow) {
+    if ([System.Management.Automation.WildcardPattern]::ContainsWildcardCharacters($name)) {
+        Test-Fail "allowlist name '$name' contains a wildcard"; $bad++
+    }
+    $hit = @($exclude | ? { $name -like $_ })
+    if ($hit) { Test-Fail "allowlist name '$name' matches excluded pattern '$($hit -join "', '")'"; $bad++ }
+}
+if (!$bad -and $allow.Count -and $exclude) { Test-Pass 'no allowlist name has a wildcard or matches $claudeExclude' }
 
 # === 結果 ===
 Write-Host ""

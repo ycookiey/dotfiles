@@ -31,7 +31,7 @@ setup.ps1 で管理。追加・変更は setup.ps1 の mkl で行う（直接コ
 
 ## マルチアカウント (~/.claude-*)
 
-~/.claude-* ディレクトリが存在する場合、~/.claude/ 配下の各エントリが自動ミラーリングされる。除外: .credentials*, .statusline_debug.json, settings.json, keybindings.json（settings.json と keybindings.json は個別にマージ型で管理）
+~/.claude-<数字> ディレクトリが存在する場合、setup.ps1 の許可リスト (`$claudeShared*`: 設定・skill・docs / 履歴と session / cache / 認証補助と API key) にある ~/.claude/ 配下のエントリだけがリンクされる。新しいエントリは許可リストに足さないと共有されない (Claude Code のアカウントごとの実行時状態 daemon/, jobs/, state/, *.log 等を共有しないため)。許可リストに入れてはいけない名前: .credentials*, .statusline_debug.json, settings.json, keybindings.json, .rate-limits.json（settings.json と keybindings.json は個別にマージ型で管理）。許可リストから外した名前の既存リンクは消さない
 
 ## リンク作成の権限（手動で作る場合）
 

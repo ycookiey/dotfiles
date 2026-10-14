@@ -295,12 +295,30 @@ Invoke-Step 'WSL' { & "$ScriptDir\install\wsl.ps1" }
 
 # Claude マルチアカウント
 Invoke-Step 'Claude multi-account' {
-    # settings.json / keybindings.json: Claude Code が symlink を上書き破壊するため除外（マージ型で dotcli sync が管理）
+    # ~/.claude の entry のうち、下の許可リストにある名前だけを各アカウント (~/.claude-<数字>) へ link する。
+    # 新しい entry は、ここに足さないと共有されない。Claude Code がアカウントごとに持つ実行時の状態
+    # (daemon/, jobs/, state/, logs/, daemon.log, .last-cleanup, *.bak 等) や *.log は入れない
+    # 設定・skill・docs (dotfiles 管理物と、dotcli sync が keybindings の前回値を置く .dotcli-keybindings-prev.json)
+    $claudeSharedConfig = 'CLAUDE.md', 'agents', 'docs', 'hooks', 'skills', 'plugins', 'aliases.ps1', 'statusline-rules.toml', 'statusline.ps1', 'statusline.sh', 'worktree-copy.list', '.mcp.json', '.dotcli-keybindings-prev.json'
+    # 履歴と session: アカウントを替えても resume できるように共有する (dotcli resume / token-audit も ~/.claude/projects を読む)
+    $claudeSharedHistory = 'projects', 'sessions', 'history.jsonl', 'file-history', 'session-env', 'shell-snapshots', 'todos', 'tasks', 'plans', 'teams'
+    # cache (.glm-rate-limits.json は claude-statusline が全アカウント共通の cache として上書きする)
+    $claudeSharedCache = 'cache', 'paste-cache', 'db', 'ide', 'debug', 'backups', 'statsig', 'telemetry', 'usage-data', 'stats-cache.json', 'mcp-needs-auth-cache.json', '.statusline_cache', '.glm-rate-limits.json'
+    # 認証補助と API key、アカウント切替 (.last_account / .recommended は dotcli c と ycusage が使う)
+    $claudeSharedAuth = '.glm-api-key', '.tavily-api-key', '.oauth-verifier', '.oauth-verifier-3', '.last_account', '.recommended'
+    # 許可リストに入れてはいけない名前。settings.json / keybindings.json: Claude Code が symlink を上書き破壊するため
+    # (マージ型で dotcli sync が管理)。.credentials* 等はアカウント固有。tests/test-install.ps1 が許可リストとの重なりを検査する
     $claudeExclude = '.credentials*', '.statusline_debug.json', 'settings.json', 'keybindings.json', '.rate-limits.json'
-    $shared = @(gci "$HOME\.claude" -Force | ? {
-        $name = $_.Name
-        !($claudeExclude | ? { $name -like $_ })
-    })
+    # 許可リストから外した名前の既存 link は消さない (アカウントに残っていても害が無く、消すと使用中のセッションが困りうる)
+    $shared = foreach ($name in $claudeSharedConfig + $claudeSharedHistory + $claudeSharedCache + $claudeSharedAuth) {
+        if ($claudeExclude | ? { $name -like $_ }) {
+            "$(Get-Date) - Warning: skip mirror (excluded name in allowlist): $name" >> $LogFile
+            continue
+        }
+        # 元が無い名前は link しない (リンク切れを作らない)
+        $src = gi -LiteralPath (Join-Path "$HOME\.claude" $name) -Force -ea 0
+        if ($src) { $src }
+    }
     # アカウントディレクトリは .claude-<数字> だけ (.claude-browsers や .claude-1.lock は別物)
     foreach ($dir in gci $HOME -Dir -Force | ? Name -match '^\.claude-\d+$') {
         foreach ($src in $shared) {
