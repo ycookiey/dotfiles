@@ -14,6 +14,7 @@ VS Codeの拡張の一覧と設定を、ほかの人と共有するために置�
 
 - 正本はVS CodeのSettings Sync。設定を変えるときはVS Codeで変える。`vscode/`のファイルはVS Codeへ書き戻さず、リンクも張らない
 - `dotcli sync`は6時間に1回だけ書き出す。すぐ書き出すには`dotcli sync --force`を実行する
-- 秘密の値として置き換える値は2種類ある。キー名にtoken、secret、password、auth、sessionなどを含む設定の値と、トークンの形をした文字列。判定の規則は`cli/src/commands/sync.rs`の`redact_secrets`に書いてある
+- 秘密の値として置き換える値は2種類ある。キー名にtoken、secret、password、authなどを含む設定の値と、トークンの形をした文字列。判定の規則は`cli/src/commands/sync.rs`の`redact_secrets`に書いてある
+- 秘密ではないが、共有しても役に立たない手元の情報 (`remote.SSH.*`のホスト名) も同じく置き換える
 
 `vscode/README.md`だけは手で書いている。`dotcli sync`は`vscode/README.md`を書き換えない。

@@ -275,12 +275,7 @@
   "workbench.startupEditor": "none",
   "liveServer.settings.donotShowInfoMsg": true,
   "dart.openDevTools": "flutter",
-  "remote.SSH.remotePlatform": {
-    "test": "linux",
-    "vmware": "linux",
-    "ssh-host": "linux",
-    "nuie": "linux"
-  },
+  "remote.SSH.remotePlatform": "<redacted>",
   "editor.wordSeparators": "./\\()\"'-:,.;<>~!@#$%^&*|+=[]{}`~?　、。「」【】『』（）！？てにをはがのともへでや",
   "latex-workshop.latex.tools": [
     {

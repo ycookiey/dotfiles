@@ -963,9 +963,16 @@ fn redact_at(value: &mut Value, path: &str, paths: &mut Vec<String>) {
     }
 }
 
+/// Prefixes (compared lowercased) of setting names whose value is hidden as a whole, like a
+/// secret: not credentials, but private details that are of no use to others reading the
+/// shared copy. remote.SSH.* holds host names, some of them as object keys
+/// (remote.SSH.remotePlatform), which the value rules cannot see.
+const PRIVATE_KEY_PREFIXES: &[&str] = &["remote.ssh."];
+
 fn is_secret_key(key: &str) -> bool {
     let lower = key.to_ascii_lowercase();
     SECRET_KEY_WORDS.iter().any(|w| lower.contains(w))
+        || PRIVATE_KEY_PREFIXES.iter().any(|p| lower.starts_with(p))
 }
 
 /// Whether `s` holds a token: a known token format anywhere in it, a URL with
@@ -1908,6 +1915,8 @@ mod tests {
                 "**/a~b": { "Cookie": ["x"] },
                 "chat.viewSessions.orientation": "stacked",
                 "x.sessionId": "s1",
+                "remote.SSH.remotePlatform": { "host.example.ac.jp": "linux" },
+                "remote.SSH.useLocalServer": false,
                 "plain": "keep",
             });
             let mut v = original.clone();
@@ -1921,6 +1930,7 @@ mod tests {
                     "/tools/0/args/1",
                     "/**~1a~0b/Cookie",
                     "/x.sessionId",
+                    "/remote.SSH.remotePlatform",
                 ]
             );
             for p in &paths {
@@ -1934,6 +1944,7 @@ mod tests {
             assert_eq!(v["[python]"]["editor.tabSize"], 4);
             assert_eq!(v["tools"][0]["args"][0], "--key");
             assert_eq!(v["chat.viewSessions.orientation"], "stacked");
+            assert_eq!(v["remote.SSH.useLocalServer"], false);
             assert_eq!(v["plain"], "keep");
         }
 
