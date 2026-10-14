@@ -1,9 +1,10 @@
 -- セッション復元: 窓・タブ・分割ペインの配置と各ペインの cwd を定期保存し、
--- 前回の WezTerm プロセスの状態をキー操作で復元する。
+-- 前回の WezTerm プロセスの状態や、閉じた窓・タブをキー操作で復元する。
 -- Claude Code が動いていたペインは、その会話 ID を再開するコマンドで開く。
 --
--- 保存先: %USERPROFILE%\.local\share\wezterm\session-snapshot-<instance>.json
---   (WezTerm プロセスごとに 1 ファイル。新しい起動が前回分を上書きしない)
+-- 保存先 (環境変数 WEZTERM_SESSION_RESTORE_DIR で変えられる。既定は %USERPROFILE%\.local\share\wezterm):
+--   session-snapshot-<instance>.json  今の状態 (WezTerm プロセスごとに 1 ファイル。新しい起動が前回分を上書きしない)
+--   session-closed-<instance>.json    そのプロセスで閉じた窓・タブ (保存の差分から見つける)
 -- 会話 ID の取得元 (優先順):
 --   1. %USERPROFILE%\.local\state\claude-pid-sessions\<pid>.json
 --      (Claude Code の SessionStart hook が CLAUDE_PID ごとに stdin JSON を保存。/clear に追従)
@@ -13,14 +14,17 @@ local wezterm = require("wezterm")
 local M = {}
 
 local home = os.getenv("USERPROFILE") or os.getenv("HOME") or ""
-local snapshot_dir = home .. "\\.local\\share\\wezterm"
+-- 試すときに普段の保存と混ざらないよう、保存先を環境変数で変えられる
+local snapshot_dir = os.getenv("WEZTERM_SESSION_RESTORE_DIR") or (home .. "\\.local\\share\\wezterm")
 local snapshot_prefix = "session-snapshot-"
+local closed_prefix = "session-closed-"
 local record_dir = home .. "\\.local\\state\\claude-pid-sessions"
 local registry_dir = home .. "\\.claude\\sessions"
 
 local SAVE_INTERVAL = 30 -- 秒
 local PRUNE_EVERY = 20 -- 保存 n 回ごとに古いファイルを掃除
-local KEEP_SNAPSHOTS = 10
+local KEEP_SNAPSHOTS = 10 -- 保存のファイルも、閉じた窓・タブのファイルも、新しい順にこの数だけ残す
+local KEEP_CLOSED = 20 -- 1 プロセスで記録する閉じた窓・タブの数
 local RESUME_STAGGER_MS = 1000 -- Claude を同時起動しないよう 1 ペインごとにずらす
 
 local opts = {
@@ -72,6 +76,24 @@ local function write_json(path, value)
   f:close()
   os.remove(path)
   return os.rename(tmp, path) ~= nil
+end
+
+-- 設定の再読み込み (automatically_reload_config) で Lua の状態が作り直されても続ける状態は
+-- wezterm.GLOBAL に置く。GLOBAL に入れた表の入れ子の書き換えに頼らないよう、表は JSON 文字列として
+-- 丸ごと読み書きする
+local STATE_PREFIX = "session_restore_state_"
+
+local function state_get(name)
+  local s = wezterm.GLOBAL[STATE_PREFIX .. name]
+  if type(s) ~= "string" then return nil end
+  local ok, v = pcall(wezterm.serde.json_decode, s)
+  if ok and type(v) == "table" then return v end
+  return nil
+end
+
+-- value が nil なら消す
+local function state_set(name, value)
+  wezterm.GLOBAL[STATE_PREFIX .. name] = value ~= nil and wezterm.serde.json_encode(value) or nil
 end
 
 local function proc_name(info)
@@ -194,6 +216,7 @@ local function snapshot()
       -- ズーム中でも panes_with_info は全ペインを元の配置で返す
       for _, info in ipairs(tab:panes_with_info()) do
         local p = {
+          pane_id = info.pane:pane_id(),
           left = info.left,
           top = info.top,
           width = info.width,
@@ -207,12 +230,13 @@ local function snapshot()
         pane_count = pane_count + 1
       end
       table.insert(tabs, {
+        tab_id = tab:tab_id(),
         title = tab:get_title(),
         active = active_tab ~= nil and active_tab:tab_id() == tab:tab_id(),
         panes = panes,
       })
     end
-    table.insert(windows, { size = window_size(mw), tabs = tabs })
+    table.insert(windows, { window_id = mw:window_id(), size = window_size(mw), tabs = tabs })
   end
   return {
     version = 1,
@@ -224,13 +248,13 @@ local function snapshot()
   }
 end
 
-local function list_snapshot_files()
+local function list_files(prefix)
   local ok, entries = pcall(wezterm.read_dir, snapshot_dir)
   if not ok then return {} end
   local files = {}
   for _, path in ipairs(entries) do
     local name = path:match("([^/\\]+)$") or ""
-    if name:sub(1, #snapshot_prefix) == snapshot_prefix and name:match("%.json$") then
+    if name:sub(1, #prefix) == prefix and name:match("%.json$") then
       table.insert(files, path)
     end
   end
@@ -238,10 +262,20 @@ local function list_snapshot_files()
   return files
 end
 
+local function list_snapshot_files()
+  return list_files(snapshot_prefix)
+end
+
+local function closed_path(instance)
+  return snapshot_dir .. "\\" .. closed_prefix .. instance .. ".json"
+end
+
 local function prune()
-  local files = list_snapshot_files()
-  for i = 1, #files - KEEP_SNAPSHOTS do
-    os.remove(files[i])
+  for _, prefix in ipairs({ snapshot_prefix, closed_prefix }) do
+    local files = list_files(prefix)
+    for i = 1, #files - KEEP_SNAPSHOTS do
+      os.remove(files[i])
+    end
   end
   local ok, entries = pcall(wezterm.read_dir, record_dir)
   if not ok then return end
@@ -253,9 +287,93 @@ local function prune()
   end
 end
 
+-- 閉じた窓・タブのうち記録するもの: 中で Claude が動いていたか、ペインが 2 つ以上あったもの。
+-- 1 ペインのシェルだけの使い捨ての窓まで残すと、戻すときにそれが先に出てくるため
+local function worth_keeping(tabs)
+  local n = 0
+  for _, t in ipairs(tabs) do
+    for _, p in ipairs(t.panes or {}) do
+      if p.claude then return true end
+      n = n + 1
+    end
+  end
+  return n >= 2
+end
+
+local function count_panes(entry)
+  local n = 0
+  for _, w in ipairs(entry.windows or {}) do
+    for _, t in ipairs(w.tabs or {}) do n = n + #(t.panes or {}) end
+  end
+  return n
+end
+
+-- 前回の保存にあって今回は無い窓・タブを、閉じたものとして session-closed-<instance>.json に足す。
+-- 中のペインがどこかで生きているタブ (Alt+M の統合や Alt+Shift+M の分離で移ったもの) は閉じたとみなさない。
+-- ペインの ID はプロセスの中で変わらず、ペインを別のタブへ移しても保たれる
+local function record_closed(prev, cur)
+  local live_windows, live_tabs, live_panes = {}, {}, {}
+  for _, w in ipairs(cur.windows or {}) do
+    if w.window_id then live_windows[w.window_id] = true end
+    for _, t in ipairs(w.tabs or {}) do
+      if t.tab_id then live_tabs[t.tab_id] = true end
+      for _, p in ipairs(t.panes or {}) do
+        if p.pane_id then live_panes[p.pane_id] = true end
+      end
+    end
+  end
+  local function gone(t)
+    if t.tab_id == nil or live_tabs[t.tab_id] then return false end
+    for _, p in ipairs(t.panes or {}) do
+      if p.pane_id == nil or live_panes[p.pane_id] then return false end
+    end
+    return true
+  end
+
+  local found = {}
+  for _, w in ipairs(prev.windows or {}) do
+    if w.window_id ~= nil then
+      local tabs = {}
+      for _, t in ipairs(w.tabs or {}) do
+        if gone(t) then table.insert(tabs, t) end
+      end
+      if not live_windows[w.window_id] then
+        if #tabs > 0 and worth_keeping(tabs) then
+          table.insert(found, { kind = "window", windows = { { size = w.size, tabs = tabs } } })
+        end
+      else
+        for _, t in ipairs(tabs) do
+          if worth_keeping({ t }) then
+            table.insert(found, { kind = "tab", windows = { { tabs = { t } } } })
+          end
+        end
+      end
+    end
+  end
+  if #found == 0 then return end
+
+  local path = closed_path(cur.instance)
+  local data = read_json(path)
+  local entries = (data and data.entries) or {}
+  for i, e in ipairs(found) do
+    -- 閉じた時刻は、閉じたことに気づいた保存の時刻 (実際より最大で保存の間隔だけ遅い)
+    e.id = string.format("%d-%d", cur.saved_at, i)
+    e.closed_at = cur.saved_at
+    e.instance = cur.instance
+    e.pane_count = count_panes(e)
+    table.insert(entries, e)
+  end
+  while #entries > KEEP_CLOSED do table.remove(entries, 1) end
+  write_json(path, { entries = entries })
+end
+
 local function save()
   local snap = snapshot()
+  local prev = state_get("prev_snapshot")
+  -- 記録の途中で失敗しても同じ差分を二重に記録しないよう、先に今回の保存を前回分として置く
+  state_set("prev_snapshot", snap)
   write_json(snapshot_dir .. "\\" .. snapshot_prefix .. snap.instance .. ".json", snap)
+  if prev and prev.instance == snap.instance then record_closed(prev, snap) end
 end
 
 -- この Lua の状態で保存ループを始めたか。
@@ -415,18 +533,39 @@ local function list_projects_dirs()
   return dirs
 end
 
--- 各ペインに起動コマンドを割り当て、会話を再開する数を返す。
+-- この WezTerm のペインで今動いている Claude の会話 ID の集合
+local function running_session_ids()
+  local ids = {}
+  for _, mw in ipairs(wezterm.mux.all_windows()) do
+    for _, tab in ipairs(mw:tabs()) do
+      for _, p in ipairs(tab:panes()) do
+        local cpid = top_claude_pid(p)
+        local s = cpid and session_for_pid(cpid)
+        if s then ids[s.id] = true end
+      end
+    end
+  end
+  return ids
+end
+
+-- 各ペインに起動コマンドを割り当て、会話を再開する数と、動いているため再開しなかった数を返す。
 -- 後からシェルへ文字を送る方式 (call_after + send_text) ではコマンドが実行されなかったため
 -- (実測。原因は未確認)、ペインの起動コマンド自体に含める
 local function assign_spawn_args(snap)
-  local n = 0
+  local n, skipped = 0, 0
   local projects_dirs = list_projects_dirs()
+  local running = running_session_ids()
   for _, w in ipairs(snap.windows or {}) do
     for _, t in ipairs(w.tabs or {}) do
       for _, p in ipairs(t.panes or {}) do
         local c = p.claude
         -- /clear 直後で会話の中身がまだ無いものは、シェルだけ開く
         p.resumable = c ~= nil and is_uuid(c.id) and transcript_exists(c, projects_dirs)
+        -- 同じ会話を 2 つのペインで動かさないよう、今動いているものはシェルだけ開く
+        if p.resumable and running[c.id] then
+          p.resumable = false
+          skipped = skipped + 1
+        end
         if p.resumable then
           p.spawn_args = opts.pane_args(p.cwd, c.id, n * RESUME_STAGGER_MS)
           n = n + 1
@@ -436,7 +575,7 @@ local function assign_spawn_args(snap)
       end
     end
   end
-  return n
+  return n, skipped
 end
 
 -- pane は node の最初の葉のペイン。木を外側から分割していく
@@ -462,23 +601,7 @@ local function restore_tab(tab_spec, spawn)
   return tab, placed
 end
 
--- 復元の途中の状態 (窓の大きさ待ち・最大化待ち・会話再開の確認) は、設定の再読み込み
--- (automatically_reload_config) で Lua の状態が作り直されても続くよう wezterm.GLOBAL に置く。
--- GLOBAL に入れた表の入れ子の書き換えに頼らないよう、表は JSON 文字列として丸ごと読み書きする
-local STATE_PREFIX = "session_restore_state_"
-
-local function state_get(name)
-  local s = wezterm.GLOBAL[STATE_PREFIX .. name]
-  if type(s) ~= "string" then return nil end
-  local ok, v = pcall(wezterm.serde.json_decode, s)
-  if ok and type(v) == "table" then return v end
-  return nil
-end
-
--- value が nil なら消す
-local function state_set(name, value)
-  wezterm.GLOBAL[STATE_PREFIX .. name] = value ~= nil and wezterm.serde.json_encode(value) or nil
-end
+-- 復元の途中の状態 (窓の大きさ待ち・最大化待ち・会話再開の確認) は state_get / state_set で GLOBAL に置く
 
 -- 窓の大きさを合わせる途中の復元。window_id (文字列) → 保存。window-resized を受けたら分割を作る
 local function pending_get(window_id)
@@ -579,16 +702,92 @@ local function verify_resumed(window)
   )
 end
 
+-- 起動直後の窓 (1 タブ 1 ペインで、Claude が動いていない) か。復元の後にその初期ペインを閉じてよいかの判定。
+-- 前面のプロセスがシェルであることまでは求めない: プロンプトの表示でシェルが起動する git などが
+-- 前面に見えることがあり (実測)、起動直後の窓を取りこぼすため
+local function is_fresh(mux_window)
+  local tabs = mux_window:tabs()
+  if #tabs ~= 1 then return false end
+  local panes = tabs[1]:panes()
+  return #panes == 1 and top_claude_pid(panes[1]) == nil
+end
+
+local function is_closed_entry(snap)
+  return snap.kind == "window" or snap.kind == "tab"
+end
+
+local function done_key(snap)
+  return "session_restore_done_" .. snap.instance
+end
+
+-- 閉じた窓・タブの記録を、そのファイルから取り除く。取り除けたら true (別の窓で先に戻していたら false)
+local function take_closed(entry)
+  local path = closed_path(entry.instance)
+  local data = read_json(path)
+  local kept, found = {}, false
+  for _, e in ipairs((data and data.entries) or {}) do
+    if e.id == entry.id then
+      found = true
+    else
+      table.insert(kept, e)
+    end
+  end
+  if found then write_json(path, { entries = kept }) end
+  return found
+end
+
+-- 戻すのに失敗した記録を、閉じた時刻の順を保ってファイルに戻す
+local function put_back_closed(entry)
+  local path = closed_path(entry.instance)
+  local data = read_json(path)
+  local entries = (data and data.entries) or {}
+  local e = {}
+  for k, v in pairs(entry) do e[k] = v end
+  e.lost_at, e.remaining, e.into_current = nil, nil, nil
+  table.insert(entries, e)
+  table.sort(entries, function(a, b) return (a.closed_at or 0) < (b.closed_at or 0) end)
+  write_json(path, { entries = entries })
+end
+
+-- 戻す候補のうち、無くなった時刻が最も新しいものと、残りの候補の数を返す。
+-- 候補は、閉じた窓・タブ (このプロセスと前のプロセスのもの) と、終了した前回の WezTerm の状態
+-- (この起動中にまだ戻していなければ)。押すたびに 1 つずつ、さかのぼって戻す
+local function pick_next()
+  local cands = {}
+  local prev = pick_previous()
+  if prev and not wezterm.GLOBAL[done_key(prev)] then
+    prev.kind = "instance"
+    prev.lost_at = prev.saved_at or 0
+    table.insert(cands, prev)
+  end
+  for _, path in ipairs(list_files(closed_prefix)) do
+    local data = read_json(path)
+    for _, e in ipairs((data and data.entries) or {}) do
+      e.lost_at = e.closed_at or 0
+      table.insert(cands, e)
+    end
+  end
+  if #cands == 0 then return nil, 0 end
+  table.sort(cands, function(a, b)
+    if a.lost_at ~= b.lost_at then return a.lost_at > b.lost_at end
+    -- 同じ保存で気づいたものは、前回の WezTerm の状態を先にする
+    return a.kind == "instance" and b.kind ~= "instance"
+  end)
+  return cands[1], #cands - 1
+end
+
 -- 保存どおりに窓・タブ・ペインを作る。progress.created に作ったタブの数を数える
 local function restore_all(window, pane, snap, progress)
   local mux_window = window:mux_window()
-  -- 起動直後の 1 タブ 1 ペインだけの窓なら、復元後にその初期ペインを閉じる
-  local fresh = #mux_window:tabs() == 1 and #mux_window:tabs()[1]:panes() == 1
-  local resumed = assign_spawn_args(snap)
+  -- 今の窓に作るか (false なら新しい窓に作る)。M.restore で決める
+  local into_current = snap.into_current ~= false
+  -- 起動直後の窓に前回の状態や閉じた窓を戻すときは、復元後にその初期ペインを閉じる (タブを戻すときは閉じない)
+  local fresh = into_current and snap.kind ~= "tab" and is_fresh(mux_window)
+  local resumed, skipped = assign_spawn_args(snap)
   local all_placed, actives = {}, {}
 
   for wi, win_spec in ipairs(snap.windows or {}) do
-    local target = wi == 1 and mux_window or nil
+    local target = (wi == 1 and into_current) and mux_window or nil
     local active_tab
     for _, tab_spec in ipairs(win_spec.tabs or {}) do
       if #(tab_spec.panes or {}) > 0 then
@@ -598,7 +797,7 @@ local function restore_all(window, pane, snap, progress)
             progress.created = progress.created + 1
             return t, p
           end
-          -- 2 枚目以降の窓は、分割の前にセル数で保存時の大きさにしておく。
+          -- 新しく開く窓は、分割の前にセル数で保存時の大きさにしておく。
           -- 最大化は GUI の窓ができてから (window-config-reloaded / update-status で) 行う
           local size = win_spec.size
           if size then
@@ -615,7 +814,8 @@ local function restore_all(window, pane, snap, progress)
           table.insert(all_placed, item)
           if item.spec.active then table.insert(actives, item.pane) end
         end
-        if tab_spec.active then active_tab = tab end
+        -- 戻したタブは、保存時にアクティブでなくても前に出す
+        if tab_spec.active or snap.kind == "tab" then active_tab = tab end
       end
     end
     if active_tab then table.insert(actives, active_tab) end
@@ -634,30 +834,58 @@ local function restore_all(window, pane, snap, progress)
       table.insert(verify_list, { pane_id = item.pane:pane_id(), session_id = item.spec.claude.id, cwd = item.spec.cwd })
     end
   end
-  set_verify(verify_list, 0, os.time() + math.ceil(resumed * RESUME_STAGGER_MS / 1000) + 20)
-  window:toast_notification(
-    "WezTerm",
-    string.format("%s の状態を復元: %d ペイン (Claude %d)", os.date("%m/%d %H:%M", snap.saved_at), #all_placed, resumed),
-    nil,
-    5000
-  )
+  -- 続けて押したときに、前の復元の確認を上書きで消さないよう、確認待ちの一覧に足す。
+  -- 前のものも最初の段階から確かめ直す (やり直しのコマンドを打つのが少し遅れるだけ)
+  local waiting = state_get("verify")
+  for _, item in ipairs((waiting and waiting.list) or {}) do table.insert(verify_list, item) end
+  local at = os.time() + math.ceil(resumed * RESUME_STAGGER_MS / 1000) + 20
+  set_verify(verify_list, 0, math.max(at, wezterm.GLOBAL[VERIFY_AT_KEY] or 0))
+
+  local what
+  if snap.kind == "window" then
+    what = os.date("%m/%d %H:%M", snap.closed_at) .. " に閉じた窓"
+  elseif snap.kind == "tab" then
+    what = os.date("%m/%d %H:%M", snap.closed_at) .. " に閉じたタブ"
+  else
+    what = os.date("%m/%d %H:%M", snap.saved_at) .. " の状態"
+  end
+  local msg = string.format("%sを復元: %d ペイン (Claude %d)", what, #all_placed, resumed)
+  if skipped > 0 then
+    msg = msg .. string.format("。動いている会話 %d 個はシェルだけ開いた", skipped)
+  end
+  if (snap.remaining or 0) > 0 then
+    msg = msg .. string.format("。もう一度押すと、さらに前のものを戻す (残り %d)", snap.remaining)
+  end
+  window:toast_notification("WezTerm", msg, nil, 6000)
 end
 
 local function build(window, pane, snap)
-  local done_key = "session_restore_done_" .. snap.instance
-  if wezterm.GLOBAL[done_key] then
-    window:toast_notification("WezTerm", "前回の状態はこの起動中に復元済み", nil, 4000)
-    return
+  if is_closed_entry(snap) then
+    if not take_closed(snap) then
+      window:toast_notification("WezTerm", "その窓・タブはもう戻してある", nil, 4000)
+      return
+    end
+  else
+    if wezterm.GLOBAL[done_key(snap)] then
+      window:toast_notification("WezTerm", "前回の状態はこの起動中に復元済み", nil, 4000)
+      return
+    end
+    wezterm.GLOBAL[done_key(snap)] = true
   end
-  wezterm.GLOBAL[done_key] = true
   local progress = { created = 0 }
   local ok, err = pcall(restore_all, window, pane, snap, progress)
   if ok then return end
   -- タブも窓も作らずに失敗したなら、もう一度押せばやり直せるようにする
-  if progress.created == 0 then wezterm.GLOBAL[done_key] = nil end
-  -- TODO: タブや窓を作った後の失敗 (pane:split の "No space for split!" 等) では done_key が残り、
-  --   WezTerm を再起動するまでやり直せない。作りかけのタブ・窓を閉じてから消すか、消すだけにして
-  --   重複することをトーストで知らせるかを決めて対処する
+  if progress.created == 0 then
+    if is_closed_entry(snap) then
+      put_back_closed(snap)
+    else
+      wezterm.GLOBAL[done_key(snap)] = nil
+    end
+  end
+  -- TODO: タブや窓を作った後の失敗 (pane:split の "No space for split!" 等) では戻した扱いのままになり、
+  --   前回の状態は WezTerm を再起動するまで、閉じた窓・タブは記録から消えたため、やり直せない。
+  --   作りかけのタブ・窓を閉じてから戻すか、戻すだけにして重複することをトーストで知らせるかを決めて対処する
   error(err, 0)
 end
 
@@ -668,17 +896,35 @@ local function size_matches(window, spec)
 end
 
 -- 分割は窓の大きさに対する比率で作るが、作った後に窓を広げると WezTerm は比率どおりには
--- 配らない (実測)。そのため先に窓を保存時の大きさにし、window-resized を待ってから分割する
+-- 配らない (実測)。そのため今の窓に作るときは、先に窓を保存時の大きさにし、window-resized を
+-- 待ってから分割する
 function M.restore(window, pane)
-  local snap = pick_previous()
-  if not snap then
-    window:toast_notification("WezTerm", "復元できる前回の保存がない", nil, 4000)
+  local id = window:window_id()
+  -- 大きさが変わらずイベントが来なかったときは、もう一度押すと待っていたものをそのまま作る
+  local pending = pending_get(id)
+  if pending then
+    pending_set(id, nil)
+    build(window, pane, pending)
     return
   end
-  local id = window:window_id()
-  local spec = snap.windows and snap.windows[1] and snap.windows[1].size
-  -- 大きさが変わらずイベントが来なかったときは、もう一度押すとそのまま作る
-  if spec and not pending_get(id) and not size_matches(window, spec) then
+  -- 閉じた直後 (次の定期保存の前) に押しても戻せるよう、今の状態をその場で保存し、閉じた窓・タブを記録する。
+  -- 前回分として置く保存も進むので、次の定期保存で同じものを二重に記録しない
+  local ok, err = pcall(save)
+  if not ok then wezterm.log_error("session_restore: save before restore failed: " .. tostring(err)) end
+  local snap, remaining = pick_next()
+  if not snap then
+    window:toast_notification("WezTerm", "戻せる窓・タブも前回の状態もない", nil, 4000)
+    return
+  end
+  snap.remaining = remaining
+  -- タブは今の窓に足す。閉じた窓は、起動直後の窓ならそこに、そうでなければ新しい窓に開く
+  if snap.kind == "window" then
+    snap.into_current = is_fresh(window:mux_window())
+  else
+    snap.into_current = true
+  end
+  local spec = snap.into_current and snap.kind ~= "tab" and snap.windows and snap.windows[1] and snap.windows[1].size
+  if spec and not size_matches(window, spec) then
     pending_set(id, snap)
     if spec.maximized then
       window:maximize()
@@ -687,7 +933,6 @@ function M.restore(window, pane)
     end
     return
   end
-  pending_set(id, nil)
   build(window, pane, snap)
 end
 
