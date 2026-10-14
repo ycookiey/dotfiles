@@ -85,7 +85,8 @@ if ($storeWsl) {
 } else {
     wh "  インストール中 (wsl --install --no-distribution)..." -Fo Yellow
     wsl --install --no-distribution
-    # TODO: --no-distribution を持たない古い Windows の wsl.exe 向けの代替経路 (旧来の MSI 等) は未実装。今は失敗として止める
+    # --no-distribution を持たない古い Windows の wsl.exe には代替経路を持たない (決定)。エラーにして手動の MSI を案内する。
+    # setup.ps1 の 'WSL' 手順の失敗になり、bootstrap は続行して最後の失敗一覧に載せる
     if ($LASTEXITCODE) { throw "wsl --install --no-distribution exit $LASTEXITCODE (古い Windows では非対応。https://github.com/microsoft/WSL/releases の MSI を手動で入れる)" }
     $installed = $true
 }

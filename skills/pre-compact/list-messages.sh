@@ -46,8 +46,8 @@ fi
 # jq prints one finished preview per line (newlines are already folded) and awk
 # only numbers the lines, so backslashes stay as written. Tabs and NULs are
 # still shown as \t and \0 so they do not reach the terminal raw.
-# TODO: also exclude meta records with `and (.isMeta | not)` once the numbering
-# is confirmed to match the candidates in the UI's "Summarize up to here".
+# Meta records (isMeta) are kept on purpose, so the numbers match the candidates
+# listed by the UI's "Summarize up to here".
 { grep -aF '"type":"user"' "$SESSION_FILE" || [[ $? -eq 1 ]]; } | jq -r --argjson w "$WIDTH" '
     select(.type == "user" and (.isSidechain | not) and (.message.content | type == "string"))
     | (.message.content | gsub("\r"; "") | gsub("\n"; " ") | gsub(" +"; " ")) as $c
