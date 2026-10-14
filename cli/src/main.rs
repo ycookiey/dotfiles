@@ -163,6 +163,16 @@ enum Commands {
         #[arg(short, long, default_value_t = 0)]
         offset: i32,
     },
+    /// Start a program detached from the calling shell, passing the arguments as given
+    /// (no cmd.exe re-parsing). Used by the generated nushell launchers.
+    // One trailing list with no help flag, so that -h, --help or -- right after the
+    // program reach the program instead of clap.
+    #[command(disable_help_flag = true)]
+    Detach {
+        /// Program path (or a name looked up on PATH), then its arguments
+        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+        command: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -237,6 +247,10 @@ fn main() {
             duration,
             offset,
         } => commands::notify::run(&title, &message, duration, offset),
+        Commands::Detach { command } => {
+            let (program, args) = command.split_first().expect("clap requires the program");
+            std::process::exit(commands::detach::run(program, args))
+        }
         Commands::CasPost { failure } => commands::cas_post::run(failure),
         Commands::Sync { dot, force } => commands::sync::run(dot, force),
         Commands::Cas { action } => match action {
@@ -353,5 +367,25 @@ mod scanner_args_tests {
         // A repeated single-value option keeps its last value, as before.
         assert_eq!(d.top, 7);
         assert_eq!(string_dup(&["--ext", "md", "--ext", "ts"]).scan.exts(&[]), ["ts"]);
+    }
+
+    /// Everything after `detach` reaches the program, including -h, --help and --.
+    #[test]
+    fn detach_passes_every_argument_through() {
+        for args in [
+            &["app.exe", "--remote-debugging-port=9222", "--no-first-run", "x"][..],
+            &["app.exe", "-h"],
+            &["app.exe", "--help"],
+            &["app.exe", "--", "b"],
+            &["app.exe", "a", "--", "b"],
+            &["app.exe", "-V"],
+        ] {
+            match parse(&[&["detach"], args].concat()) {
+                Ok(Commands::Detach { command }) => assert_eq!(command, args),
+                Ok(_) => panic!("{args:?}: parsed as another command"),
+                Err(e) => panic!("{args:?}: {e}"),
+            }
+        }
+        assert!(parse(&["detach"]).is_err(), "the program is required");
     }
 }

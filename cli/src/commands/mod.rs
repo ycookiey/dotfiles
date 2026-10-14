@@ -11,6 +11,7 @@ pub mod cb;
 pub mod cg;
 pub mod claude_launch;
 pub mod cursor;
+pub mod detach;
 pub mod dup_scan;
 pub mod dup_scan_format;
 pub mod fd_fzf;

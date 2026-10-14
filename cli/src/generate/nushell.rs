@@ -14,7 +14,7 @@ pub fn generate(defs: &Definitions, _dotfiles_dir: &Path) -> String {
     // _dotcli_apply helper
     writeln!(out, "{}", APPLY_HELPER).unwrap();
 
-    // _dotcli_launch helper (detached external process via job spawn)
+    // _dotcli_launch helper (detached external process via `dotcli detach`)
     writeln!(out, "{}", LAUNCH_HELPER).unwrap();
 
     // Aliases
@@ -459,9 +459,13 @@ app_name = "Notion Calendar"
     }
 }
 
+// `dotcli detach` (commands/detach.rs) starts the program detached and passes the
+// arguments as given. `cmd /c start` made cmd.exe re-parse them (& | < > ^ ( ) %NAME%),
+// `job spawn` gets its processes killed when nushell exits, and pwsh's Start-Process
+// costs ~300 ms per launch to start pwsh.
 const LAUNCH_HELPER: &str = r#"def _dotcli_launch [program: string, ...args: string] {
-    # cmd /c start で完全 detach (job spawn は nushell session 配下で子プロセス kill される)
-    ^cmd /c start "" $program ...$args
+    # dotcli detach: 引数を cmd.exe に解釈させず、nu から切り離して起動する (nu を終えても残る)
+    ^dotcli detach $program ...$args
 }
 "#;
 
