@@ -34,6 +34,21 @@ if ($parseErrors) {
     exit 1
 }
 
+# PE optional-header Subsystem of an exe: 2 = Windows GUI, 3 = console. $null if unreadable.
+function Get-PeSubsystem([string]$Path) {
+    try {
+        $fs = [IO.File]::OpenRead($Path)
+        try {
+            $buf = [byte[]]::new(1024)
+            $n = $fs.Read($buf, 0, $buf.Length)
+            $pe = [BitConverter]::ToInt32($buf, 0x3C)
+            # PE signature (4) + COFF header (20) + Subsystem offset in the optional header (68)
+            if ($pe -lt 0 -or $pe + 94 -gt $n) { return $null }
+            [BitConverter]::ToUInt16($buf, $pe + 24 + 68)
+        } finally { $fs.Dispose() }
+    } catch { $null }
+}
+
 $calls = @($ast.FindAll({
     param($n)
     $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Start-App-Logged'
@@ -79,6 +94,14 @@ foreach ($call in $calls) {
             Write-Host "  FAIL: ${line}: $app -> '$name' is MISSING" -ForegroundColor Red
             $failed++
         }
+    }
+
+    # A console-subsystem exe called directly blocks: PowerShell waits for it to exit, and a resident
+    # app never exits, so every app after it is never started. GUI exes and `start` return at once.
+    $exeCmd = if ($resolved -is [System.Management.Automation.AliasInfo]) { $resolved.ResolvedCommand } else { $resolved }
+    if ($exeCmd -is [System.Management.Automation.ApplicationInfo] -and (Get-PeSubsystem $exeCmd.Source) -eq 3) {
+        Write-Host "  FAIL: ${line}: $app calls console exe '$cmd' directly (blocks until it exits; use start)" -ForegroundColor Red
+        $failed++
     }
 }
 

@@ -88,13 +88,16 @@ Start-App-Logged "ybasey-mirror" {
         -Arg "--config","C:\Main\Project\ybasey-mirror\config.toml" `
         -WindowStyle Hidden
 }
-Start-App-Logged "ytasky TUI" { wezterm start --always-new-process -- ytasky }
+# Console-subsystem exes (wezterm.exe, ystrokey) must go through start: called directly, PowerShell
+# waits until they exit, and these keep running, so every app after them never started (the task
+# was killed at its time limit). tests/test-startup-commands.ps1 fails on such a direct call.
+Start-App-Logged "ytasky TUI" { start wezterm-gui -Arg 'start', '--always-new-process', '--', 'ytasky' }
 sleep -Seconds 2
 
 # --- Medium priority ---
 Start-App-Logged "HideTaskBar" { htb }
 Start-App-Logged "yCursory" { ycursory }
-Start-App-Logged "yStrokey" { ystrokey }
+Start-App-Logged "yStrokey" { start ystrokey -WindowStyle Hidden }
 Start-App-Logged "yMonitory" { ymonitory }
 Start-App-Logged "yhwndy" { yhwndy }
 sleep -Seconds 2
