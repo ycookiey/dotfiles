@@ -1,0 +1,688 @@
+{
+  "[python]": {
+    "editor.formatOnType": true,
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "charliermarsh.ruff"
+  },
+  "workbench.iconTheme": "material-icon-theme",
+  "code-runner.runInTerminal": true,
+  "editor.formatOnType": true,
+  "dart.flutterSdkPath": "C:\\Main\\flutter",
+  "search.exclude": {
+    "**/.fvm": true
+  },
+  "files.watcherExclude": {
+    "**/.fvm": true
+  },
+  "dart.previewFlutterUiGuides": true,
+  "dart.previewFlutterUiGuidesCustomTracking": true,
+  "dart.previewHotReloadOnSaveWatcher": true,
+  "editor.acceptSuggestionOnEnter": "off",
+  "cSpell.showAutocompleteSuggestions": true,
+  "editor.guides.bracketPairs": "active",
+  "cSpell.userWords": [
+    "autofocus",
+    "Cupertino",
+    "firestore",
+    "fluttertoast",
+    "oktoast",
+    "puyocolor",
+    "RGBO",
+    "riverpod",
+    "rterm",
+    "Schyler",
+    "screenutil",
+    "tategaki",
+    "Todos"
+  ],
+  "editor.quickSuggestions": {
+    "strings": "on"
+  },
+  "editor.quickSuggestionsDelay": 0,
+  "editor.suggest.preview": true,
+  "editor.autoClosingBrackets": "always",
+  "editor.autoClosingQuotes": "always",
+  "cSpell.languageSettings": [],
+  "security.workspace.trust.untrustedFiles": "open",
+  "r.rterm.windows": "C:\\Program Files\\R\\R-4.5.0\\bin\\R.exe",
+  "r.rpath.windows": "C:\\Program Files\\R\\R-4.5.0\\bin\\R.exe",
+  "r.plot.useHttpgd": true,
+  "files.associations": {
+    "*.rmd": "markdown",
+    "*.ahk": "ahk",
+    "*.css": "tailwindcss",
+    "*.kts": "kotlinscript"
+  },
+  "r.alwaysUseActiveTerminal": true,
+  "r.lsp.debug": true,
+  "dart.showTodos": false,
+  "dart.flutterCustomEmulators": [],
+  "editor.codeActionsOnSave": {
+    "source.fixAll.ruff": "explicit"
+  },
+  "editor.wordWrap": "on",
+  "git.openRepositoryInParentFolders": "never",
+  "editor.inlineSuggest.enabled": true,
+  "explorer.confirmDragAndDrop": false,
+  "github.copilot.enable": {
+    "*": true,
+    "plaintext": true,
+    "markdown": true,
+    "scminput": false,
+    "python": false
+  },
+  "python.formatting.provider": "none",
+  "cSpell.customDictionaries": {
+    "custom-dictionary-user": {
+      "name": "custom-dictionary-user",
+      "path": "~/.cspell/custom-dictionary-user.txt",
+      "addWords": true,
+      "scope": "user"
+    }
+  },
+  "cSpell.language": "en,lorem",
+  "#cSpell.enabledFileTypes#": [
+    "ahk",
+    "dart"
+  ],
+  "powermode.enabled": true,
+  "powermode.presets": "exploding-rift",
+  "powermode.combo.location": "editor",
+  "powermode.explosions.offset": 0.4,
+  "powermode.shake.enabled": false,
+  "codic.ACCESS_TOKEN": "<redacted>",
+  "codic.case": "no case",
+  "discord.removeRemoteRepository": true,
+  "vscord.app.name": "Visual Studio Code",
+  "vscord.status.buttons.button1.enabled": false,
+  "vscord.app.privacyMode.enable": true,
+  "explorer.confirmDelete": false,
+  "liveshare.anonymousGuestApproval": "accept",
+  "code-runner.executorMap": {
+    "javascript": "node",
+    "java": "cd $dir && javac $fileName && java $fileNameWithoutExt",
+    "c": "cd $dir && gcc -fexec-charset=CP932 $fileName -o $fileNameWithoutExt && $dir$fileNameWithoutExt",
+    "zig": "zig run",
+    "cpp": "cd $dir && g++ $fileName -o $fileNameWithoutExt && $dir$fileNameWithoutExt",
+    "objective-c": "cd $dir && gcc -framework Cocoa $fileName -o $fileNameWithoutExt && $dir$fileNameWithoutExt",
+    "php": "php",
+    "python": "python -u",
+    "perl": "perl",
+    "perl6": "perl6",
+    "ruby": "ruby",
+    "go": "go run",
+    "lua": "lua",
+    "groovy": "groovy",
+    "powershell": "powershell -ExecutionPolicy ByPass -File",
+    "bat": "cmd /c",
+    "shellscript": "bash",
+    "fsharp": "fsi",
+    "csharp": "scriptcs",
+    "vbscript": "cscript //Nologo",
+    "typescript": "ts-node",
+    "coffeescript": "coffee",
+    "scala": "scala",
+    "swift": "swift",
+    "julia": "julia",
+    "crystal": "crystal",
+    "ocaml": "ocaml",
+    "r": "Rscript",
+    "applescript": "osascript",
+    "clojure": "lein exec",
+    "haxe": "haxe --cwd $dirWithoutTrailingSlash --run $fileNameWithoutExt",
+    "rust": "cd $dir && rustc $fileName && $dir$fileNameWithoutExt",
+    "racket": "racket",
+    "scheme": "csi -script",
+    "ahk": "autohotkey",
+    "autoit": "autoit3",
+    "dart": "dart",
+    "pascal": "cd $dir && fpc $fileName && $dir$fileNameWithoutExt",
+    "d": "cd $dir && dmd $fileName && $dir$fileNameWithoutExt",
+    "haskell": "runghc",
+    "nim": "nim compile --verbosity:0 --hints:off --run",
+    "lisp": "sbcl --script",
+    "kit": "kitc --run",
+    "v": "v run",
+    "sass": "sass --style expanded",
+    "scss": "scss --style expanded",
+    "less": "cd $dir && lessc $fileName $fileNameWithoutExt.css",
+    "FortranFreeForm": "cd $dir && gfortran $fileName -o $fileNameWithoutExt && $dir$fileNameWithoutExt",
+    "fortran-modern": "cd $dir && gfortran $fileName -o $fileNameWithoutExt && $dir$fileNameWithoutExt",
+    "fortran_fixed-form": "cd $dir && gfortran $fileName -o $fileNameWithoutExt && $dir$fileNameWithoutExt",
+    "fortran": "cd $dir && gfortran $fileName -o $fileNameWithoutExt && $dir$fileNameWithoutExt",
+    "sml": "cd $dir && sml $fileName"
+  },
+  "workbench.editor.empty.hint": "hidden",
+  "dart.debugExternalPackageLibraries": true,
+  "dart.debugSdkLibraries": true,
+  "editor.suggestSelection": "recentlyUsedByPrefix",
+  "editor.suggest.localityBonus": true,
+  "editor.wordBasedSuggestionsMode": "allDocuments",
+  "window.newWindowDimensions": "inherit",
+  "window.density.editorTabHeight": "compact",
+  "window.restoreFullscreen": true,
+  "editor.minimap.autohide": "mouseover",
+  "editor.minimap.scale": 3,
+  "editor.fontLigatures": true,
+  "editor.fontFamily": "'Fira Code', Hasklig, Consolas, 'Courier New', monospace",
+  "terminal.integrated.fontFamily": "monospace",
+  "editor.renderLineHighlight": "all",
+  "editor.cursorBlinking": "smooth",
+  "editor.cursorStyle": "block",
+  "editor.cursorSmoothCaretAnimation": "on",
+  "files.autoGuessEncoding": true,
+  "editor.bracketPairColorization.independentColorPoolPerBracketType": true,
+  "workbench.colorCustomizations": {
+    "editorBracketHighlight.foreground2": "#FF7FFF",
+    "editorBracketHighlight.foreground3": "#FFb366",
+    "editorBracketHighlight.foreground4": "#FFFF66",
+    "editorBracketHighlight.foreground5": "#98FF66",
+    "editorBracketHighlight.foreground6": "#6698FF",
+    "diffEditor.insertedTextBackground": "#88ff0043",
+    "diffEditor.removedTextBackground": "#ff000043",
+    "diffEditor.insertedLineBackground": "#00ff0016",
+    "diffEditor.removedLineBackground": "#ff000016",
+    "diffEditorGutter.insertedLineBackground": "#00ff0016",
+    "diffEditorGutter.removedLineBackground": "#ff000016",
+    "diffEditorOverview.insertedForeground": "#00ff0034",
+    "diffEditorOverview.removedForeground": "#ff000034"
+  },
+  "editor.autoClosingComments": "always",
+  "activitusbar.views": [
+    {
+      "name": "explorer",
+      "codicon": "explorer-view-icon"
+    },
+    {
+      "name": "search",
+      "codicon": "search-view-icon"
+    },
+    {
+      "name": "scm",
+      "codicon": "source-control-view-icon"
+    },
+    {
+      "name": "debug",
+      "codicon": "run-view-icon"
+    },
+    {
+      "name": "extensions",
+      "codicon": "extensions-view-icon"
+    }
+  ],
+  "indentRainbow.colorOnWhiteSpaceOnly": true,
+  "indentRainbow.colors": [
+    "rgba(255,255,64,0.15)",
+    "rgba(127,255,127,0.15)",
+    "rgba(255,127,255,0.15)",
+    "rgba(79,236,236,0.15)"
+  ],
+  "python.analysis.completeFunctionParens": true,
+  "peacock.favoriteColors": [
+    {
+      "name": "Angular Red",
+      "value": "#dd0531"
+    },
+    {
+      "name": "Azure Blue",
+      "value": "#007fff"
+    },
+    {
+      "name": "JavaScript Yellow",
+      "value": "#f9e64f"
+    },
+    {
+      "name": "Mandalorian Blue",
+      "value": "#1857a4"
+    },
+    {
+      "name": "Node Green",
+      "value": "#215732"
+    },
+    {
+      "name": "React Blue",
+      "value": "#61dafb"
+    },
+    {
+      "name": "Something Different",
+      "value": "#832561"
+    },
+    {
+      "name": "Svelte Orange",
+      "value": "#ff3d00"
+    },
+    {
+      "name": "Vue Green",
+      "value": "#42b883"
+    }
+  ],
+  "markdown.preview.breaks": true,
+  "diffEditor.useInlineViewWhenSpaceIsLimited": false,
+  "markdown-preview-enhanced.previewTheme": "atom-light.css",
+  "pasteImage.insertPattern": "<img src='${imageFileName}' width='100%'>",
+  "[ahk2]": {},
+  "editor.codeActionWidget.includeNearbyQuickFixes": false,
+  "[cpp]": {
+    "files.encoding": "utf8bom"
+  },
+  "[csharp]": {
+    "files.encoding": "utf8bom"
+  },
+  "[plaintext]": {
+    "files.encoding": "shiftjis"
+  },
+  "diffEditor.ignoreTrimWhitespace": false,
+  "workbench.startupEditor": "none",
+  "liveServer.settings.donotShowInfoMsg": true,
+  "dart.openDevTools": "flutter",
+  "remote.SSH.remotePlatform": {
+    "test": "linux",
+    "vmware": "linux",
+    "ssh-host": "linux",
+    "nuie": "linux"
+  },
+  "editor.wordSeparators": "./\\()\"'-:,.;<>~!@#$%^&*|+=[]{}`~?　、。「」【】『』（）！？てにをはがのともへでや",
+  "latex-workshop.latex.tools": [
+    {
+      "name": "Latexmk (LuaLaTeX)",
+      "command": "latexmk",
+      "args": [
+        "-f",
+        "-gg",
+        "-pv",
+        "-lualatex",
+        "-synctex=1",
+        "-interaction=nonstopmode",
+        "-file-line-error",
+        "-outdir=%OUTDIR%",
+        "%DOC%"
+      ]
+    },
+    {
+      "name": "Latexmk (XeLaTeX)",
+      "command": "latexmk",
+      "args": [
+        "-f",
+        "-gg",
+        "-pv",
+        "-xelatex",
+        "-synctex=1",
+        "-interaction=nonstopmode",
+        "-file-line-error",
+        "-outdir=%OUTDIR%",
+        "%DOC%"
+      ]
+    },
+    {
+      "name": "Latexmk (upLaTeX)",
+      "command": "latexmk",
+      "args": [
+        "-f",
+        "-gg",
+        "-pv",
+        "-synctex=1",
+        "-interaction=nonstopmode",
+        "-file-line-error",
+        "-outdir=%OUTDIR%",
+        "%DOC%"
+      ]
+    },
+    {
+      "name": "Latexmk (pLaTeX)",
+      "command": "latexmk",
+      "args": [
+        "-f",
+        "-gg",
+        "-pv",
+        "-latex='platex'",
+        "-latexoption='-kanji=utf8 -no-guess-input-env'",
+        "-synctex=1",
+        "-interaction=nonstopmode",
+        "-file-line-error",
+        "-outdir=%OUTDIR%",
+        "%DOC%"
+      ]
+    }
+  ],
+  "latex-workshop.latex.recipes": [
+    {
+      "name": "LuaLaTeX",
+      "tools": [
+        "Latexmk (LuaLaTeX)"
+      ]
+    },
+    {
+      "name": "XeLaTeX",
+      "tools": [
+        "Latexmk (XeLaTeX)"
+      ]
+    },
+    {
+      "name": "upLaTeX",
+      "tools": [
+        "Latexmk (upLaTeX)"
+      ]
+    },
+    {
+      "name": "pLaTeX",
+      "tools": [
+        "Latexmk (pLaTeX)"
+      ]
+    }
+  ],
+  "latex-workshop.latex.magic.args": [
+    "-f",
+    "-gg",
+    "-pv",
+    "-synctex=1",
+    "-interaction=nonstopmode",
+    "-file-line-error",
+    "%DOC%"
+  ],
+  "latex-workshop.latex.clean.fileTypes": [
+    "*.aux",
+    "*.bbl",
+    "*.blg",
+    "*.idx",
+    "*.ind",
+    "*.lof",
+    "*.lot",
+    "*.out",
+    "*.toc",
+    "*.acn",
+    "*.acr",
+    "*.alg",
+    "*.glg",
+    "*.glo",
+    "*.gls",
+    "*.ist",
+    "*.fls",
+    "*.log",
+    "*.fdb_latexmk",
+    "*.synctex.gz",
+    "_minted*",
+    "*.nav",
+    "*.snm",
+    "*.vrb"
+  ],
+  "latex-workshop.latex.autoClean.run": "onBuilt",
+  "latex-workshop.view.pdf.viewer": "tab",
+  "latex-workshop.latex.autoBuild.run": "never",
+  "[tex]": {
+    "editor.suggest.snippetsPreventQuickSuggestions": false,
+    "editor.tabSize": 2
+  },
+  "[latex]": {
+    "editor.suggest.snippetsPreventQuickSuggestions": false,
+    "editor.tabSize": 2,
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "James-Yu.latex-workshop"
+  },
+  "#latex-workshop.formatting.latexindent.path#": "C:/texlive/2024/bin/windows/latexindent.exe",
+  "#latex-workshop.formatting.latexindent.args#": [
+    "%TMPFILE%",
+    "-c=%DIR%/",
+    "-y=defaultIndent: '%INDENT%'"
+  ],
+  "[bibtex]": {
+    "editor.tabSize": 2
+  },
+  "latex-workshop.intellisense.package.enabled": true,
+  "latex-workshop.latex.outDir": "out",
+  "emeraldwalk.runonsave": {
+    "commands": [
+      {
+        "match": ".tex$",
+        "cmd": "lualatex ${fileBasename}",
+        "isAsync": true
+      }
+    ]
+  },
+  "latex-workshop.linting.chktex.enabled": true,
+  "latex-workshop.linting.run": "onType",
+  "haskell.manageHLS": "GHCup",
+  "haskell.ghcupExecutablePath": "C:\\ghcup\\bin\\ghcup.exe",
+  "indentRainbow.excludedLanguages": [
+    "plaintext"
+  ],
+  "indentRainbow.ignoreErrorLanguages": [
+    "tex",
+    "markdown"
+  ],
+  "highlight-matching-tag.styles": {
+    "opening": {
+      "name": {
+        "surround": "rgba(0, 103, 192,1)"
+      }
+    },
+    "inner": {
+      "underline": "rgba(0, 103, 192,0.6)"
+    }
+  },
+  "diffEditor.renderSideBySide": true,
+  "github.copilot.editor.enableAutoCompletions": true,
+  "prisma.showPrismaDataPlatformNotification": false,
+  "editor.glyphMargin": false,
+  "editor.letterSpacing": -0.7,
+  "editor.lineHeight": 15,
+  "hediet.vscode-drawio.resizeImages": null,
+  "sonarlint.rules": {
+    "typescript:S6477": {
+      "level": "on"
+    },
+    "typescript:S6582": {
+      "level": "on"
+    },
+    "typescript:S4325": {
+      "level": "on"
+    },
+    "typescript:S2004": {
+      "level": "on"
+    }
+  },
+  "workbench.layoutControl.enabled": false,
+  "editor.minimap.enabled": false,
+  "vue.updateImportsOnFileMove.enabled": false,
+  "editor.defaultFormatter": "charliermarsh.ruff",
+  "[typescript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[typescriptreact]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "editor.renderWhitespace": "all",
+  "prettier.tabWidth": 4,
+  "typescript.tsserver.experimental.enableProjectDiagnostics": true,
+  "eslint.lintTask.enable": true,
+  "[javascript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "git.ignoreLegacyWarning": true,
+  "latex-workshop.linting.chktex.exec.path": "C:\\texlive\\2024\\bin\\windows\\chktex.exe",
+  "latex-workshop.chktex.enabled": true,
+  "latex-workshop.chktex.path": "C:\\texlive\\2024\\bin\\windows\\chktex.exe",
+  "latex.linter.enabled": false,
+  "latex-workshop.formatting.latex": "latexindent",
+  "latex-workshop.formatting.latexindent.path": "C:\\texlive\\2024\\bin\\windows\\latexindent.exe",
+  "[html]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "typescript.inlayHints.variableTypes.suppressWhenTypeMatchesName": false,
+  "typescript.inlayHints.parameterNames.suppressWhenArgumentMatchesName": false,
+  "typescript.updateImportsOnFileMove.enabled": "always",
+  "liveServer.settings.donotVerifyTags": true,
+  "graphviz-interactive-preview.renderLockAdditionalTimeout": 10000,
+  "files.exclude": {
+    "**/.history": true
+  },
+  "liveServer.settings.port": 3000,
+  "liveServer.settings.root": "/",
+  "liveServer.settings.host": "localhost",
+  "javascript.updateImportsOnFileMove.enabled": "always",
+  "advancedNewFile.convenienceOptions": [
+    "root",
+    "last",
+    "current"
+  ],
+  "git.enableSmartCommit": true,
+  "workbench.editorAssociations": {
+    "*.copilotmd": "vscode.markdown.preview.editor",
+    "*.pdf": "latex-workshop-pdf-hook",
+    "*.h5": "default"
+  },
+  "discord.removeLowerDetails": true,
+  "discord.detailsEditing": "Editing",
+  "discord.detailsDebugging": "Debugging",
+  "diffEditor.maxFileSize": 0,
+  "python.autoComplete.extraPaths": [
+    "c:/programdata/anaconda3/lib/site-packages"
+  ],
+  "python.analysis.extraPaths": [
+    "c:/programdata/anaconda3/lib/site-packages"
+  ],
+  "terminal.integrated.enableMultiLinePasteWarning": "never",
+  "jupyter.askForKernelRestart": false,
+  "notebook.output.textLineLimit": 1000,
+  "editor.accessibilitySupport": "off",
+  "workbench.activityBar.location": "bottom",
+  "window.commandCenter": false,
+  "window.menuBarVisibility": "compact",
+  "gitlens.ai.model": "vscode",
+  "gitlens.ai.vscode.model": "copilot:gpt-4-turbo",
+  "window.customTitleBarVisibility": "windowed",
+  "javascript.preferences.useAliasesForRenames": false,
+  "chat.editing.alwaysSaveWithGeneratedChanges": true,
+  "markdown-preview-enhanced.plantumlJarPath": "C:\\Program Files\\PlantUML\\plantuml-mit-1.2025.4.jar",
+  "php.inlayHints.parameters.enabled": false,
+  "php.inlayHints.insertOnDoubleClick": false,
+  "editor.inlineSuggest.suppressSuggestions": true,
+  "[c]": {
+    "editor.defaultFormatter": "ms-vscode.cpptools"
+  },
+  "editor.find.seedSearchStringFromSelection": "selection",
+  "explorer.confirmPasteNative": false,
+  "markdown-preview-enhanced.scrollSync": false,
+  "C_Cpp.default.configurationProvider": "none",
+  "hediet.vscode-drawio.codeLinkActivated": true,
+  "git.autofetch": true,
+  "diffEditor.maxComputationTime": 0,
+  "diffEditor.experimental.showMoves": true,
+  "github.copilot.chat.agent.thinkingTool": true,
+  "diffEditor.hideUnchangedRegions.enabled": true,
+  "powershell.buttons.showPanelMovementButtons": true,
+  "markdown-pdf.format": "A2",
+  "markdown-pdf.orientation": "landscape",
+  "remote.defaultExtensionsIfInstalledLocally": [
+    "GitHub.copilot",
+    "GitHub.copilot-chat",
+    "GitHub.vscode-pull-request-github"
+  ],
+  "github.copilot.nextEditSuggestions.enabled": true,
+  "workbench.secondarySideBar.defaultVisibility": "hidden",
+  "dart.devToolsLocation": {
+    "default": "beside",
+    "inspector": "sidebar"
+  },
+  "workbench.editor.enablePreview": false,
+  "[markdown]": {
+    "editor.formatOnSave": false,
+    "editor.defaultFormatter": "yzhang.markdown-all-in-one"
+  },
+  "mdb.mcp.server": "prompt",
+  "claudeCodeChat.wsl.enabled": false,
+  "claudeCodeChat.wsl.distro": "Ubuntu",
+  "claudeCodeChat.wsl.nodePath": "/usr/bin/node",
+  "claudeCodeChat.wsl.claudePath": "/usr/local/bin/claude",
+  "claudeCodeChat.thinking.intensity": "ultrathink",
+  "editor.formatOnSave": true,
+  "workbench.editor.showTabs": "none",
+  "search.useIgnoreFiles": false,
+  "chatgpt.runCodexInWindowsSubsystemForLinux": true,
+  "bracket-select.brackets": [
+    [
+      "(",
+      ")"
+    ],
+    [
+      "{",
+      "}"
+    ],
+    [
+      "[",
+      "]"
+    ],
+    [
+      "<",
+      ">"
+    ],
+    [
+      "「",
+      "」"
+    ],
+    [
+      "『",
+      "』"
+    ],
+    [
+      "【",
+      "】"
+    ],
+    [
+      "（",
+      "）"
+    ],
+    [
+      "《",
+      "》"
+    ],
+    [
+      "〈",
+      "〉"
+    ],
+    [
+      "“",
+      "”"
+    ],
+    [
+      "‘",
+      "’"
+    ],
+    [
+      "/*",
+      "*/"
+    ],
+    [
+      "$",
+      "$"
+    ]
+  ],
+  "leetcode.workspaceFolder": "c:\\Main\\Project\\LeetCode",
+  "leetcode.defaultLanguage": "python3",
+  "python.analysis.autoImportCompletions": true,
+  "python.testing.unittestEnabled": true,
+  "python.analysis.typeCheckingMode": "strict",
+  "leetcode.hint.commandShortcut": false,
+  "terminal.integrated.allowedLinkSchemes": [
+    "file",
+    "http",
+    "https",
+    "mailto",
+    "vscode",
+    "vscode-insiders",
+    "ms-settings"
+  ],
+  "files.defaultLanguage": "markdown",
+  "glassit.alpha": 225,
+  "[json]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "chat.tools.terminal.autoApprove": {
+    "Test-Path": true,
+    "Get-Item": true,
+    "Write-Error": true
+  },
+  "chat.agent.maxRequests": 50,
+  "git.path": "~/scoop/apps/git/current/cmd/git.exe",
+  "chat.viewSessions.orientation": "<redacted>",
+  "comments.openView": "never"
+}

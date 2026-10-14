@@ -93,3 +93,4 @@ install-order.json の large:
 | `bin/` | ユーティリティスクリプト |
 | `autohotkey/` | AHK |
 | `git/` | Git 設定 |
+| `vscode/` | VS Codeの拡張と設定の写し。`dotcli sync`が自動生成する |
