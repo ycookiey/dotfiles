@@ -66,10 +66,14 @@ return {
   },
   {
     -- 補完。LSP を使わないファイルを開いただけでは読み込まない
-    -- TODO: render-markdown は attach 時に pcall(require, "cmp") で cmp source を登録しようとし、
-    -- lazy の module 自動読み込みで nvim-cmp 一式が読まれるため、Markdown ではこの遅延が効かない
+    -- module = false: require("cmp") では読み込まない。render-markdown は attach 時に pcall(require, "cmp") で
+    -- cmp source を登録しようとし、module 自動読み込みだと Markdown を開いただけで nvim-cmp 一式が読まれる。
+    -- その source は下の sources に無いので、登録されなくても失うものは無い。
+    -- cmp-nvim-lsp の InsertEnter autocmd の require("cmp") は、lazy の InsertEnter handler (起動時に定義) が
+    -- 先に nvim-cmp を読み込んだ後に動く
     "hrsh7th/nvim-cmp",
     event = "InsertEnter",
+    module = false,
     dependencies = {
       "hrsh7th/cmp-buffer",
       "hrsh7th/cmp-path",
