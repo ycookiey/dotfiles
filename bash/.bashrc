@@ -16,9 +16,6 @@ _path_prepend() {
   PATH="$1${p:+:$p}"
 }
 
-# Claude Code
-export CLAUDE_CODE_MAX_OUTPUT_TOKENS=16384
-
 # Windows PATHEXT emulation for Git Bash
 # Bash ignores PATHEXT, so .cmd/.bat files can't be invoked without extension.
 # This handler runs only on command-not-found (zero impact on normal execution).
