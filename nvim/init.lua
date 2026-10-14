@@ -91,7 +91,7 @@ local function ime_off()
   end
 end
 
--- Insert を抜けるたびに IME オフ (Esc / <C-c> / <C-[> 含む)
+-- Insert を抜けるたびに IME オフ (Esc / <C-[>。<C-c> は InsertLeave を発火しないので対象外: :h i_CTRL-C)
 vim.api.nvim_create_autocmd("InsertLeave", {
   callback = ime_off,
 })
