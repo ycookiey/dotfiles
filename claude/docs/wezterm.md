@@ -25,6 +25,7 @@ nightly 20251201 / Windows で実測。
 - 前面のプロセスの情報は古いことがある。シェルに打ち込んで起動した claude が、画面に出力の無い間 (フォルダの信頼の確認画面で止まっている間) は見えず、前面がシェルのままだった (実測)。親をたどって見つからなければ、`get_info_for_pid(fg.pid).children` (問い合わせ直すと最新の子が入る) を浅い順に探す
 - `wezterm.procinfo.get_info_for_pid` は、終了したプロセスに対して nil を返す。プロセスが生きているかの判定に使える
 - 自分自身の GUI プロセスの `argv` は空で返る (`wezterm start -- prog` で起動した場合も)。起動引数で窓の用途を見分けることはできない
+- シェルが入力待ちかを、前面のプロセスがシェルかどうかで判定すると取りこぼす。nushell のペインで、コマンドの実行直後 (次のプロンプトを描く間) に前面が `git.exe` になっていた (実測。プロンプトの表示で git を呼ぶため)。「Claude が動いていない」のように、除外したいものが動いていないことで判定する
 
 ## ペインの配置
 
@@ -71,3 +72,7 @@ nightly 20251201 / Windows で実測。
 - 普段使いの GUI を止めずに試すには、`wezterm start --always-new-process` で別プロセスを起動し、`WEZTERM_UNIX_SOCKET` にそのプロセスのソケット (`~/.local/share/wezterm/gui-sock-<pid>`) を指定して `wezterm cli` で操作する
 - 指定したソケットのプロセスがまだ起動していないと、`wezterm cli` は `wezterm-mux-server --daemonize` を勝手に起動する。テストの後に `wezterm-mux-server.exe` が残っていないか確かめる
 - Claude Code の Bash ツールから `wezterm start` すると、`CLAUDE_CODE_CHILD_SESSION` などの環境変数を引き継ぐ。その中で起動した Claude Code は、画面に「Transcript saving is off」と出て、会話を記録しない (`~/.claude/projects` に `.jsonl` ができない)。普段の使い方を再現するには、`env -u CLAUDE_... ` で `CLAUDE*` / `ANTHROPIC*` の変数を外して起動する
+- 書き換え中の設定は、普段の設定フォルダ (`~/.config/wezterm`) ではなく作業用のコピーに置き、`wezterm --config-file <コピー>\wezterm.lua start --always-new-process` で試す。普段の設定フォルダのファイルを保存するたびに、普段使いの GUI が設定を読み直すため
+  - `--config-file` は `start` より前に書く (後ろに書くと `unexpected argument` で起動しない)
+  - `--config-file` で別のフォルダの設定を読ませても、`require` は普段の設定フォルダのモジュールを読んだ (実測)。コピーのモジュールを読ませるには、コピーの `wezterm.lua` の先頭で `package.path = [[<コピーのフォルダ>\?.lua;]] .. package.path` とする
+- キーで呼ぶ処理を `wezterm cli` から試すには、テスト用の設定に `user-var-changed` のハンドラを足し、ペインのシェルから OSC 1337 の SetUserVar を出させる。nushell なら `wezterm cli send-text` で次を送る: `print -n $"(ansi escape)]1337;SetUserVar=<名前>=(random chars | encode base64)(char bel)"` (値を毎回変える)

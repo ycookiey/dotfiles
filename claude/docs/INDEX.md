@@ -17,7 +17,7 @@ CLAUDE.md「参照ドキュメント」節の主要 docs と異なり起動前�
 - pnpm(Windows で `link:` の区切りがバックスラッシュになる、新しい worktree の `pnpm install` が better-sqlite3 の C++ のビルド(ClangCL・MSB8020)で止まる、`link:` の package の peer が link 先の copy に解決され型が合わない、link 先を build し直すと Vite の dev server が消えた dist を参照して 500) → pnpm.md
 - Playwright(ブラウザ revision 不一致で起動失敗、evaluate/content にタイムアウトが無く巡回が止まる、スマホ向けページの WebKit での確認: Chromium だけの CSS・lazy 画像が撮れない、aria-disabled のボタンを click() が押さない・jsdom で再現しないクリック中の DOM 入れ替わり) → playwright.md
 - React(React Compiler lint の `react-hooks/refs`: ref を含むオブジェクトを props に渡すとエラー、`use client` 部品のレンダー中処理はサーバーでも走り `ImageData` 等が未定義、rAF の再生ループで経過時間が負) → react.md
-- WezTerm の Lua 設定(評価時に始めた `call_after` が動かない、`CloseCurrentPane` がアクティブなペインを閉じる、前面プロセスが子孫・短命なプロセスを返す、Claude Code 更新時の `claude.exe.old.*` 改名、spawn/split の cwd・args が使われない、nushell の cd と OSC 7、`send_text` の取りこぼし、別プロセスでのテスト) → wezterm.md
+- WezTerm の Lua 設定(評価時に始めた `call_after` が動かない、`CloseCurrentPane` がアクティブなペインを閉じる、前面プロセスが子孫・短命なプロセスを返す、Claude Code 更新時の `claude.exe.old.*` 改名、spawn/split の cwd・args が使われない、nushell の cd と OSC 7、`send_text` の取りこぼし、前面のプロセスでシェルの入力待ちを判定できない、別プロセス・作業用コピーの設定でのテスト(`--config-file` でも `require` は普段のフォルダを読む)) → wezterm.md
 - 画像の中身の確かめ(透過 PNG を Read で見ると不透明度が無視され、見えない画素が見える) → images.md
 - elkjs(ELK layered の入れ子 `INCLUDE_CHILDREN` で model order 系オプションが落ちる・効かない、座標基準、エッジ/ノードラベルの配置) → elkjs.md
 - League of Legends のゲームデータ(地形 navgrid・jungle camp/個体の spawn 位置・WAD の読み方。画像から推定しない) → league-game-data.md
