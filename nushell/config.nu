@@ -156,7 +156,7 @@ def --env collect-job-message [var: string, tag: int, format: closure] {
     load-env {$var: -1}
 }
 
-# dotcli git-prompt の機械向けトークン (updated:N:areas / dirty / error / 空) を
+# dotcli git-prompt の機械向けトークン (updated:N:areas / dirty:A:B / 旧形式 dirty / error / 空) を
 # pwsh/profile.ps1 の prompt hook と同じ文言・色に整形する。未知のトークンと空は表示しない (pwsh と同じ)。
 # 色は pwsh の ConsoleColor Green/Yellow/Red (= SGR 92/93/91) に合わせて light_* を使う
 def format-git-prompt [token: string] {
@@ -166,8 +166,23 @@ def format-git-prompt [token: string] {
         let label = if $n == '1' { 'commit' } else { 'commits' }
         let areas = ($p.1? | default '')
         $"\n(ansi light_green)✨ Dotfiles Updated! \(($n) ($label): ($areas)\)(ansi reset)"
-    } else if $token == 'dirty' {
-        $"\n(ansi light_yellow)⚠ Dotfiles: dirty \(behind remote\)(ansi reset)"
+    } else if $token == 'dirty' or ($token =~ '^dirty:\d+:\d+$') {
+        # dirty:<ahead>:<behind> は作業ツリーが dirty で HEAD ≠ upstream (pull していない)。0 の側は省く。
+        # 件数の無い旧形式 'dirty' (PATH に古い dotcli.exe が残っている場合) は向きがわからないので向きを書かない
+        let text = if $token == 'dirty' { 'dirty, differs from remote' } else {
+            let p = ($token | split row ':')
+            let ahead = ($p.1 | into int)
+            let behind = ($p.2 | into int)
+            let counts = ([
+                (if $ahead > 0 { $"ahead ($ahead)" })
+                (if $behind > 0 { $"behind ($behind)" })
+            ] | compact)
+            # behind 0 (先行だけ) なら pull するものが無いので 'pull skipped' と書かない
+            let skipped = if $behind > 0 { ', pull skipped' } else { '' }
+            let suffix = if ($counts | is-empty) { '' } else { $" \(($counts | str join ', ')\)" }
+            $"dirty($skipped)($suffix)"
+        }
+        $"\n(ansi light_yellow)⚠ Dotfiles: ($text)(ansi reset)"
     } else if $token == 'error' {
         $"\n(ansi light_red)✗ Dotfiles: pull failed(ansi reset)"
     } else {

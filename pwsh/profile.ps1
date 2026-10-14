@@ -296,11 +296,24 @@ if ($script:IsInteractive) {
         }
     }
 
+    # git-prompt の dirty トークンの表示文言。dirty でないトークンは $null。
+    # dirty:<ahead>:<behind> は作業ツリーが dirty で HEAD ≠ upstream (pull していない)。0 の側は省く。
+    # 件数の無い旧形式 'dirty' (PATH に古い dotcli.exe が残っている場合) は向きがわからないので向きを書かない。
+    # nushell/config.nu の format-git-prompt と同じ文言
+    function global:__dotcli_dirtyText([string]$v) {
+        if ($v -notmatch '^dirty(?::(\d+):(\d+))?$') { return $null }
+        if ($null -eq $Matches[1]) { return 'dirty, differs from remote' }
+        $ahead = [int]$Matches[1]; $behind = [int]$Matches[2]
+        $counts = @(if ($ahead) { "ahead $ahead" }; if ($behind) { "behind $behind" })
+        # behind 0 (先行だけ) なら pull するものが無いので 'pull skipped' と書かない
+        "dirty$(if ($behind) { ', pull skipped' })$(if ($counts) { " ($($counts -join ', '))" })"
+    }
+
     # --- Prompt hook (inlined) ---
     $global:_promptHook = {
         if ($global:j -and ($r = __dotcli_end $global:j)) {
             $global:j = $null
-            # 結果 (updated / dirty / error / 出力なし) によらず完了を記録し、別 pane の sync の待ちを解く
+            # 結果 (updated:N:areas / dirty:A:B / 旧形式 dirty / error / 出力なし) によらず完了を記録し、別 pane の sync の待ちを解く
             try { [IO.File]::WriteAllBytes($global:_gitPromptDone, [byte[]]@()) } catch {}
             # done の直後に sync を起動して sync.stamp を touch する (表示を挟むと、別 pane が due と判定できる窓が広がる)
             __dotcli_kickSync
@@ -309,8 +322,8 @@ if ($script:IsInteractive) {
                 $p = $v.Substring(8) -split ':', 2
                 $label = $p[0] -eq '1' ? 'commit' : 'commits'
                 wh "`n✨ Dotfiles Updated! ($($p[0]) ${label}: $($p[1]))" -Fo Green
-            } elseif ($v -eq 'dirty') {
-                wh "`n⚠ Dotfiles: dirty (behind remote)" -Fo Yellow
+            } elseif ($d = __dotcli_dirtyText $v) {
+                wh "`n⚠ Dotfiles: $d" -Fo Yellow
             } elseif ($v -eq 'error') {
                 wh "`n✗ Dotfiles: pull failed" -Fo Red
             }
