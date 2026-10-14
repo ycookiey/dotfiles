@@ -19,7 +19,7 @@
 	# 指定すると XDG の既定 (~/.config/git/attributes, ignore) は読まれない
 	attributesFile = ~/.gitattributes
 	excludesFile = ~/.gitignore_global
-	# TODO: fsmonitor は未採用。全体で有効にする / 大きな repo だけ ([includeIf] か repo の config) / 入れない のどれにするか未定
+	# fsmonitor は不採用: agent の worktree ごとに daemon が常駐し、worktree の削除時にフォルダを掴むため
 
 [init]
 	# デフォルトブランチ名
