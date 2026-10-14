@@ -18,3 +18,11 @@
 - 窓を開く処理(`SHOpenFolderAndSelectItems` 等)は、開いた側に手前へ出る許可を渡す。禁止が解けた瞬間に、その窓が入力を取りうる
 - 裏のプロセスからの `SetForegroundWindow` は、`AttachThreadInput` でつないでも断られることが多い
 - 本人が使っている PC で試すと、入力の重なりが結果を左右する。5〜10 回では方法どうしの優劣を判断できない → 試すなら本人に「15 秒ほど触らない」よう頼む
+
+## ファイル使用中で更新・削除が失敗する
+
+- 名前で推測して止めない。掴んでいるプロセスを特定してから止める
+- 1. アプリ自身のログ: "locked by process" / "error 32" / "sharing violation" を grep
+  - 例: Riot Client → `%LOCALAPPDATA%/Riot Games/Riot Client/Logs/Riot Client Logs/*.log` に「File is locked by process <名前> with PID <n> ... for path <パス>」
+- 2. `handle64 <パス>` (scoop、Sysinternals): 管理者でないと見えない handle がある。対象が広いと止まることがある → 時間を区切る
+- 実例: Raycast (ランチャー) が `C:/ProgramData/Riot Games/Metadata/*.db` を開いたまま → Riot の更新が失敗。Riot Client を止めても直らない

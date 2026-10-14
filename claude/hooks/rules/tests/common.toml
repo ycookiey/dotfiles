@@ -903,3 +903,33 @@ name = "log-mentions-checkout"
 rule = "checkout-file-reminder"
 expect = "quiet"
 command = '''git log --oneline -3'''
+
+[[case]]
+name = "stop-process-by-name"
+rule = "find-lock-holder-reminder"
+expect = "context"
+input = { tool_name = "PowerShell", tool_input = { command = '''Get-Process | Where-Object { $_.ProcessName -match 'Riot' } | Stop-Process -Force''' } }
+
+[[case]]
+name = "taskkill-image"
+rule = "find-lock-holder-reminder"
+expect = "context"
+command = '''taskkill //IM Raycast.exe //F'''
+
+[[case]]
+name = "kill-pid"
+rule = "find-lock-holder-reminder"
+expect = "context"
+command = '''kill -9 4242'''
+
+[[case]]
+name = "get-process-only"
+rule = "find-lock-holder-reminder"
+expect = "quiet"
+input = { tool_name = "PowerShell", tool_input = { command = '''Get-Process | Where-Object { $_.ProcessName -match 'Riot' }''' } }
+
+[[case]]
+name = "word-skill"
+rule = "find-lock-holder-reminder"
+expect = "quiet"
+command = '''grep -n "skill" docs/a.md'''

@@ -382,3 +382,15 @@ fields = ["tool_input.command"]
 all = ['(^|[^[:alnum:]_-])git([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+(checkout([[:space:]]+[^[:space:]|;&]+)*[[:space:]]+(--|[^-[:space:]|;&]*[./][^[:space:]|;&]*)|restore)([[:space:]]|$)']
 action = "context"
 message = '''git checkout <file> / git restore はファイル全体を HEAD (か index) の形に戻す。同じファイルに残したい未 commit の変更があると、それも消える。一時の試しを取り消すだけなら、試す前に控えた複製から戻す (cp)。戻す前に git diff <file> で消える中身を確かめる (docs/git.md「HEAD にない途中の形へは git checkout で戻せない」)。'''
+
+# "File in use, could not update" was answered by guessing processes by
+# name and stopping them, which did not help (2026-10-14: the Riot Client
+# log named Raycast as the process holding the file).
+[[rule]]
+id = "find-lock-holder-reminder"
+event = "PreToolUse"
+tools = '^(Bash|PowerShell)$'
+fields = ["tool_input.command"]
+all = ['(^|[^[:alnum:]_-])([Ss]top-[Pp]rocess|taskkill|kill|pkill|killall)([[:space:]]|$)']
+action = "context"
+message = '''「ファイルが使用中」で更新・削除・書き込みが失敗した対処としてプロセスを止めるなら、名前で推測せず、先にファイルを掴んでいるプロセスを特定する: アプリ自身のログを "locked by" / "error 32" / "sharing violation" で grep する (例: Riot Client のログに「File is locked by process Raycast.exe with PID ...」)、または handle64 <パス> (管理者でないと見えない handle がある。広い対象では止まることがあるので時間を区切る)。詳細 ~/.claude/docs/windows-desktop.md の「ファイル使用中で更新・削除が失敗する」'''
