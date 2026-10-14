@@ -54,6 +54,7 @@ fm() { fzf '-m' "$@"; }
 agy() { antigravity '.' "$@"; }
 zp() { zoxide 'query' '-i' "$@"; }
 z-() { z '-' "$@"; }
+gtr() { git 'gtr' "$@"; }
 
 # --- Script wrappers ---
 gnew() { pwsh -NoProfile -File 'C:/Main/Project/dotfiles/bin/git-new.ps1' "$@"; }

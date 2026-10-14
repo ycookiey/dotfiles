@@ -72,10 +72,10 @@ foreach ($p in @(
 )) { if ($p -notin $paths) { $paths += $p } }
 $env:Path = $paths -join ';'
 
+# gtr 自体は cli/definitions.toml から生成される (generated-aliases.ps1 の function gtr = git gtr)
 $gitGtrScript = "$Dot\bin\git-gtr.ps1"
 if ([IO.File]::Exists($gitGtrScript)) {
     function git-gtr { & $gitGtrScript @args }
-    $alias:gtr = 'git-gtr'
 }
 
 $chromeYatcyScript = "$Dot\bin\chrome-yatcy.ps1"

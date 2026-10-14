@@ -37,6 +37,13 @@ name = "z-"
 command = "z"
 args = ["-"]
 
+# git-worktree-runner の gtr は拡張子の無い bash スクリプトで、pwsh / nushell からは直接起動できない。
+# git のサブコマンド (git-gtr) として呼ぶと git が shebang を解釈して起動する
+[[alias]]
+name = "gtr"
+command = "git"
+args = ["gtr"]
+
 # =============================================
 # B. Script wrappers (bin/*.ps1)
 # =============================================
