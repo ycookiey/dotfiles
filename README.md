@@ -92,5 +92,4 @@ install-order.json の large:
 | `install/` | Scoop 等インストールスクリプト |
 | `bin/` | ユーティリティスクリプト |
 | `autohotkey/` | AHK |
-| `vscode/` | VS Code |
 | `git/` | Git 設定 |
