@@ -5,7 +5,8 @@ dotfiles 管理。bootstrap 対象外。シェル起動ごとの常駐同期で�
 ## 仕組み
 
 - 定義: `dotfiles/claude/mcp-servers.json`（プレースホルダ付きテンプレート）
-- 同期: `dotcli sync` がプレースホルダ展開 → `~/.claude.json` の `mcpServers` に差分注入
+- 同期: `dotcli sync` がプレースホルダ展開 → 各アカウントの `~/.claude-<数字>/.claude.json` の `mcpServers` を、展開後のテンプレートで丸ごと置き換える (内容が同じなら書かない)。プレースホルダが未解決のサーバー・command が見つからないサーバーは入れない
+- 同期しないもの: 既定アカウント (CLAUDE_CONFIG_DIR 無し) の `~/.claude.json`。手で足した MCP を消さないため対象外。`~/.claude/.claude.json` もアカウントの設定ではないので対象外
 - 発火: PowerShell は `dotfiles/pwsh/profile.ps1` のプロンプトフック、Nushell は `dotfiles/nushell/config.nu` の起動時 job spawn
 - スコープ: user（`claude mcp add -s user` と同位置）
 
@@ -16,7 +17,7 @@ dotfiles 管理。bootstrap 対象外。シェル起動ごとの常駐同期で�
 1. `mcp-servers.json` を編集
 2. 次回シェル起動で自動反映 → Claude Code 再起動で認識
 
-`claude mcp add` は使わない（sync の差分判定と競合）。`~/.claude.json` 直編集も次回 sync で上書き。
+アカウント (`~/.claude-<数字>`) では `claude mcp add -s user` は使わない（次回 sync で置き換わる）。`~/.claude-<数字>/.claude.json` の直編集も同じ。既定アカウントの `~/.claude.json` は sync しないので、そこへの追加は残る。
 
 公開したくない MCP(対人の会話を扱うもの等)や特定プロジェクトだけで使う MCP は、`mcp-servers.json`(公開の dotfiles)ではなく、そのプロジェクトの `.mcp.json` に書く。sync の対象外なので消えない。初回に使用の承認が要る。
 

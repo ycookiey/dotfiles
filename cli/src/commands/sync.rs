@@ -736,13 +736,12 @@ fn sync_mcp_servers(dot: &Path, home: &Path, claude_dirs: &[PathBuf]) -> Result<
 /// The `.claude.json` files that receive the MCP servers: one per account dir
 /// (`~/.claude-<n>`, including one that is a link to `~/.claude`). `~/.claude` itself is
 /// not an account config dir: Claude Code only writes `~/.claude/.claude.json` when run
-/// with CLAUDE_CONFIG_DIR pointed at it by mistake, and the accounts mirror `~/.claude`,
-/// so syncing that stray file would keep it alive for the mirrors to pick up.
-//
-// TODO: the default account (no CLAUDE_CONFIG_DIR) keeps its config in `~/.claude.json`,
-// which is not synced. Whether to add it (its mcpServers would be replaced by the
-// template, dropping servers added there by hand) or to leave it out on purpose is
-// still open; until then it is left untouched.
+/// with CLAUDE_CONFIG_DIR pointed at it by mistake, so syncing that stray file would only
+/// keep it alive.
+///
+/// The default account (no CLAUDE_CONFIG_DIR) keeps its config in `~/.claude.json`, and it
+/// is left out on purpose: the sync replaces `mcpServers` as a whole, which would drop the
+/// MCP servers added there by hand.
 fn mcp_target_files(home: &Path, claude_dirs: &[PathBuf]) -> Vec<PathBuf> {
     let primary = home.join(".claude");
     claude_dirs
@@ -1403,7 +1402,8 @@ mod tests {
         let v: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&account).unwrap()).unwrap();
         assert_eq!(v["keep"], 1, "keys other than mcpServers are kept");
-        // ~/.claude is not an account dir; ~/.claude.json awaits the open decision.
+        // ~/.claude is not an account dir; ~/.claude.json (the default account) is left
+        // out so its hand-added servers stay.
         for f in [".claude/.claude.json", ".claude.json"] {
             assert_eq!(std::fs::read_to_string(home.join(f)).unwrap(), stale, "{f}");
         }
