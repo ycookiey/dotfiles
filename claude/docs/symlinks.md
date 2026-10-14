@@ -24,9 +24,7 @@ setup.ps1 で管理。追加・変更は setup.ps1 の mkl で行う（直接コ
 | ~/.claude/CLAUDE.md | dotfiles/claude/CLAUDE.md |
 | ~/.claude/settings.json | マージ型（dotfiles/claude/settings.json をテンプレートとしてマージ） |
 | ~/.claude/keybindings.json | マージ型（dotfiles/claude/keybindings.json をテンプレートとしてマージ。bindings 配列は context 単位でマージ） |
-| ~/.claude/statusline.py | dotfiles/claude/statusline.py |
 | ~/.claude/statusline-rules.toml | dotfiles/claude/statusline/statusline-models.toml |
-| ~/.claude/rules/ | dotfiles/claude/rules/ |
 | ~/.claude/docs/ | dotfiles/claude/docs/ |
 | ~/.claude/agents/ | dotfiles/claude/agents/ |
 | ~/.claude/skills/<name> | dotfiles/skills/<name> ※例外的にywatchyが個別管理（setup.ps1管理外）。詳細は ywatchy.md |

@@ -121,6 +121,12 @@ expect = "quiet"
 command = "python -E -P script.py"
 
 [[case]]
+name = "python-epb"
+rule = "python-isolated-reminder"
+expect = "quiet"
+command = "python -E -P -B script.py"
+
+[[case]]
 name = "worktree-remove"
 rule = "worktree-remove-reminder"
 expect = "context"

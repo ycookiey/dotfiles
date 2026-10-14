@@ -65,6 +65,9 @@ plannerが規模乖離を検知すれば報告するので、Leadが再判断。
 - `.agent-output/` への書き込みはEdit/Write toolを使用(Bash redirect不可)
 - cleanup/merge-back: 完了後は `agent-merge-back.sh --task-id <TASK_ID>` でmainへ取り込み+worktree/branch削除を一括実行
 - 例外: researcher/plannerは読み取り専用のためworktree分離不要
+- 並列 worktree の分け方: 機能や領域でなくファイルの持ち主で unit を分ける (持ち主の範囲を prompt に書き、範囲外の変更は「requires」で返させる)。unit 間は衝突しない
+  - 作業中に main が進むと、その分とは衝突する。agent に main の merge・rebase を禁じ (1 unit が main を merge すると他 unit の範囲まで取り込み、統合時の衝突が増えた)、統合は最後に 1 か所でまとめて行う
+  - unit を跨ぐ依存 (A の変更が B の変更を前提にする等) は依存グラフにして、どの組み合わせで取り込めるかを示す
 - **共有 tree で `git stash` 全面禁止**: 複数agent並行時に stash push/pop が別agentの stash を誤操作する事故が実発生 (異なる agent の stash push→続く agent の pop が別 agent 分を pop → conflict、mergestage2 手動復元)。stash は「repo 単位の LIFO stack」で agent 単位に isolate されない。一時退避は `.agent-output/<task-id>/` (or `.local/agent-output/<task-id>/`) への事前 cp からの復元で行う。drift 注入・実測・切り分けも同様
 
 ### 先行prep(高コストsetup時の待ち時間活用)

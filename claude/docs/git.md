@@ -94,3 +94,9 @@ printf 'protocol=https\nhost=credtest.invalid\nusername=test-user\n\n' | git cre
 - 現象: 未 commit の変更の上で別の手を試していると、前の手の形に戻したくなっても `git checkout` で戻るのは HEAD の形だけ(今日の変更が全部消える)
 - 対処: 別の手を試す前に、作業中のファイルを scratchpad に複製して控える。戻すときはその控えから
 - `git stash create` は作業ツリーを変えずに控えを作れるが、未追跡のファイルを含まない
+
+## グローバル attributes / ignore は link だけでは読まれない
+
+- Git が読むのは `core.attributesFile` / `core.excludesFile` が指すファイルか、未設定なら `$XDG_CONFIG_HOME/git/attributes`・`ignore`(既定 `~/.config/git/`)だけ。`~/.gitattributes` に link を置いても読まれない
+- 2 つの key を設定すると XDG の既定パスは読まれなくなる(両方は効かない)。切り替える前に既存の `~/.config/git/ignore` の中身を移す
+- 確認: 一時 repo で `git check-ignore -v <file>` / `git check-attr -a <file>`。`.gitattributes` の無い repo では正規化の差分が出うるので、`git -c core.attributesFile=/nonexistent status` と件数を比べる

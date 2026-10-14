@@ -87,7 +87,8 @@ action = "context"
 message = '''CommunityDragon の character bin は CharacterRecord を複数持ち、record ごとに値が違う (例: sru_red の Root 2300 / 別 record 5000、sru_blue の Root 2300 / 3750)。SR の値は key `Characters/<Name>/CharacterRecords/Root` の record から読む。grep -o ... | head -1 で先頭を拾わない (docs/league-game-data.md)。'''
 
 # `python -I` also turns off the user site (pip --user), so what is
-# installed there cannot be imported; `python -E -P` keeps it (docs/bash.md).
+# installed there cannot be imported; `python -E -P -B` keeps it (-B: -E also ignores
+# PYTHONDONTWRITEBYTECODE) (docs/bash.md).
 [[rule]]
 id = "python-isolated-reminder"
 event = "PreToolUse"
@@ -95,7 +96,7 @@ tools = '^Bash$'
 fields = ["tool_input.command"]
 all = ['(^|[[:space:];&|(/])(python[0-9.]*|py)(\.exe)?[[:space:]]+(-[A-Za-z]+[[:space:]]+)*-[A-Za-z]*I']
 action = "context"
-message = '''python -I は user site (pip --user、AppData/Roaming/Python) も無効にするので、そこに入れた numpy 等が import できない。目的がスクリプトのフォルダや cwd を sys.path に入れないことなら python -E -P (3.11+) で足り、user site は残る (docs/bash.md)。'''
+message = '''python -I は user site (pip --user、AppData/Roaming/Python) も無効にするので、そこに入れた numpy 等が import できない。目的がスクリプトのフォルダや cwd を sys.path に入れないことなら python -E -P -B (3.11+) で足り、user site は残る。-B は、-E が PYTHONDONTWRITEBYTECODE も無視して __pycache__ を作るのを防ぐ (docs/bash.md)。'''
 
 # Windows + pnpm: `git worktree remove` fails on the junctions in
 # node_modules, and rm -rf can follow them.

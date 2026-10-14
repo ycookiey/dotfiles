@@ -93,7 +93,7 @@ grep -qiF -- "$pat" "$f"; case $? in 0) 一致 ;; 1) 不一致 ;; *) エラー�
 - 作業ツリーの file は autocrlf で CRLF のことがある(git の中の版は LF)。Python で `"…\n"` の目印を探すと、作業ツリーでは見つからず、HEAD の版では見つかる、と食い違う。目印は改行を検出して(`"\r\n" in t`)合わせる。実例: 作業ツリーの plan.md(CRLF)で `assert t.count(anchor) == 1` が止まり、先に `open(p, "wb")` で開いていたので file が空になった(yhooky の規則 `truncating-write-reminder`)。既存の file の一部を直すだけなら Edit ツールを使う(改行を保つ)
 - `print` も stdout に `\r\n` を書く(Windows の `jq -r` の出力も同じ): bash の `while read a b` で読むと最後の変数の末尾に `\r` が残る(ファイル名なら ffmpeg が「出力の形式を選べない」で失敗)。読む側で `tr -d '\r' <file | while read …`、出す側で `sys.stdout.reconfigure(newline="\n")`
 
-- `python -I` は user site(`pip install --user`、Windows では `AppData/Roaming/Python`)も無効にするので、そこに入れた numpy 等が `ModuleNotFoundError` になる。スクリプトのフォルダや cwd を `sys.path` に入れない目的なら `python -E -P`(3.11+)で足り、user site は残る(実測 3.14)。hook(yhooky の規則 `python-isolated-reminder`)が `python -I` の直前に差し込む
+- `python -I` は user site(`pip install --user`、Windows では `AppData/Roaming/Python`)も無効にするので、そこに入れた numpy 等が `ModuleNotFoundError` になる。スクリプトのフォルダや cwd を `sys.path` に入れない目的なら `python -E -P -B`(3.11+)で足り、user site は残る(実測 3.14)。`-B` が要るのは `-E` が `PYTHONDONTWRITEBYTECODE` も無視し、スクリプトの横に `__pycache__` を作るため。hook(yhooky の規則 `python-isolated-reminder`)が `python -I` の直前に差し込む
 
 ## ファイルを変数で渡すコマンドは `"$f"` と引用する
 

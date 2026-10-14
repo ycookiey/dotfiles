@@ -48,3 +48,15 @@
   - -Confirm → -Con
   - -Description → -Des
   - -Maximum → -Max
+
+## 起動の速さ
+
+- profile 等の起動経路で `| select` 不可: Microsoft.PowerShell.Utility を自動 import し約 +30 ms (pwsh 7.5)。`Get-Command x -TotalCount 1` / `@(...)[0]` で代用
+- `Get-Command` の miss は module 自動探索で約 75 ms。`-CommandType Application` を付けても減らない
+- 起動の計測で USERPROFILE / LOCALAPPDATA を temp に向けると `ModuleAnalysisCache-*` が無く、miss ごとに module 再解析で 1 秒超。live の cache を temp 側へ copy してから測る
+
+## 実行と検証の罠
+
+- `irm ... | iex` で実行中の script の `exit` はコンソールごと閉じる (結果が読めない)。失敗は throw で伝える (`-File` 実行なら exit 1 になる)
+- 関数で上書きした stub は module の関数 (ScheduledTasks の `Register-ScheduledTask` 等) に効かないことがあり、実物が呼ばれた。副作用のある関数の検証は、AST で取り出したテキストのコマンド名を stub 名に書き換え、実物の呼び出しが残っていないことを AST で確かめてから実行
+- `StatementBlockAst.Extent.Text` は `{}` を含むので `[scriptblock]::Create` しても中身は走らない。中身は `.Statements` から取る
