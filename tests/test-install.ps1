@@ -28,14 +28,12 @@ function Get-RelPath($path) { [System.IO.Path]::GetRelativePath($Root, $path) }
 # === (A) 構文検査 ===
 Write-Host "`n[A] Parse every .ps1 in the repo" -ForegroundColor Cyan
 
-# symlink/junction はたどらない (リポジトリの外や node_modules の実体に出ないように)
+# 対象は git が扱うファイル (tracked + ignore されていない untracked)。ignore された .history/ (エディタの履歴)・
+# node_modules・.claude/worktrees 等は repo の一部ではないので見ない。symlink はたどらない (リポジトリの外に出ないように)
 function Get-RepoScripts($dir) {
-    foreach ($d in Get-ChildItem -LiteralPath $dir -Directory -Force) {
-        if ($d.LinkType -or $d.Name -in '.git', 'node_modules') { continue }
-        if ($d.Name -eq 'worktrees' -and (Split-Path $d.FullName -Parent | Split-Path -Leaf) -eq '.claude') { continue }
-        Get-RepoScripts $d.FullName
-    }
-    Get-ChildItem -LiteralPath $dir -File -Filter *.ps1 -Force | ? { !$_.LinkType }
+    git -C $dir ls-files -co --exclude-standard -- '*.ps1' |
+        % { Get-Item -LiteralPath (Join-Path $dir $_) -Force -ea 0 } |
+        ? { $_ -and !$_.LinkType }
 }
 
 $scripts = @(Get-RepoScripts $Root)
