@@ -875,17 +875,21 @@ local function build(window, pane, snap)
   local progress = { created = 0 }
   local ok, err = pcall(restore_all, window, pane, snap, progress)
   if ok then return end
-  -- タブも窓も作らずに失敗したなら、もう一度押せばやり直せるようにする
-  if progress.created == 0 then
-    if is_closed_entry(snap) then
-      put_back_closed(snap)
-    else
-      wezterm.GLOBAL[done_key(snap)] = nil
-    end
+  -- 失敗したら、もう一度押せばやり直せるようにする (閉じた窓・タブは記録に戻し、前回の状態は復元済みの印を消す)。
+  -- タブや窓を作った後の失敗 (pane:split の "No space for split!" 等) では作りかけのタブ・窓が残る。閉じるかどうかは
+  -- 利用者に任せて閉じず、やり直すと重複することを、呼び出し元が出す失敗のトーストに足して知らせる
+  if is_closed_entry(snap) then
+    put_back_closed(snap)
+  else
+    wezterm.GLOBAL[done_key(snap)] = nil
   end
-  -- TODO: タブや窓を作った後の失敗 (pane:split の "No space for split!" 等) では戻した扱いのままになり、
-  --   前回の状態は WezTerm を再起動するまで、閉じた窓・タブは記録から消えたため、やり直せない。
-  --   作りかけのタブ・窓を閉じてから戻すか、戻すだけにして重複することをトーストで知らせるかを決めて対処する
+  if progress.created > 0 then
+    err = string.format(
+      "%s\n作りかけのタブ %d 個 (新しく開いた窓のものを含む) が残っている。閉じずにもう一度復元すると重複する",
+      tostring(err),
+      progress.created
+    )
+  end
   error(err, 0)
 end
 
