@@ -7,7 +7,7 @@ return {
   end,
   config = function()
     -- 使う parser の一覧。install と FileType の対象はここから導出する
-    -- TODO: dart は flutter-tools (dartls) の semantic tokens と重ねた見た目を確かめてから加えるか決める
+    -- dart は入れない: flutter-tools (dartls) の semantic tokens と色付けが重なるため
     local parsers = {
       "lua", "javascript", "typescript", "tsx", "python", "json", "yaml", "html", "css",
       "markdown", "markdown_inline",
