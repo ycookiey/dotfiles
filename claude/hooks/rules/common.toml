@@ -348,6 +348,19 @@ all = ['「[^」]*」.*「[^」]*」.*「']
 action = "context"
 message = '''外に出る文のカギかっこは、画面の表記と発言の引用だけに使う。強調や用語の囲みに使わない(docs/external-japanese.md)。'''
 
+# A tab opened by the extension stays hidden behind the user's active tab: the page may
+# not render at all, timers stall, sends don't fire and screenshots time out. The answers
+# were already in docs/claude-in-chrome-hidden-tab.md and still found by trial and error
+# (2026-10-13: a Discord tab rendered nothing, screenshots of a localhost page timed out).
+[[rule]]
+id = "chrome-hidden-tab-reminder"
+event = "PreToolUse"
+tools = '^mcp__claude-in-chrome__navigate$'
+fields = ["tool_input.url"]
+all = ['^https?://']
+action = "context"
+message = '''拡張が開いたタブは裏 (hidden) のままのことが多い。裏のタブでは描画・タイマー・送信が止まり、screenshot も timeout する。止まったら試行錯誤せず、ユーザーにタブを 1 度クリックしてもらう。撮影だけならヘッドレスの Chromium (Playwright など) で撮る。docs/claude-in-chrome-hidden-tab.md'''
+
 # Slide text written by a generator script is outward Japanese too, but the two rules above only
 # watch form/message tools; the rules were skipped for a whole pptx deck.
 [[rule]]
