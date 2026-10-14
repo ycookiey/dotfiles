@@ -19,10 +19,6 @@ _path_prepend() {
 # Claude Code
 export CLAUDE_CODE_MAX_OUTPUT_TOKENS=16384
 
-# git-worktree-runner (gtr)
-# TODO: pwsh/profile.ps1 puts /c/Main/Project/git-worktree-runner/bin on PATH instead; use one location in every shell
-_path_prepend /c/Main/Tool/git-worktree-runner/bin
-
 # Windows PATHEXT emulation for Git Bash
 # Bash ignores PATHEXT, so .cmd/.bat files can't be invoked without extension.
 # This handler runs only on command-not-found (zero impact on normal execution).
@@ -43,8 +39,19 @@ command_not_found_handle() {
 # readlink -f resolves the ~/.bashrc symlink to an absolute path ('/'-separated even for a
 # C:\ path in BASH_ENV), so stripping the last component gives this file's directory.
 _dot_bashrc_path=$(readlink -f -- "${BASH_SOURCE[0]}")
-[ -f "${_dot_bashrc_path%/*}/generated-aliases.sh" ] && . "${_dot_bashrc_path%/*}/generated-aliases.sh"
-unset _dot_bashrc_path
+_dot_bash_dir=${_dot_bashrc_path%/*}
+[ -f "$_dot_bash_dir/generated-aliases.sh" ] && . "$_dot_bash_dir/generated-aliases.sh"
+
+# git-worktree-runner (gtr): the checkout next to the dotfiles repo, derived like $gtrBin in
+# pwsh/profile.ps1 and the PATH in nushell/config.nu. This file's directory is <repo>/bash,
+# so dropping two components gives the repo's parent (no extra fork). readlink -f keeps the
+# drive form (C:/...) for a C:\ path that is not a symlink, and PATH needs /c/...
+_dot_parent=${_dot_bash_dir%/*/*}
+case $_dot_parent in
+  [A-Za-z]:/*) _dot_drive=${_dot_parent:0:1}; _dot_parent="/${_dot_drive,,}${_dot_parent:2}" ;;
+esac
+[ -n "$_dot_bashrc_path" ] && _path_prepend "$_dot_parent/git-worktree-runner/bin"
+unset _dot_bashrc_path _dot_bash_dir _dot_parent _dot_drive
 
 # opencode
 _path_prepend "$HOME/.opencode/bin"
