@@ -20,6 +20,8 @@
 webhook が設定済みなら何もしなくてよい。Worker 経由で自動更新される。
 
 - `gh release create --target` には完全な SHA(`git rev-parse <sha>`)か branch 名を渡す。短い SHA は `target_commitish is invalid`(HTTP 422)
+- url を配列にして exe と archive を一緒に取るとき、`extract_to` は url の順でなく展開した archive の順に当たる。exe が混じるなら archive の分だけ書く(`["", "dir"]` だと archive が app の直下に展開)。試すなら、名前を変え `bin` を外した写しの manifest を `scoop install <path>`(今の shim を上書きしない)
+- 版を持たない補助の asset(辞書等)は固定の tag の release に `gh release create --latest=false` で置き、autoupdate の url 配列に固定の URL で書く。latest にすると checkver の見る版が変わる
 
 ## 新しいアプリを yscoopy に追加する手順
 

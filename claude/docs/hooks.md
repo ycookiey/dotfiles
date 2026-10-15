@@ -14,6 +14,7 @@ hook は yhooky(github.com/ycookiey/yhooky、Rust の 1 実行ファイル、sco
 1. 正規表現で書けるもの(入力の項目が当たれば文を差し込む / 止める): `common.toml`(全環境)か project の `rules/*.toml` に `[[rule]]` を足す。項目は yhooky の README
    - 照合は 1 行ずつ(grep -E と同じ。`^` `$` は各行)。Rust regex: 後方参照・先読みなし、`[[:space:]]` 等は ASCII
    - 同じ group の規則は最初に当たった 1 つだけ。`{repo_dir}`・`{repo_name}` を文に使える
+   - PreToolUse の context は tool の結果と一緒に届く(操作の後)。取り消せない操作(送信・push・消去)への注意は `action = "deny-once"`(session と照合した文ごとに一度だけ止め、出し直せば知らせだけで通す)。後から直せる操作(入力欄への入力・ファイルの編集)は context で足りる
 2. 横の `tests/*.toml` に case(quiet / context / deny と、当たる・当たらない両方)を足す
 3. 確かめ: `yhooky test <tests/x.toml>`、`yhooky check`(読めない規則の報告)、`echo '<入力 JSON>' | yhooky explain`(各規則の結果)
 4. 規則のファイルは保存した時点で全 session に効く(build・再起動は不要)

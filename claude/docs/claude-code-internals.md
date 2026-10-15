@@ -72,3 +72,11 @@
 - classic の症状: pane の resize (WezTerm `Alt+Z` の zoom 等) のたびに会話を新しい幅で再出力 → scrollback に同じ内容が上下二重・幅が混在。`CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT` は fullscreen 専用で効かない
 - 予防: `CLAUDE_CODE_NO_FLICKER=1` を起動環境で渡すと、失敗後も fullscreen、失敗も数えない。dotcli の `c` が付与 (`cli/src/commands/c.rs`)
 - 端末は WezTerm (Windows、ConPTY 経由)。Windows Terminal 前提にしない。`TERM_PROGRAM` で確認
+
+## AskUserQuestion の表示 (2026-10-15 実測)
+
+- 質問の文と label は常に出る (改行も)。回答後も会話に残るが読みにくい
+- 選択肢の description は、その質問のどの選択肢にも preview が無いときだけ出る
+- preview は出るが、回答後は見返せない
+- 返信の途中 (tool の呼び出しの前) の本文は出ないことがある。長さ・tool の有無では再現が安定しない。返信の最後の本文は出る
+- 長い説明は ysidepaney の note に出し、質問の文には要点と題 (skill ysidepaney、guard askuser-label-guard)
