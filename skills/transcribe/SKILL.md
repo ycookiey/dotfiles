@@ -48,7 +48,7 @@ uv run --python 3.12 \
 ```bash
 # 単一ファイル
 uv run --python 3.12 --with faster-whisper --with nvidia-cublas-cu12 --with nvidia-cudnn-cu12 \
-  "/c/Users/ycook/.claude-1/skills/transcribe/scripts/transcribe.py" "/c/path/lecture.mp4"
+  "/c/Users/ycook/.claude-1/skills/transcribe/scripts/transcribe.py" "/c/path/clip.mp4"
 
 # ディレクトリ配下のmp4をすべて(srtのみ)
 uv run --python 3.12 --with faster-whisper --with nvidia-cublas-cu12 --with nvidia-cudnn-cu12 \
