@@ -63,6 +63,12 @@ printf 'protocol=https\nhost=credtest.invalid\nusername=test-user\n\n' | git cre
   - 手順: scratch に `git clone --no-local` → `git filter-repo --replace-text <file>`(1 行 `旧==>新`。tag も書き換わる)→ `git rev-list --all` の全 commit を `git grep` して 0 件 → 旧 ref を fetch し commit ごとに `diff --shortstat` と作者・日時・本文の一致を確認 → main は `--force-with-lease=main:<旧 SHA>`、tag は `--force` で push → 手元は `reset --hard` で合わせる
   - GitHub release は tag 名で引かれ asset ごと残る(exe・scoop の hash も不変)。旧 commit は SHA 直指定の URL で見え続ける(完全に消すには GitHub Support)
   - `git filter-repo` は `#!/usr/bin/env python3`。python3 が無い環境では setup.ps1 の python3 shim(py -3)を作る
+  - 本文中の commit 参照(`(abc1234: ...)`・`cherry picked from`)も新 SHA に書き換わる → メタデータ比較で本文だけ違うのは正常
+- push 前に消す(他 session が同じ作業ツリーで作業中の repo):
+  - 範囲を未 push に限る: scratch clone(local branch を足すので `--force`)で `filter-repo --refs <branch>... ^<origin/main の SHA>`。範囲を限らないと push 済みの署名付き commit の署名が外れ SHA が変わる
+  - 関門: `git merge-base --is-ancestor <origin/main> <新>`。不成立なら push 済みに手が入っている(次の push が force になる)→ 差し替えない
+  - 検証: 旧新の対応は `.git/filter-repo/commit-map`(merge を含むと `rev-list` の並べ比べは対応しない)。commit 数・merge 数・変わったファイル・全 commit の grep 0 件
+  - 差し替え: 対象パスに未 commit の変更なし・`index.lock` なし・`git diff --cached` 空を確認 → 新 ref を `refs/rewrite/*` へ fetch → `git update-ref refs/heads/<b> <新> <旧>`(他 session が commit していれば失敗するので作り直す)→ `git checkout HEAD -- <変えたパス>` → `git status --short` を事前の控えと比較 → 他 session に SHA の変化を知らせる(旧 SHA で reset・cherry-pick すると古い履歴が戻る)
 
 ## `git rm` の削除は即 stage され、別のファイルを指定した次の commit に混ざる
 
