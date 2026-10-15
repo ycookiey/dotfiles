@@ -20,6 +20,7 @@
 | `samples` | 外部に見せるデザインの見本(全プロジェクトで 1 Worker、プロジェクトごとに秘密のパスで分ける。2026-10-06 から) | ysampley `wrangler.jsonc`、公開は `publish.sh` |
 | `workout` | yWorkouty | yWorkouty `wrangler.toml` |
 | `replay-os` | Omega Strikers の得点のリプレイ(自分で試す用。秘密のパスの下だけに置き、ほかは 404。2026-10-08 から) | os-tourney-kit `experiments/goal-replay/web/wrangler.jsonc`、パスは Worker の秘密の値 `SECRET_PATH` |
+| `history` | yhistory のブラウザの履歴の画面(2026-10-15 から)。拡張機能の manifest に書いてあるので、変えると全 PC で拡張機能の更新が要る | yhistory の Pages project `yhistory`(GitHub 連携、出力は `site/`) |
 
 ## 使い方
 

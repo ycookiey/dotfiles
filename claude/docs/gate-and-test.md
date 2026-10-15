@@ -223,6 +223,7 @@ fixture drift 修正時、`as any` / assertion 削除 / cast 追加は「signal 
 - 手順: (1) 元 test の assertion を 1 つずつ列挙 (戻り値の形・保存された値・保存されない事実・版・時刻・履歴・event・順序) / (2) 移植先で同じ assertion を書く。保存結果は stub でなく実装 (in-memory 実装可) から読み戻す / (3) 照合は別 agent、差の報告は自分で code を読んで確認 / (4) 実装を故意に壊し (mutation) test が落ちるか確認
 - mutation の偽 caught: 壊し方で build 自体が失敗すると、build 成果物 (dist) 経由で import する test が読込で落ち「捕まえた」と誤判定。build が通る形で壊す (未使用 import を残さない等) か、src を直接読む test に限定
 - mutation の偽 missed: 壊した式が選んだ入力で値に効かないと捕まらない (実例: 目標点が射程の内側に収まる入力では、射程で丸める式の誤りが結果に出ない)。捕まらなければ、その式が値に効く入力 (分岐を通る・丸めが働く) で回し直してから検査の不足と判断
+- mutation で止まったまま終わらない: 壊した結果 Promise が決着しなくなると (例: 切断時に待ち中の呼び出しを reject する処理を外す)、test runner が待ち続ける。test ごとの時間上限 (`node --test --test-timeout=10000` 等) を付け、失敗 (cancelled) として出す。上限なしで回すと、捕まえたのか止まったのか判定できない
 - agent への完了条件は成果物の数でなく振る舞いの数 (assertion の対応・mutation 全数 caught)。章 2 (non-vacuous) の移植版
 - 照合の設定 = 移し元の実際の設定: 移し先に既定で無効の規則・設定があるとき、移し元が強制していた規則ごとに、移し元の実際の設定 (定義・config) で移し先の入口 (route 等) を通す test を書く。移し先の見本の設定での test だけでは、設定の入れ忘れを捕まえない
   - 実例 (大会 app → kit): 移した test は kit の見本の定義 (「1 人 1 チーム」有効) で書き全件照合済み。app 自身の定義に kit の `uniquePlayers` を入れ忘れ (kit の既定は無効)、どの test も捕まえず、試験用サイトで 1 日弱 重複の申請が通った

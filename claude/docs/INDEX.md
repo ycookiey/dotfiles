@@ -12,6 +12,7 @@ CLAUDE.md「参照ドキュメント」節の主要 docs と異なり起動前�
 - Commit 分割戦略(fixup / 新規 commit の要素別判定) → commit-strategy.md
 - Claude Code の hook を足す・直す(yhooky の規則のファイル・test・組み込みの判定、Git Bash 経由の起動で親のないプロセスが一時停止のまま残る罠) → hooks.md
 - Claude in Chrome の操作が効かない(送信無反応・blur 不発は hidden タブ、古い ref、非 ASCII 入力)、hidden タブで遅延読み込み・タイマーが止まる、長い結果の回収(返り値の上限、get_page_text の空白)、LLM Web UI の反復実行(model 確認・上限・長文添付・結果回収・複数リストや件数崩れ・clipboard 衝突)、複数タブの並列実行(Vivaldi タイル表示、フォーカス、別ウィンドウ不可)、窓が見えず screenshot が timeout(headless Chromium を CDP で直接操作して撮る。終了は Browser.close でないと子プロセスが残る) → claude-in-chrome-hidden-tab.md
+- ブラウザ拡張機能(MV3)とWebサイトの組み合わせ(`sessions` のタブの URL・題名が `tabs` 権限なしで欠ける、Vivaldi は履歴ページの置き換え不可、未パッケージの再読み込みが要る変更、`externally_connectable` のポート指定・未導入の判定、Web ページから `_favicon` を読む、ID の固定、Vivaldi の画面の表記の確かめ方、scoop の自己更新アプリの版ずれ) → browser-extension.md
 - YouTube 動画の内容把握(文字起こし取得) → youtube-transcript.md
 - Neovim の外部コマンドが動かない・遅い(Windows の `exepath()` が 'shell' で sh script / .bat を返す) → nvim.md
 - drizzle(SQLite / D1 の migration のテーブル作り直しで列欠落・子行消失、D1 の batch に `db.run` を入れられない、generate の meta JSON が Prettier 未整形) → drizzle.md
