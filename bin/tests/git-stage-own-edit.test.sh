@@ -176,5 +176,17 @@ set_line "$d" 1 A-other
 (cd "$d" && "$TOOL" begin f.txt && sed -i '2s/.*/B-mine/' f.txt && "$TOOL" stage f.txt >/dev/null)
 check "shadow: the standard library is used" "$(printf '%s\n' a B-mine)" "$(staged "$d")"
 
+# 17. One file refused does not stop the files after it: they are staged and
+# their copies forgotten, the refused one keeps its copy, and stage exits 1.
+d=$(new_repo several false a b c)
+printf '%s\n' x y > "$d/g.txt" && git -C "$d" add g.txt && git -C "$d" commit -qm g
+set_line "$d" 2 B-other
+(cd "$d" || exit 98; "$TOOL" begin f.txt g.txt || exit 99; sed -i '2s/.*/B-mine/' f.txt && sed -i '2s/.*/Y-mine/' g.txt || exit 98; "$TOOL" stage f.txt g.txt >/dev/null 2>&1)
+check "several: refused" "1" "$?"
+check "several: the refused file's index is unchanged" "$(printf '%s\n' a b c)" "$(staged "$d")"
+check "several: the file after it is staged" "$(printf '%s\n' x Y-mine)" "$(git -C "$d" show :g.txt)"
+store=$(cd "$d" && git rev-parse --absolute-git-dir)/stage-own-edit
+check "several: only the refused file's copy is left" "1" "$(ls "$store" | wc -l | tr -d ' ')"
+
 [ "$failures" -eq 0 ] && echo "all passed" || echo "$failures failed"
 [ "$failures" -eq 0 ]

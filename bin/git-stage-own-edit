@@ -48,9 +48,16 @@ def git(*args, data=None):
     return result.stdout
 
 
+class Refused(Exception):
+    pass
+
+
 def fail(message):
-    print(f"git stage-own-edit: {message}", file=sys.stderr)
-    sys.exit(1)
+    raise Refused(message)
+
+
+def refused(why):
+    print(f"git stage-own-edit: {why}", file=sys.stderr)
 
 
 # One rev-parse, run from the caller's directory (top is still None), so a
@@ -164,21 +171,36 @@ def stage(file):
     sys.stdout.flush()
 
 
-if command == "begin":
-    os.makedirs(store, exist_ok=True)
-    for file in files:
-        path = repo_path(file)
-        index_entry(path)
-        with open(file, "rb") as source, open(copy_of(path), "wb") as target:
-            target.write(source.read())
-elif command == "stage":
-    for file in files:
-        stage(file)
-elif command == "abort":
-    for file in files:
-        copy = copy_of(repo_path(file))
-        if os.path.exists(copy):
-            os.remove(copy)
-else:
-    fail(f"unknown command {command}; use begin, stage or abort")
+try:
+    if command == "begin":
+        os.makedirs(store, exist_ok=True)
+        for file in files:
+            path = repo_path(file)
+            index_entry(path)
+            with open(file, "rb") as source, open(copy_of(path), "wb") as target:
+                target.write(source.read())
+    elif command == "stage":
+        # A file refused keeps its copy for another try; the files after it
+        # are still staged and their copies forgotten. Stopping at the first
+        # refusal left the later files unstaged and their copies behind, to
+        # be committed some other way while the copies stayed.
+        failures = 0
+        for file in files:
+            try:
+                stage(file)
+            except Refused as why:
+                refused(why)
+                failures += 1
+        if failures:
+            sys.exit(1)
+    elif command == "abort":
+        for file in files:
+            copy = copy_of(repo_path(file))
+            if os.path.exists(copy):
+                os.remove(copy)
+    else:
+        fail(f"unknown command {command}; use begin, stage or abort")
+except Refused as why:
+    refused(why)
+    sys.exit(1)
 PY
