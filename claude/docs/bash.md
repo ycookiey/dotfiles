@@ -74,6 +74,11 @@ grep -qiF -- "$pat" "$f"; case $? in 0) 一致 ;; 1) 不一致 ;; *) エラー�
 - git 管理下 (autocrlf) は commit 時に正規化され差分にならない。問題になるのは CRLF 必須のファイル (.bat 等) と git 管理外のファイル
 - 対処: CRLF のファイルは Edit ツールで直す。`sed -i` を使ったら `unix2dos -q <file>` で戻す。確認は `file <file>` の「with CRLF line terminators」
 
+## autocrlf の作業ツリーは CRLF: スクリプトで照合する前に改行をそろえる
+
+- 現象: `core.autocrlf=true` の repo の作業ツリー(とそこから cp したファイル)は CRLF。node / python で `'...\n...'` を `includes` / `replace` すると一致せず、置換が空振りする(実例: 衝突解消・コピーへのパッチが 2 回外れた)。Write で書いたファイルは LF なので、同じフォルダに CRLF と LF が混ざる
+- 対処: 読んだ直後に `\r\n` → `\n` にそろえてから照合し、書き戻す改行を決める。照合が外れたら、まず `file <path>` で CRLF か確かめる
+
 ## ツール入力の `\uXXXX` は文字に復号される
 
 - 症状: Bash の heredoc や Edit の文字列に書いた `\u0020` が、送信時に実際の文字(空白など)へ変わる。正規表現の `\uXXXX` エスケープをそのまま書けない(Edit は「old と new が同一」エラー、python は想定外の文字で置換)
