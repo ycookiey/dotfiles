@@ -349,18 +349,20 @@ message = '''外に出る文(フォームへの入力・送るメッセージ)�
 [[rule]]
 id = "ja-kagi-overuse-reminder"
 event = "PreToolUse"
-tools = '^mcp__claude-in-chrome__form_input$'
+tools = '^mcp__claude-in-chrome__(form_input|javascript_tool)$'
 fields = ["tool_input.value", "tool_input.text"]
 all = ['「[^」]*」.*「[^」]*」.*「']
 action = "context"
 message = '''外に出る文のカギかっこは、画面の表記と発言の引用だけに使う。強調や用語の囲みに使わない(docs/external-japanese.md)。'''
 
 # A note arrives with the tool's result, after a message has gone out, so the
-# actions that may send are stopped once per session and text instead.
+# actions that may send are stopped once per session and text instead. A
+# script run in a page (javascript_tool) is code whose strings are mostly
+# search words, so it only gets the note above.
 [[rule]]
 id = "ja-kagi-overuse-send-guard"
 event = "PreToolUse"
-tools = '^(mcp__claude-in-chrome__(computer|javascript_tool)|mcp__beeper__send_message)$'
+tools = '^(mcp__claude-in-chrome__computer|mcp__beeper__send_message)$'
 fields = ["tool_input.value", "tool_input.text"]
 all = ['「[^」]*」.*「[^」]*」.*「']
 action = "deny-once"
