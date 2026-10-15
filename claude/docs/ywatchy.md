@@ -14,7 +14,7 @@ setup.ps1 管理外。skill ディレクトリだけ作れば残りは ywatchy �
 既定 (`ywatchy.toml` の `skills.skill_patterns`) は 2 つ。`skills.scan_dirs` に指定したディレクトリ配下の各プロジェクトを走査する。
 
 - `skills/*/SKILL.md` — dotfiles 等、リポジトリ直下に skills を置く構成
-- `.claude/skills/*/SKILL.md` — プロジェクト固有 skill (life, pkdx 等)
+- `.claude/skills/*/SKILL.md` — プロジェクト固有 skill
 
 つまり **dotfiles 以外のプロジェクトの skill も自動で symlink される**。そのプロジェクトの中でしか使わない skill は、`skills.exclude_projects` にプロジェクト名(フォルダ名、大文字小文字は区別しない)を書くと global に張られない。既存の symlink は次の起動時に消える。プロジェクト内では `.claude/skills/` の skill としてそのまま読まれる(v0.4.0 以降)。
 

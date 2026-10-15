@@ -80,7 +80,7 @@ const tick = () => new Promise((r) => { const c = new MessageChannel(); c.port1.
 ```
 
 - 移動: SPA は `history.pushState({}, '', url)` + `dispatchEvent(new PopStateEvent('popstate', { state: {} }))` で再読み込みなし。URL で位置を指定できる画面(例: Discord のメッセージ ID)は、スクロールの代わりに URL 移動で読み込ませる
-- 構造化データ: 要素の `__reactFiber…` キーの `memoizedProps` を `.return` で親へたどると、画面が持つデータ(本文・日時・添付等)が取れる。実例: life の skill `discord-channel-log`
+- 構造化データ: 要素の `__reactFiber…` キーの `memoizedProps` を `.return` で親へたどると、画面が持つデータ(本文・日時・添付等)が取れる。
 
 ## 症状 6: ブラウザ窓が見えていないと screenshot が timeout する
 
