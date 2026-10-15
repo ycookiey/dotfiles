@@ -13,11 +13,12 @@ CLAUDE.md「参照ドキュメント」節の主要 docs と異なり起動前�
 - Claude Code の hook を足す・直す(yhooky の規則のファイル・test・組み込みの判定、Git Bash 経由の起動で親のないプロセスが一時停止のまま残る罠) → hooks.md
 - Claude in Chrome の操作が効かない(送信無反応・blur 不発は hidden タブ、古い ref、非 ASCII 入力)、hidden タブで遅延読み込み・タイマーが止まる、長い結果の回収(返り値の上限、get_page_text の空白)、LLM Web UI の反復実行(model 確認・上限・長文添付・結果回収・複数リストや件数崩れ・clipboard 衝突)、複数タブの並列実行(Vivaldi タイル表示、フォーカス、別ウィンドウ不可)、窓が見えず screenshot が timeout(headless Chromium を CDP で直接操作して撮る。終了は Browser.close でないと子プロセスが残る) → claude-in-chrome-hidden-tab.md
 - YouTube 動画の内容把握(文字起こし取得) → youtube-transcript.md
+- Neovim の外部コマンドが動かない・遅い(Windows の `exepath()` が 'shell' で sh script / .bat を返す) → nvim.md
 - drizzle(SQLite / D1 の migration のテーブル作り直しで列欠落・子行消失、D1 の batch に `db.run` を入れられない、generate の meta JSON が Prettier 未整形) → drizzle.md
 - pnpm(Windows で `link:` の区切りがバックスラッシュになる、新しい worktree の `pnpm install` が better-sqlite3 の C++ のビルド(ClangCL・MSB8020)で止まる、`link:` の package の peer が link 先の copy に解決され型が合わない、link 先を build し直すと Vite の dev server が消えた dist を参照して 500) → pnpm.md
 - Playwright(ブラウザ revision 不一致で起動失敗、evaluate/content にタイムアウトが無く巡回が止まる、スマホ向けページの WebKit での確認: Chromium だけの CSS・lazy 画像が撮れない、aria-disabled のボタンを click() が押さない・jsdom で再現しないクリック中の DOM 入れ替わり) → playwright.md
 - React(React Compiler lint の `react-hooks/refs`: ref を含むオブジェクトを props に渡すとエラー、`use client` 部品のレンダー中処理はサーバーでも走り `ImageData` 等が未定義、rAF の再生ループで経過時間が負) → react.md
-- WezTerm の Lua 設定(評価時に始めた `call_after` が動かない、`CloseCurrentPane` がアクティブなペインを閉じる、前面プロセスが子孫・短命なプロセスを返す、Claude Code 更新時の `claude.exe.old.*` 改名、spawn/split の cwd・args が使われない、nushell の cd と OSC 7、`send_text` の取りこぼし、前面のプロセスでシェルの入力待ちを判定できない、別プロセス・作業用コピーの設定でのテスト(`--config-file` でも `require` は普段のフォルダを読む)) → wezterm.md
+- WezTerm の Lua 設定(評価時に始めた `call_after` が動かない、`CloseCurrentPane` がアクティブなペインを閉じる、前面プロセスが子孫・短命なプロセスを返す、Claude Code 更新時の `claude.exe.old.*` 改名、spawn/split の cwd・args が使われない、nushell の cd と OSC 7、`send_text` の取りこぼし、前面のプロセスでシェルの入力待ちを判定できない、別プロセス・作業用コピーの設定でのテスト(`--config-file` でも `require` は普段のフォルダを読む、設定 error でも show-keys は既定の設定で exit 0)) → wezterm.md
 - 画像の中身の確かめ(透過 PNG を Read で見ると不透明度が無視され、見えない画素が見える) → images.md
 - elkjs(ELK layered の入れ子 `INCLUDE_CHILDREN` で model order 系オプションが落ちる・効かない、座標基準、エッジ/ノードラベルの配置) → elkjs.md
 - League of Legends のゲームデータ(地形 navgrid・jungle camp/個体の spawn 位置・WAD の読み方。画像から推定しない) → league-game-data.md

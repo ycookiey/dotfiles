@@ -57,6 +57,7 @@
 
 ## 実行と検証の罠
 
+- 直接呼んだ console 用 exe (PE subsystem 3) は終了まで待つ (GUI 用は待たない)。常駐する console app (wezterm.exe の `start`・常駐 tool) を順に起動する script では後続が止まる → `start <exe>` (必要なら `-WindowStyle Hidden`)。subsystem は PE ヘッダ (0x3C の位置 + 24 + 68) で判定 (tests/test-startup-commands.ps1)
 - `irm ... | iex` で実行中の script の `exit` はコンソールごと閉じる (結果が読めない)。失敗は throw で伝える (`-File` 実行なら exit 1 になる)
 - 関数で上書きした stub は module の関数 (ScheduledTasks の `Register-ScheduledTask` 等) に効かないことがあり、実物が呼ばれた。副作用のある関数の検証は、AST で取り出したテキストのコマンド名を stub 名に書き換え、実物の呼び出しが残っていないことを AST で確かめてから実行
 - `StatementBlockAst.Extent.Text` は `{}` を含むので `[scriptblock]::Create` しても中身は走らない。中身は `.Statements` から取る

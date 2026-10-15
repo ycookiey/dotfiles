@@ -74,5 +74,6 @@ nightly 20251201 / Windows で実測。
 - Claude Code の Bash ツールから `wezterm start` すると、`CLAUDE_CODE_CHILD_SESSION` などの環境変数を引き継ぐ。その中で起動した Claude Code は、画面に「Transcript saving is off」と出て、会話を記録しない (`~/.claude/projects` に `.jsonl` ができない)。普段の使い方を再現するには、`env -u CLAUDE_... ` で `CLAUDE*` / `ANTHROPIC*` の変数を外して起動する
 - 書き換え中の設定は、普段の設定フォルダ (`~/.config/wezterm`) ではなく作業用のコピーに置き、`wezterm --config-file <コピー>\wezterm.lua start --always-new-process` で試す。普段の設定フォルダのファイルを保存するたびに、普段使いの GUI が設定を読み直すため
   - `--config-file` は `start` より前に書く (後ろに書くと `unexpected argument` で起動しない)
+  - 設定に error があると、`wezterm --config-file <x> show-keys` などは黙って既定の設定で動き exit 0 になる。読めたかは exit code で判断せず、設定に置いた目印 (`wezterm.log_info` の出力や、目印の key 割り当てが show-keys に出るか) で確かめる
   - `--config-file` で別のフォルダの設定を読ませても、`require` は普段の設定フォルダのモジュールを読んだ (実測)。コピーのモジュールを読ませるには、コピーの `wezterm.lua` の先頭で `package.path = [[<コピーのフォルダ>\?.lua;]] .. package.path` とする
 - キーで呼ぶ処理を `wezterm cli` から試すには、テスト用の設定に `user-var-changed` のハンドラを足し、ペインのシェルから OSC 1337 の SetUserVar を出させる。nushell なら `wezterm cli send-text` で次を送る: `print -n $"(ansi escape)]1337;SetUserVar=<名前>=(random chars | encode base64)(char bel)"` (値を毎回変える)
