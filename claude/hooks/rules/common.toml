@@ -1,6 +1,7 @@
 # Claude Code hook rules, run by yhooky (github.com/ycookiey/yhooky).
-# Each [[rule]] adds a note to Claude's context (action = "context") or
-# refuses the tool call (action = "deny") when the fields it reads match:
+# Each [[rule]] adds a note to Claude's context (action = "context"),
+# refuses the tool call (action = "deny"), or refuses it only the first time
+# per session and matched text (action = "deny-once") when the fields it reads match:
 # every pattern in `all` matches some line, and none in `none` does.
 # Patterns are Rust regex, matched one line at a time as grep -E does.
 # Literal strings ('...', '''...''') keep backslashes as written.
@@ -20,6 +21,12 @@ builtins = [
   # Records what a turn leaves running, for the your-turn plugin
   # (dotfiles/claude/plugins); resident commands in ../turn-state.toml.
   "turn-state",
+  # Native Japanese verbs in text for other people (docs/external-japanese.md
+  # rule 19); reads the UniDic folder installed beside yhooky.exe.
+  "wago-verb-reminder",
+  # Personal words in commits about to be pushed; the list is
+  # ~/.claude/private-words.toml, kept out of every repository.
+  "private-word-guard",
 ]
 
 # The Bash tool runs commands where errexit has no effect, so `set -e`
@@ -342,10 +349,21 @@ message = '''外に出る文(フォームへの入力・送るメッセージ)�
 [[rule]]
 id = "ja-kagi-overuse-reminder"
 event = "PreToolUse"
-tools = '^(mcp__claude-in-chrome__(form_input|computer|javascript_tool)|mcp__beeper__send_message)$'
+tools = '^mcp__claude-in-chrome__form_input$'
 fields = ["tool_input.value", "tool_input.text"]
 all = ['「[^」]*」.*「[^」]*」.*「']
 action = "context"
+message = '''外に出る文のカギかっこは、画面の表記と発言の引用だけに使う。強調や用語の囲みに使わない(docs/external-japanese.md)。'''
+
+# A note arrives with the tool's result, after a message has gone out, so the
+# actions that may send are stopped once per session and text instead.
+[[rule]]
+id = "ja-kagi-overuse-send-guard"
+event = "PreToolUse"
+tools = '^(mcp__claude-in-chrome__(computer|javascript_tool)|mcp__beeper__send_message)$'
+fields = ["tool_input.value", "tool_input.text"]
+all = ['「[^」]*」.*「[^」]*」.*「']
+action = "deny-once"
 message = '''外に出る文のカギかっこは、画面の表記と発言の引用だけに使う。強調や用語の囲みに使わない(docs/external-japanese.md)。'''
 
 # A tab opened by the extension stays hidden behind the user's active tab: the page may
