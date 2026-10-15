@@ -677,6 +677,60 @@ expect = "quiet"
 command = '''python -c 'print(open("a.txt").read())' '''
 
 [[case]]
+name = "check-then-commit-semicolon"
+rule = "check-then-commit-reminder"
+expect = "context"
+command = '''pnpm lint; git add a.ts && git commit -m "fix"'''
+
+[[case]]
+name = "check-then-commit-semicolon-direct"
+rule = "check-then-commit-reminder"
+expect = "context"
+command = '''npx vitest run a.test.ts; git -C app commit -q -m "test"'''
+
+[[case]]
+name = "check-then-commit-and"
+rule = "check-then-commit-reminder"
+expect = "quiet"
+command = '''pnpm lint && pnpm test && git commit -m "fix"'''
+
+[[case]]
+name = "check-then-commit-no-check"
+rule = "check-then-commit-reminder"
+expect = "quiet"
+command = '''git status --short; git commit -m "docs"'''
+
+[[case]]
+name = "pipe-status-tail"
+rule = "pipe-status-reminder"
+expect = "context"
+command = '''pnpm test 2>&1 | tail -n 5; echo "exit=$?"'''
+
+[[case]]
+name = "pipe-status-grep"
+rule = "pipe-status-reminder"
+expect = "context"
+command = '''npx tsc --noEmit | grep error; echo $?'''
+
+[[case]]
+name = "pipe-status-pipefail"
+rule = "pipe-status-reminder"
+expect = "quiet"
+command = '''set -o pipefail; pnpm test | tail -n 5; echo "exit=$?"'''
+
+[[case]]
+name = "pipe-status-pipestatus"
+rule = "pipe-status-reminder"
+expect = "quiet"
+command = '''pnpm test | tail -n 5; echo "exit=${PIPESTATUS[0]}"'''
+
+[[case]]
+name = "pipe-status-no-status"
+rule = "pipe-status-reminder"
+expect = "quiet"
+command = '''git log --oneline | head -3; git status --short'''
+
+[[case]]
 name = "find-root"
 rule = "find-root-guard"
 expect = "deny"

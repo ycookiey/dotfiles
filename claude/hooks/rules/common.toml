@@ -410,3 +410,27 @@ fields = ["tool_input.command"]
 all = ['(^|[^[:alnum:]_-])([Ss]top-[Pp]rocess|taskkill|kill|pkill|killall)([[:space:]]|$)']
 action = "context"
 message = '''「ファイルが使用中」で更新・削除・書き込みが失敗した対処としてプロセスを止めるなら、名前で推測せず、先にファイルを掴んでいるプロセスを特定する: アプリ自身のログを "locked by" / "error 32" / "sharing violation" で grep する (例: Riot Client のログに「File is locked by process Raycast.exe with PID ...」)、または handle64 <パス> (管理者でないと見えない handle がある。広い対象では止まることがあるので時間を区切る)。詳細 ~/.claude/docs/windows-desktop.md の「ファイル使用中で更新・削除が失敗する」'''
+
+# `check; git commit` commits even when the check failed (a lint that
+# failed was committed this way and had to be amended).
+[[rule]]
+id = "check-then-commit-reminder"
+event = "PreToolUse"
+tools = '^Bash$'
+fields = ["tool_input.command"]
+all = ['''(lint|test|typecheck|tsc|vitest|format:check|prettier[[:space:]]+--check).*;.*(^|[^[:alnum:]_-])git([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+commit([[:space:]]|$)''']
+action = "context"
+message = '''; は前のコマンドが失敗しても次を流す。確かめ(lint・test・typecheck など)のあとに ; で git commit をつなぐと、確かめが落ちても commit が走る。確かめが通ったときだけ commit するなら && でつなぐ。'''
+
+# `cmd | tail; echo $?` reads tail's status, not cmd's (a failed run looked
+# successful this way). In the Bash tool, set -o pipefail and PIPESTATUS work
+# although set -e does not.
+[[rule]]
+id = "pipe-status-reminder"
+event = "PreToolUse"
+tools = '^Bash$'
+fields = ["tool_input.command"]
+all = ['''\|[[:space:]]*(tail|head|grep|tee|cut|sed|sort|wc)([[:space:]][^;&|]*)?;[^;]*\$\?''']
+none = ['pipefail', 'PIPESTATUS']
+action = "context"
+message = '''パイプのあとの $? は、最後のコマンド(tail・grep など)の終了コードで、前のコマンドの失敗は見えない(実測: false | tail -n1; echo $? は 0)。本体のを見るなら ${PIPESTATUS[0]} を読むか、先に set -o pipefail を書く(Bash ツールでも効く。set -e は効かない)。または結果を file に書いてから終了コードを見る。'''
