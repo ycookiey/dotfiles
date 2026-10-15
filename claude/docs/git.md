@@ -60,6 +60,9 @@ printf 'protocol=https\nhost=credtest.invalid\nusername=test-user\n\n' | git cre
 - 対処: 検査と push を別コマンドに分け、結果を読んでから push。1 コマンドにするなら hit で止まる形 (`! git diff ... | grep -qiE '<語>' && git push`)
 - 禁止語は表記ゆれ(英字の綴り・区切り違い・カタカナ・略称)まで並べてから探す。実測: 英字の綴りだけで探しカタカナ表記を見落とし、履歴の書き換えが 2 回になった
 - 漏れた後: 履歴から消すには force-push が要る。書き換えは、外部が commit ID で固定している commit(本番 deploy の ref 等)より後の範囲に限る(固定先が消えると deploy が壊れる)
+  - 手順: scratch に `git clone --no-local` → `git filter-repo --replace-text <file>`(1 行 `旧==>新`。tag も書き換わる)→ `git rev-list --all` の全 commit を `git grep` して 0 件 → 旧 ref を fetch し commit ごとに `diff --shortstat` と作者・日時・本文の一致を確認 → main は `--force-with-lease=main:<旧 SHA>`、tag は `--force` で push → 手元は `reset --hard` で合わせる
+  - GitHub release は tag 名で引かれ asset ごと残る(exe・scoop の hash も不変)。旧 commit は SHA 直指定の URL で見え続ける(完全に消すには GitHub Support)
+  - `git filter-repo` は `#!/usr/bin/env python3`。python3 が無い環境では setup.ps1 の python3 shim(py -3)を作る
 
 ## `git rm` の削除は即 stage され、別のファイルを指定した次の commit に混ざる
 

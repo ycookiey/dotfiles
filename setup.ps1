@@ -354,6 +354,23 @@ Invoke-Step 'Winget apps' {
     }
 } 'Winget apps install checked'
 
+# python3: Windows の Python は python.exe しか置かないので、`#!/usr/bin/env python3` で始まる script
+# (git filter-repo 等) が python3 を見つけられず失敗する。Python Launcher (wingetfile.json) の最新の 3.x を
+# python3 として起動する scoop の shim を作る (WindowsApps の python3 より scoop の shims が PATH の前にある)
+$pyLauncher = "$env:WINDIR\py.exe"
+if (tp "$scoopRoot\shims\python3.shim") {
+    "$(Get-Date) - python3 shim: already there" >> $LogFile
+} elseif (!(tp $pyLauncher)) {
+    Write-Skip "python3 shim ($pyLauncher not found; install Python.Launcher and rerun: scoop shim add python3 $pyLauncher '--' '-3')"
+} else {
+    Invoke-Step 'python3 shim' {
+        # winget.ps1 の終了コードが残っていると Assert-ExitCode が誤って失敗にする
+        $global:LASTEXITCODE = 0
+        scoop shim add python3 $pyLauncher '--' '-3'
+        Assert-ExitCode 'scoop shim add python3'
+    } 'python3 shim added (py -3)'
+}
+
 # Microsoft IME 無効化（Google IME のみ残す）
 Invoke-Step 'Disable Microsoft IME' { & "$ScriptDir\install\disable-msime.ps1" } 'Microsoft IME disabled'
 

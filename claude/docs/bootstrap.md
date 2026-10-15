@@ -45,6 +45,7 @@ install/install-order.json の `large` リストに含まれないものが対�
 - Claude マルチアカウントのリンク同期
 - install/fonts.ps1
 - install/winget.ps1（wingetfile.json ベース）
+- python3 の scoop shim（Python Launcher の `py -3`。`#!/usr/bin/env python3` の script 用）
 - dotcli ビルド＆エイリアス生成
 - startup/register.ps1（タスクスケジューラ登録）
 
