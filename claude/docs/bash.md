@@ -57,6 +57,7 @@ grep -qiF -- "$pat" "$f"; case $? in 0) 一致 ;; 1) 不一致 ;; *) エラー�
 - 実測: `printf '%s\n' 'a\\b'` の出力が `a\b`。heredoc の行末の `\\` が `\` になって次の行とつながり、終端の `EOF` を読み飛ばした
 - クォートを多く含む数百行の heredoc(Python スクリプト等)は `unexpected EOF while looking for matching` で構文解析に失敗し、何も実行されないことがある
 - 回避: バックスラッシュや複雑なクォートを含む内容は Write ツールでファイルに書いてから Bash で実行する。スクリプト内の Windows パスは `C:/path` のようにスラッシュで書く
+- hook(yhooky の `backslash-shrink-guard`)は、heredoc・単一引用・二重引用の `$` `` ` `` `"` の直前の `\\` を止め、インラインのスクリプト(`node -e`・`python -c`・`perl -e`・`sed`・`awk` 等)の引数にある `\\` も session とコマンドの組ごとに一度止める(実例: sed の置換文字列や node -e で組んだ JS の `'\\n'` が壊れ、知らせだけでは同じ失敗を 3 回繰り返した)。意図どおりなら同じコマンドを出し直せば通る
 - printf の書式文字列に Windows パスを書かない。`C:\Main\Project\twitchReader\venv` の `\t` `\v` がタブ・垂直タブになりパスが壊れる(実測: 生成した bat が「filename, directory name, or volume label syntax is incorrect」で exit 1)。`printf '%s' "..."` で引数に渡すか Write ツールで書く
 - 改行コードの判定に `grep -c $'\r'` を使わない。Bash ツール経由では LF のファイルでも総行数が返り、全ファイルを CRLF と誤判定した。`file <path>` の「with CRLF line terminators」表示で判定する
 
